@@ -1,3 +1,27 @@
 <resources>
-    <string name="app_name">IQOOWang</string>
+    <string name="app_name">MediaPipe Pose Java</string>
+
+    <string-array name="model_options">
+        <item>轻量模型 (最快)</item>
+        <item>标准模型 (平衡)</item>
+        <item>重型模型 (最准)</item>
+    </string-array>
+
+    <string-array name="delegate_options">
+        <item>GPU加速 (推荐)</item>
+        <item>CPU</item>
+    </string-array>
+
+    <string-array name="num_poses_options">
+        <item>1人</item>
+        <item>2人</item>
+        <item>3人</item>
+        <item>4人</item>
+    </string-array>
+
+    <string-array name="resolution_options">
+        <item>640x480 (最快)</item>
+        <item>1280x720 (平衡)</item>
+        <item>1920x1080 (最清晰)</item>
+    </string-array>
 </resources>

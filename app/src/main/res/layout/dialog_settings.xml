@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:spacing="16dp">
+
+        <!-- 模型选择 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="模型精度"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+            <Spinner
+                android:id="@+id/spinnerModel"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:entries="@array/model_options" />
+        </LinearLayout>
+
+        <!-- 运行设备 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="运行设备"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+            <Spinner
+                android:id="@+id/spinnerDelegate"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:entries="@array/delegate_options" />
+        </LinearLayout>
+
+        <!-- 检测人数 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="最大检测人数"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+            <Spinner
+                android:id="@+id/spinnerNumPoses"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:entries="@array/num_poses_options" />
+        </LinearLayout>
+
+        <!-- 检测置信度 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <TextView
+                android:id="@+id/tvDetectionConfidence"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="检测置信度: 0.5"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+            <SeekBar
+                android:id="@+id/seekBarDetectionConfidence"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100"
+                android:progress="50" />
+        </LinearLayout>
+
+        <!-- 跟踪置信度 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <TextView
+                android:id="@+id/tvTrackingConfidence"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="跟踪置信度: 0.5"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+            <SeekBar
+                android:id="@+id/seekBarTrackingConfidence"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100"
+                android:progress="50" />
+        </LinearLayout>
+
+        <!-- 前后摄像头切换 -->
+        <Switch
+            android:id="@+id/switchFrontCamera"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="使用前置摄像头"
+            android:textSize="16sp"
+            android:checked="false" />
+
+        <!-- 分辨率设置 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="相机分辨率"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+            <Spinner
+                android:id="@+id/spinnerResolution"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:entries="@array/resolution_options" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+</ScrollView>
