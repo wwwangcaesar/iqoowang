@@ -1,21 +1,35 @@
 package com.monsieurmahjong.iqoowang;
 
+import android.content.ContentUris;
+import android.content.Context;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.provider.MediaStore;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.GridLayout;
+
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.text.TextRecognizer;
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions;
 import com.monsieurmahjong.iqoowang.connect.CategoryProvider;
 import com.monsieurmahjong.iqoowang.connect.ExpenseCategory;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
 
+import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
@@ -36,6 +50,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.content.res.AppCompatResources;
+import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
@@ -45,6 +60,11 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import android.Manifest; // 必须是这个 Android 系统包
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.text.TextRecognizer;
 
 public class QuickLogActivity extends AppCompatActivity {
 
@@ -62,7 +82,7 @@ public class QuickLogActivity extends AppCompatActivity {
         etAmount = findViewById(R.id.et_amount);
         gridCategories = findViewById(R.id.grid_categories);
         db = AppDatabase.getDatabase(this);
-
+        checkStoragePermissionAndProcess();
         // 处理第一次唤醒
         handleNfcIntent(getIntent());
         setupCategoryGrid();
@@ -113,6 +133,8 @@ public class QuickLogActivity extends AppCompatActivity {
     private int selectedPosition = -1;
     // 保存所有分类item的引用，方便更新选中状态
     private final List<View> categoryItems = new ArrayList<>();
+    private static final int PERMISSION_REQUEST_CODE = 1001;
+
     private void setupCategoryGrid() {
         // 清空之前的视图（防止重复添加）
         gridCategories.removeAllViews();
@@ -198,6 +220,89 @@ public class QuickLogActivity extends AppCompatActivity {
         }
     }
 
+    private void checkStoragePermissionAndProcess() {
+        String permission = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+                ? Manifest.permission.READ_MEDIA_IMAGES
+                : Manifest.permission.READ_EXTERNAL_STORAGE;
+
+        if (ContextCompat.checkSelfPermission(this, permission) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, new String[]{permission}, PERMISSION_REQUEST_CODE);
+        } else {
+            // 已有权限，直接开始读取最新截屏并识别
+            startScreenshotOcrWorkflow();
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == PERMISSION_REQUEST_CODE && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+            startScreenshotOcrWorkflow();
+        } else {
+            Toast.makeText(this, "未授予读取相册权限，无法自动识别金额", Toast.LENGTH_SHORT).show();
+        }
+    }
+    /**
+     * 核心算法：从 MediaStore 查询系统相册中最新创建的那张图片
+     */
+    private Uri getLatestImageUri(Context context) {
+        Uri collection = (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                ? MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+                : MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+
+        String[] projection = new String[]{
+                MediaStore.Images.Media._ID,
+                MediaStore.Images.Media.DATE_ADDED
+        };
+
+        // 按添加时间倒序排列（最新的一张在最前面）
+        String sortOrder = MediaStore.Images.Media.DATE_ADDED + " DESC";
+
+        try (Cursor cursor = context.getContentResolver().query(collection, projection, null, null, sortOrder)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID);
+                long id = cursor.getLong(idColumn);
+                // 组合成完整的图片 Uri
+                return ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id);
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
+    /**
+     * 核心算法：利用正则表达式从复杂的 OCR 文本中精准清洗出微信/支付宝金额
+     */
+    private String extractPaymentAmount(String fullText) {
+        if (fullText == null || fullText.isEmpty()) return null;
+
+        // 匹配常见金额格式（如: 88.00, ￥12.50, ¥ 5.00）
+        // 过滤规则：找寻带有两位小数点的数字
+        Pattern pattern = Pattern.compile("(?:¥|￥)?\\s*(\\d+\\.\\d{2})");
+        Matcher matcher = pattern.matcher(fullText);
+
+        double maxAmount = -1.0;
+        String bestMatch = null;
+
+        // 微信和支付宝的账单截屏通常包含时间、各种单号、扣款金额。
+        // 策略：遍历所有匹配到的两位小数，通常“最大”的那个数字就是你的实际消费金额（单号一般不带小数点，时间是冒号）。
+        while (matcher.find()) {
+            String amountStr = matcher.group(1);
+            try {
+                double parsed = Double.parseDouble(amountStr);
+                // 排除常见混淆：如部分商家带有 0.00 元优惠，或者特定单号混淆
+                if (parsed > maxAmount) {
+                    maxAmount = parsed;
+                    bestMatch = amountStr;
+                }
+            } catch (NumberFormatException e) {
+                // 转换失败则跳过
+            }
+        }
+
+        return bestMatch;
+    }
     private void saveAndExit(String categoryName) {
         String amountStr = etAmount.getText().toString();
         if (amountStr.isEmpty()) return;
@@ -267,4 +372,36 @@ public class QuickLogActivity extends AppCompatActivity {
                 getResources().getDisplayMetrics()
         );
     }
+    private void startScreenshotOcrWorkflow() {
+        Uri latestImageUri = getLatestImageUri(this);
+        if (latestImageUri == null) {
+            return;
+        }
+
+        try {
+            InputImage image = InputImage.fromFilePath(this, latestImageUri);
+
+            // 【核心修改】使用中文识别器的专用配置构造器
+            ChineseTextRecognizerOptions options = new ChineseTextRecognizerOptions.Builder().build();
+            TextRecognizer recognizer = TextRecognition.getClient(options);
+
+            recognizer.process(image)
+                    .addOnSuccessListener(visionText -> {
+                        String parsedAmount = extractPaymentAmount(visionText.getText());
+                        if (parsedAmount != null && !parsedAmount.isEmpty()) {
+                            etAmount.setText(parsedAmount);
+                            etAmount.setSelection(parsedAmount.length());
+                            Toast.makeText(QuickLogActivity.this, "已自动识别金额: ¥" + parsedAmount, Toast.LENGTH_SHORT).show();
+                        }
+                    })
+                    .addOnFailureListener(e -> {
+                        e.printStackTrace();
+                        Toast.makeText(QuickLogActivity.this, "图片识别失败", Toast.LENGTH_SHORT).show();
+                    });
+
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
 }
