@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 字体尺寸 -->
+    <dimen name="display_lg_mobile">28sp</dimen>
+    <dimen name="headline_md">24sp</dimen>
+    <dimen name="headline_sm">14sp</dimen>
+    <dimen name="body_lg">18sp</dimen>
+    <dimen name="body_md">16sp</dimen>
+    <dimen name="label_md">14sp</dimen>
+    <dimen name="label_sm">12sp</dimen>
+
+    <!-- 圆角 -->
+    <dimen name="rounded_sm">4dp</dimen>
+    <dimen name="rounded_default">8dp</dimen>
+    <dimen name="rounded_md">12dp</dimen>
+    <dimen name="rounded_lg">16dp</dimen>
+    <dimen name="rounded_xl">24dp</dimen>
+    <dimen name="rounded_full">9999dp</dimen>
+
+    <!-- 间距 -->
+    <dimen name="container_padding_mobile">20dp</dimen>
+    <dimen name="container_padding_desktop">40dp</dimen>
+    <dimen name="gutter">16dp</dimen>
+    <dimen name="stack_sm">8dp</dimen>
+    <dimen name="stack_md">24dp</dimen>
+    <dimen name="stack_lg">48dp</dimen>
+</resources>

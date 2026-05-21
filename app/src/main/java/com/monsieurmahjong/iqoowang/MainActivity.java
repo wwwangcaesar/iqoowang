@@ -1,73 +1,73 @@
 package com.monsieurmahjong.iqoowang;
 
-import android.Manifest;
-import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
-import android.os.Bundle;
-import android.widget.TextView;
-import android.widget.Toast;
+import static androidx.core.content.ContentProviderCompat.requireContext;
 
-import androidx.appcompat.app.AlertDialog;
+import android.os.Bundle;
+
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.lifecycle.LiveData;
 
-import com.monsieurmahjong.iqoowang.dao.AppDatabase;
-import com.monsieurmahjong.iqoowang.dao.Expense;
-import com.monsieurmahjong.iqoowang.utils.AnimationUtils;
 
-import java.nio.ByteBuffer;
-
+import android.content.Intent;
 import android.os.Bundle;
-import android.widget.LinearLayout;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.List;
-import java.util.Locale;
-import kotlinx.coroutines.flow.FlowKt;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentManager;
+import com.google.android.material.bottomnavigation.BottomNavigationView;
+import com.monsieurmahjong.iqoowang.fragment.HistoryFragment;
+import com.monsieurmahjong.iqoowang.fragment.SettingsFragment;
+import com.monsieurmahjong.iqoowang.fragment.StatisticsFragment;
 
 public class MainActivity extends AppCompatActivity {
 
-    private TextView tvTodayTotal;
-    private LinearLayout containerHistory;
-    private AppDatabase db;
+    private Fragment historyFragment;
+    private Fragment statisticsFragment;
+    private Fragment settingsFragment;
+    private final FragmentManager fm = getSupportFragmentManager();
+    private Fragment activeFragment;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        android.content.SharedPreferences sp = getSharedPreferences("AppConfig", android.content.Context.MODE_PRIVATE);
+        sp.edit().putLong("month_budget_cents", 10000).apply();
+        sp.edit().putLong("daily_budget_cents", 500).apply();
 
-        // 初始化控件和数据库（与原代码完全一致）
-        tvTodayTotal = findViewById(R.id.tv_today_total);
-        containerHistory = findViewById(R.id.container_history);
-        db = AppDatabase.getDatabase(this);
+        // 初始化三大核心 Fragment 实例
+        historyFragment = new HistoryFragment();
+        statisticsFragment = new StatisticsFragment();
+        settingsFragment = new SettingsFragment();
 
-        // 获取今日日期字符串（格式完全一致）
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
-        String todayStr = sdf.format(new Date());
+        // 默认将明细页面（HistoryFragment）呈现给用户
+        activeFragment = historyFragment;
+        fm.beginTransaction().add(R.id.fragment_container, settingsFragment).hide(settingsFragment).commit();
+        fm.beginTransaction().add(R.id.fragment_container, statisticsFragment).hide(statisticsFragment).commit();
+        fm.beginTransaction().add(R.id.fragment_container, historyFragment).commit();
 
-        // 1. 响应式监听今日总花费（替代原Kotlin协程collectLatest）
-        LiveData<Long> totalLiveData = db.expenseDao().getDailyTotal(todayStr);
-        totalLiveData.observe(this, totalCents -> {
-            long total = totalCents != null ? totalCents : 0L;
-            // 触发金额滚动动画（调用之前转换的AnimationUtils）
-            AnimationUtils.animateAmount(tvTodayTotal, total);
-        });
+        BottomNavigationView navView = findViewById(R.id.bottom_navigation);
 
-        // 2. 响应式监听消费明细列表
-        LiveData<List<Expense>> expensesLiveData = db.expenseDao().getDailyExpenses(todayStr);
-        expensesLiveData.observe(this, list -> {
-            // 清空历史容器
-            containerHistory.removeAllViews();
-            // 遍历添加明细项（与原代码完全一致的UI参数）
-            for (Expense expense : list) {
-                TextView tv = new TextView(MainActivity.this);
-                // 文本内容完全对应原字符串模板
-                String text = expense.getCategoryName() + " ： ¥ " + (expense.getAmount() / 100.0) + " (" + expense.getSource() + ")";
-                tv.setText(text);
-                tv.setTextSize(15); // 对应原代码15sp（setTextSize默认单位为sp）
-                tv.setPadding(0, 12, 0, 12); // 像素单位与原代码完全一致
-                containerHistory.addView(tv);
+        // 拦截点击事件进行单路由转发
+        navView.setOnItemSelectedListener(item -> {
+            int id = item.getItemId();
+
+            if (id == R.id.nav_detail) { // 点击明细
+                fm.beginTransaction().hide(activeFragment).show(historyFragment).commit();
+                activeFragment = historyFragment;
+                return true;
+            } else if (id == R.id.nav_statistics) { // 点击统计
+                fm.beginTransaction().hide(activeFragment).show(statisticsFragment).commit();
+                activeFragment = statisticsFragment;
+                return true;
+            } else if (id == R.id.nav_add) { // 点击记账标签 -> 满足要求，直接跳转独立外部Activity
+                Intent intent = new Intent(MainActivity.this, QuickLogActivity.class);
+                startActivity(intent);
+                return false; // 返回 false 确保高亮状态依旧停留在原先的 Tab 节点上
+            } else if (id == R.id.nav_settings) { // 点击设置
+                fm.beginTransaction().hide(activeFragment).show(settingsFragment).commit();
+                activeFragment = settingsFragment;
+                return true;
             }
+            return false;
         });
     }
 }

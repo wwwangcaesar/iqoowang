@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:id="@+id/nav_detail"
+        android:icon="@drawable/ic_currency"
+        android:title="明细"/>
+    <item
+        android:id="@+id/nav_statistics"
+        android:icon="@drawable/ic_statistics"
+        android:title="统计"
+        android:checked="true"/>
+    <item
+        android:id="@+id/nav_add"
+        android:icon="@drawable/ic_add_circle"
+        android:title="记账"/>
+    <item
+        android:id="@+id/nav_settings"
+        android:icon="@drawable/ic_settings"
+        android:title="设置"/>
+</menu>

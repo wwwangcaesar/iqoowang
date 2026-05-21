@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+    <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#F9F9FF"
+        android:orientation="vertical"
+        android:paddingLeft="20dp"
+        android:paddingRight="20dp"
+        android:paddingTop="16dp">
+
+        <FrameLayout
+            android:id="@+id/fl_tab_container"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_bg_segmented_track"
+            android:padding="4dp">
+
+            <View
+                android:id="@+id/view_tab_indicator"
+                android:layout_width="100dp"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_segmented_indicator"
+                android:elevation="1dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="horizontal"
+                android:elevation="2dp">
+
+                <TextView
+                    android:id="@+id/tv_tab_week"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="周"
+                    android:fontFamily="sans-serif-medium"
+                    android:textColor="#111C2D"
+                    android:textSize="15sp"
+                    android:clickable="true"
+                    android:focusable="true"/>
+
+                <TextView
+                    android:id="@+id/tv_tab_month"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="月"
+                    android:fontFamily="sans-serif-normal"
+                    android:textColor="#505F76"
+                    android:textSize="15sp"
+                    android:clickable="true"
+                    android:focusable="true"/>
+
+                <TextView
+                    android:id="@+id/tv_tab_year"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="年"
+                    android:fontFamily="sans-serif-normal"
+                    android:textColor="#505F76"
+                    android:textSize="15sp"
+                    android:clickable="true"
+                    android:focusable="true"/>
+            </LinearLayout>
+        </FrameLayout>
+
+    </LinearLayout>
+
+</androidx.constraintlayout.widget.ConstraintLayout>

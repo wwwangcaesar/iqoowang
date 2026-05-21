@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 环形进度条属性 -->
+    <declare-styleable name="CircularProgressView">
+        <attr name="cpv_progress" format="integer" />
+        <attr name="cpv_stroke_width" format="dimension" />
+        <attr name="cpv_progress_color" format="color" />
+        <attr name="cpv_track_color" format="color" />
+        <attr name="cpv_text_color" format="color" />
+        <attr name="cpv_text_size" format="dimension" />
+    </declare-styleable>
+
+    <!-- 线性进度条属性 -->
+    <declare-styleable name="LinearProgressView">
+        <attr name="lpv_progress" format="integer" />
+        <attr name="lpv_height" format="dimension" />
+        <attr name="lpv_progress_color" format="color" />
+        <attr name="lpv_track_color" format="color" />
+    </declare-styleable>
+</resources>

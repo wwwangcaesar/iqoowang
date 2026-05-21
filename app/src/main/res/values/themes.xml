@@ -15,7 +15,7 @@
     </style>
         <!-- 基础 App 主题 -->
         <style name="Theme.ExpenseTracker" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-            <item name="colorPrimary">#6200EE</item>
+            <item name="colorPrimary">#FF018786</item>
             <item name="colorSecondary">#03DAC6</item>
         </style>
 

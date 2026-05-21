@@ -1,10 +1,52 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="purple_200">#FFBB86FC</color>
-    <color name="purple_500">#FF6200EE</color>
-    <color name="purple_700">#FF3700B3</color>
+    <color name="purple_200">#95d3ba</color>
+    <color name="purple_500">#80bea6</color>
+    <color name="purple_700">#064e3b</color>
     <color name="teal_200">#FF03DAC5</color>
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <!-- Surface 系列 -->
+    <color name="surface">#f9f9ff</color>
+    <color name="surface_dim">#cfdaf2</color>
+    <color name="surface_bright">#f9f9ff</color>
+    <color name="surface_container_lowest">#ffffff</color>
+    <color name="surface_container_low">#f0f3ff</color>
+    <color name="surface_container">#e7eeff</color>
+    <color name="surface_container_high">#dee8ff</color>
+    <color name="surface_container_highest">#d8e3fb</color>
+    <color name="on_surface">#111c2d</color>
+    <color name="on_surface_variant">#404944</color>
+    <color name="inverse_surface">#263143</color>
+    <color name="inverse_on_surface">#ecf1ff</color>
+
+    <!-- 边框 -->
+    <color name="outline">#707974</color>
+    <color name="outline_variant">#bfc9c3</color>
+
+    <!-- 主色系列 -->
+    <color name="primary">#003527</color>
+    <color name="on_primary">#ffffff</color>
+    <color name="primary_container">#064e3b</color>
+    <color name="on_primary_container">#80bea6</color>
+    <color name="inverse_primary">#95d3ba</color>
+
+    <!-- 次色系列 -->
+    <color name="secondary">#505f76</color>
+    <color name="on_secondary">#ffffff</color>
+    <color name="secondary_container">#d0e1fb</color>
+    <color name="on_secondary_container">#54647a</color>
+
+    <!-- 三级色系列 -->
+    <color name="tertiary">#2b2f30</color>
+    <color name="on_tertiary">#ffffff</color>
+    <color name="tertiary_container">#424547</color>
+    <color name="on_tertiary_container">#afb2b4</color>
+
+    <!-- 错误色系列 -->
+    <color name="error">#ba1a1a</color>
+    <color name="on_error">#ffffff</color>
+    <color name="error_container">#ffdad6</color>
+    <color name="on_error_container">#93000a</color>
 </resources>

@@ -1,0 +1,675 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:background="@color/surface">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="@dimen/container_padding_mobile"
+        tools:context=".MainActivity">
+
+        <!-- 顶部导航栏 -->
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/top_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingVertical="@dimen/stack_sm"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <ImageView
+                android:id="@+id/iv_avatar"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:scaleType="centerCrop"
+                android:src="@drawable/avatar_placeholder"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent"/>
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/stack_sm"
+                android:orientation="vertical"
+                app:layout_constraintBottom_toBottomOf="@id/iv_avatar"
+                app:layout_constraintStart_toEndOf="@id/iv_avatar"
+                app:layout_constraintTop_toTopOf="@id/iv_avatar">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="10月"
+                    android:textColor="@color/on_surface"
+                    android:textSize="@dimen/headline_md"
+                    android:textStyle="bold"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="Serene Ledger"
+                    android:textColor="@color/on_surface_variant"
+                    android:textSize="@dimen/body_md"/>
+
+            </LinearLayout>
+
+            <ImageView
+                android:id="@+id/iv_calendar"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_calendar"
+                app:layout_constraintBottom_toBottomOf="@id/iv_avatar"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="@id/iv_avatar"/>
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <!-- 本月预算卡片 -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/card_budget"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/stack_md"
+            app:cardCornerRadius="@dimen/rounded_lg"
+            app:cardElevation="0dp"
+            app:cardUseCompatPadding="false"
+            app:layout_constraintTop_toBottomOf="@id/top_bar"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="@dimen/stack_md">
+
+                <androidx.constraintlayout.widget.ConstraintLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        app:layout_constraintStart_toStartOf="parent"
+                        app:layout_constraintTop_toTopOf="parent">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:letterSpacing="0.05"
+                            android:text="本月预算"
+                            android:textColor="@color/on_surface_variant"
+                            android:textSize="@dimen/label_md"/>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/stack_sm"
+                            android:text="¥ 12,000.00"
+                            android:textColor="@color/primary"
+                            android:textSize="@dimen/display_lg_mobile"
+                            android:textStyle="bold"/>
+
+                    </LinearLayout>
+
+                    <!-- 环形进度条 -->
+                    <androidx.constraintlayout.widget.ConstraintLayout
+                        android:layout_width="96dp"
+                        android:layout_height="96dp"
+                        app:layout_constraintEnd_toEndOf="parent"
+                        app:layout_constraintTop_toTopOf="parent">
+
+                        <com.monsieurmahjong.iqoowang.view.CircularProgressView
+                            android:id="@+id/circularProgress"
+                            android:layout_width="96dp"
+                            android:layout_height="96dp"
+                            app:cpv_progress="68"
+                            app:cpv_progress_color="@color/primary_container"
+                            app:cpv_stroke_width="8dp"
+                            app:cpv_text_color="@color/primary"
+                            app:cpv_text_size="20sp"
+                            app:cpv_track_color="@color/surface_container_low"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintTop_toTopOf="parent"
+                            app:layout_constraintBottom_toBottomOf="parent"/>
+
+                        <TextView
+                            android:id="@+id/tv_circular_percent"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="68%"
+                            android:textColor="@color/primary"
+                            android:visibility="gone"
+                            android:textSize="@dimen/headline_sm"
+                            android:textStyle="bold"
+                            app:layout_constraintStart_toStartOf="parent"
+                            app:layout_constraintEnd_toEndOf="parent"
+                            app:layout_constraintTop_toTopOf="parent"
+                            app:layout_constraintBottom_toBottomOf="parent"/>
+
+
+                    </androidx.constraintlayout.widget.ConstraintLayout>
+
+                </androidx.constraintlayout.widget.ConstraintLayout>
+
+                <!-- 已消费/剩余预算 双卡片（移除gap，用margin） -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/stack_md"
+                    android:orientation="horizontal">
+
+                    <com.google.android.material.card.MaterialCardView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="@dimen/gutter"
+                        app:cardBackgroundColor="@color/surface_container_low"
+                        app:cardCornerRadius="@dimen/rounded_default"
+                        app:cardElevation="0dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:padding="@dimen/stack_md">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="已消费"
+                                android:textColor="@color/on_surface_variant"
+                                android:textSize="@dimen/label_md"/>
+
+                            <TextView
+                                android:id="@+id/tv_month_spent"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="@dimen/stack_sm"
+                                android:text="¥ 8,160.00"
+                                android:textColor="@color/error"
+                                android:textSize="@dimen/headline_sm"
+                                android:textStyle="bold"/>
+
+                        </LinearLayout>
+
+                    </com.google.android.material.card.MaterialCardView>
+
+                    <com.google.android.material.card.MaterialCardView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        app:cardBackgroundColor="@color/surface_container_low"
+                        app:cardCornerRadius="@dimen/rounded_default"
+                        app:cardElevation="0dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:padding="@dimen/stack_md">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="剩余预算"
+                                android:textColor="@color/on_surface_variant"
+                                android:textSize="@dimen/label_md"/>
+
+                            <TextView
+                                android:id="@+id/tv_month_left"
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="@dimen/stack_sm"
+                                android:text="¥ 3,840.00"
+                                android:textColor="@color/primary"
+                                android:textSize="@dimen/headline_sm"
+                                android:textStyle="bold"/>
+
+                        </LinearLayout>
+
+                    </com.google.android.material.card.MaterialCardView>
+
+                </LinearLayout>
+
+            </LinearLayout>
+
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- 今日支出 -->
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/today_spending"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/stack_md"
+            app:layout_constraintTop_toBottomOf="@id/card_budget"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="今日支出"
+                android:textColor="@color/on_surface"
+                android:textSize="@dimen/headline_sm"
+                android:textStyle="normal"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="¥ 342.50"
+                android:textColor="@color/on_surface"
+                android:textSize="@dimen/headline_sm"
+                android:textStyle="bold"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent"/>
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <!-- 线性进度条 -->
+        <com.monsieurmahjong.iqoowang.view.LinearProgressView
+            android:id="@+id/linearProgress"
+            android:layout_width="match_parent"
+            android:layout_height="8dp"
+            android:layout_marginTop="@dimen/stack_sm"
+            app:layout_constraintTop_toBottomOf="@id/today_spending"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:lpv_height="8dp"
+            app:lpv_progress="68"
+            app:lpv_progress_color="@color/primary_container"
+            app:lpv_track_color="@color/surface_container_low"/>
+
+        <!-- 最近交易标题 -->
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:id="@+id/recent_transactions_header"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/stack_md"
+            app:layout_constraintTop_toBottomOf="@id/linearProgress"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="最近交易"
+                android:textColor="@color/on_surface"
+                android:textSize="@dimen/headline_sm"
+                android:textStyle="normal"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent"/>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="查看全部"
+                android:textColor="@color/secondary"
+                android:textSize="@dimen/body_md"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent"/>
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+        <!-- 交易列表（移除gap，用margin） -->
+        <LinearLayout
+            android:id="@+id/transaction_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/stack_sm"
+            android:orientation="vertical"
+            app:layout_constraintTop_toBottomOf="@id/recent_transactions_header"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <!-- 星巴克咖啡 -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                app:cardBackgroundColor="@color/surface_container_lowest"
+                app:cardCornerRadius="@dimen/rounded_lg"
+                app:cardElevation="0dp">
+
+                <androidx.constraintlayout.widget.ConstraintLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:paddingHorizontal="@dimen/stack_md">
+
+                    <ImageView
+                        android:id="@+id/iv_food"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@mipmap/ic_food"
+                        app:layout_constraintStart_toStartOf="parent"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintBottom_toBottomOf="parent"/>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="@dimen/stack_sm"
+                        android:orientation="vertical"
+                        app:layout_constraintStart_toEndOf="@id/iv_food"
+                        app:layout_constraintEnd_toStartOf="@id/tv_amount_food"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintBottom_toBottomOf="parent">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="星巴克咖啡"
+                            android:textColor="@color/on_surface"
+                            android:textSize="@dimen/body_md"
+                            android:textStyle="normal"/>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="下午 02:30 · 餐饮"
+                            android:textColor="@color/on_surface_variant"
+                            android:textSize="@dimen/label_sm"/>
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tv_amount_food"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="-¥ 38.00"
+                        android:textColor="@color/error"
+                        android:textSize="@dimen/body_md"
+                        android:textStyle="bold"
+                        app:layout_constraintEnd_toEndOf="parent"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintBottom_toBottomOf="parent"/>
+
+                </androidx.constraintlayout.widget.ConstraintLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- 滴滴出行 -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:layout_marginTop="@dimen/stack_sm"
+                app:cardBackgroundColor="@color/surface_container_lowest"
+                app:cardCornerRadius="@dimen/rounded_lg"
+                app:cardElevation="0dp">
+
+                <androidx.constraintlayout.widget.ConstraintLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:paddingHorizontal="@dimen/stack_md">
+
+                    <ImageView
+                        android:id="@+id/iv_transport"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@mipmap/ic_transport"
+                        app:layout_constraintStart_toStartOf="parent"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintBottom_toBottomOf="parent"/>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="@dimen/stack_sm"
+                        android:orientation="vertical"
+                        app:layout_constraintStart_toEndOf="@id/iv_transport"
+                        app:layout_constraintEnd_toStartOf="@id/tv_amount_transport"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintBottom_toBottomOf="parent">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="滴滴出行"
+                            android:textColor="@color/on_surface"
+                            android:textSize="@dimen/body_md"
+                            android:textStyle="normal"/>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="上午 09:15 · 交通"
+                            android:textColor="@color/on_surface_variant"
+                            android:textSize="@dimen/label_sm"/>
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tv_amount_transport"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="-¥ 42.50"
+                        android:textColor="@color/error"
+                        android:textSize="@dimen/body_md"
+                        android:textStyle="bold"
+                        app:layout_constraintEnd_toEndOf="parent"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintBottom_toBottomOf="parent"/>
+
+                </androidx.constraintlayout.widget.ConstraintLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- 工资收入 -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:layout_marginTop="@dimen/stack_sm"
+                app:cardBackgroundColor="@color/surface_container_lowest"
+                app:cardCornerRadius="@dimen/rounded_lg"
+                app:cardElevation="0dp">
+
+                <androidx.constraintlayout.widget.ConstraintLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:paddingHorizontal="@dimen/stack_md">
+
+                    <ImageView
+                        android:id="@+id/iv_income"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@mipmap/ic_shopping"
+                        app:layout_constraintStart_toStartOf="parent"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintBottom_toBottomOf="parent"/>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="@dimen/stack_sm"
+                        android:orientation="vertical"
+                        app:layout_constraintStart_toEndOf="@id/iv_income"
+                        app:layout_constraintEnd_toStartOf="@id/tv_amount_income"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintBottom_toBottomOf="parent">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="工资收入"
+                            android:textColor="@color/on_surface"
+                            android:textSize="@dimen/body_md"
+                            android:textStyle="normal"/>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="昨天 · 收入"
+                            android:textColor="@color/on_surface_variant"
+                            android:textSize="@dimen/label_sm"/>
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tv_amount_income"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="+¥ 18,000.00"
+                        android:textColor="@color/primary"
+                        android:textSize="@dimen/body_md"
+                        android:textStyle="bold"
+                        app:layout_constraintEnd_toEndOf="parent"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintBottom_toBottomOf="parent"/>
+
+                </androidx.constraintlayout.widget.ConstraintLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- 优衣库 -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="64dp"
+                android:layout_marginTop="@dimen/stack_sm"
+                app:cardBackgroundColor="@color/surface_container_lowest"
+                app:cardCornerRadius="@dimen/rounded_lg"
+                app:cardElevation="0dp">
+
+                <androidx.constraintlayout.widget.ConstraintLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:paddingHorizontal="@dimen/stack_md">
+
+                    <ImageView
+                        android:id="@+id/iv_shopping"
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:padding="12dp"
+                        android:src="@mipmap/ic_shopping"
+                        app:layout_constraintStart_toStartOf="parent"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintBottom_toBottomOf="parent"/>
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="@dimen/stack_sm"
+                        android:orientation="vertical"
+                        app:layout_constraintStart_toEndOf="@id/iv_shopping"
+                        app:layout_constraintEnd_toStartOf="@id/tv_amount_shopping"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintBottom_toBottomOf="parent">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="优衣库"
+                            android:textColor="@color/on_surface"
+                            android:textSize="@dimen/body_md"
+                            android:textStyle="normal"/>
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="10月20日 · 购物"
+                            android:textColor="@color/on_surface_variant"
+                            android:textSize="@dimen/label_sm"/>
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tv_amount_shopping"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="-¥ 299.00"
+                        android:textColor="@color/error"
+                        android:textSize="@dimen/body_md"
+                        android:textStyle="bold"
+                        app:layout_constraintEnd_toEndOf="parent"
+                        app:layout_constraintTop_toTopOf="parent"
+                        app:layout_constraintBottom_toBottomOf="parent"/>
+
+                </androidx.constraintlayout.widget.ConstraintLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+        </LinearLayout>
+
+        <!-- 明智消费提示卡片 -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/card_tip"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="88dp"
+            android:layout_marginTop="@dimen/stack_md"
+            app:cardBackgroundColor="@color/primary_container"
+            app:cardCornerRadius="@dimen/rounded_lg"
+            app:cardElevation="0dp"
+            app:layout_constraintTop_toBottomOf="@id/transaction_list"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <androidx.constraintlayout.widget.ConstraintLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:padding="@dimen/stack_md">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    app:layout_constraintStart_toStartOf="parent"
+                    app:layout_constraintEnd_toStartOf="@id/iv_arrow"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintBottom_toBottomOf="parent">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="明智消费提示"
+                        android:textColor="@color/on_primary"
+                        android:textSize="@dimen/headline_sm"
+                        android:textStyle="bold"/>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/stack_sm"
+                        android:lineSpacingExtra="4dp"
+                        android:text="您的餐饮支出比上月降低了 12%，\n继续保持！"
+                        android:textColor="@color/on_primary_container"
+                        android:textSize="@dimen/body_md"/>
+
+                </LinearLayout>
+
+                <!-- 装饰圆形+箭头 -->
+                <ImageView
+                    android:id="@+id/iv_arrow"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:padding="12dp"
+                    android:src="@mipmap/ic_drinks"
+                    app:layout_constraintEnd_toEndOf="parent"
+                    app:layout_constraintTop_toTopOf="parent"
+                    app:layout_constraintBottom_toBottomOf="parent"/>
+
+            </androidx.constraintlayout.widget.ConstraintLayout>
+
+        </com.google.android.material.card.MaterialCardView>
+
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</ScrollView>
