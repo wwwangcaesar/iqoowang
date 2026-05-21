@@ -1,0 +1,88 @@
+package com.monsieurmahjong.iqoowang.dao;
+
+import androidx.room.Entity;
+import androidx.room.Index;
+import androidx.room.PrimaryKey;
+
+import androidx.room.Entity;
+import androidx.room.Ignore;
+import androidx.room.Index;
+import androidx.room.PrimaryKey;
+
+@Entity(
+        tableName = "expense_table",
+        indices = {@Index(value = "date_str")}
+)
+public class Expense {
+    @PrimaryKey(autoGenerate = true)
+    private final long id;
+
+    private final long amount;          // 单位：分
+    private final String categoryName;  // 分类名称
+    private final long timestamp;
+    private final String date_str;      // 格式化日期：yyyy-MM-dd
+    private final String source;        // 来源：NFC, MANUAL, SCREENSHOT
+
+    // ✅ 保留这个作为Room的主构造函数（不要加@Ignore）
+    // Room会用这个构造函数从数据库中读取数据并创建对象
+    public Expense(long id, long amount, String categoryName, long timestamp, String date_str, String source) {
+        this.id = id;
+        this.amount = amount;
+        this.categoryName = categoryName;
+        this.timestamp = timestamp;
+        this.date_str = date_str;
+        this.source = source;
+    }
+
+    // ✅ 给这个简化构造函数添加@Ignore注解
+    // 告诉Room：这个是给我们业务代码用的，你不要用
+    @Ignore
+    public Expense(long amount, String categoryName, String date_str, String source) {
+        this(0, amount, categoryName, System.currentTimeMillis(), date_str, source);
+    }
+
+    // Getter方法保持不变
+    public long getId() { return id; }
+    public long getAmount() { return amount; }
+    public String getCategoryName() { return categoryName; }
+    public long getTimestamp() { return timestamp; }
+    public String getDate_str() { return date_str; }
+    public String getSource() { return source; }
+
+    // equals/hashCode/toString保持不变
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Expense expense = (Expense) o;
+        return id == expense.id &&
+                amount == expense.amount &&
+                timestamp == expense.timestamp &&
+                categoryName.equals(expense.categoryName) &&
+                date_str.equals(expense.date_str) &&
+                source.equals(expense.source);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = (int) (id ^ (id >>> 32));
+        result = 31 * result + (int) (amount ^ (amount >>> 32));
+        result = 31 * result + categoryName.hashCode();
+        result = 31 * result + (int) (timestamp ^ (timestamp >>> 32));
+        result = 31 * result + date_str.hashCode();
+        result = 31 * result + source.hashCode();
+        return result;
+    }
+
+    @Override
+    public String toString() {
+        return "Expense{" +
+                "id=" + id +
+                ", amount=" + amount +
+                ", categoryName='" + categoryName + '\'' +
+                ", timestamp=" + timestamp +
+                ", date_str='" + date_str + '\'' +
+                ", source='" + source + '\'' +
+                '}';
+    }
+}
