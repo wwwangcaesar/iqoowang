@@ -68,12 +68,12 @@ public class HistoryFragment extends Fragment {
 
         db = AppDatabase.getDatabase(requireContext());
 
-        buildReactiveDataPipelines();
+        buildReactiveDataPipelines(view);
 
         return view;
     }
 
-    private void buildReactiveDataPipelines() {
+    private void buildReactiveDataPipelines(View view) {
         String todayStr = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
 
         Calendar cal = Calendar.getInstance();
@@ -96,7 +96,7 @@ public class HistoryFragment extends Fragment {
             long totalMonthSpentCents = monthCents != null ? monthCents : 0L;
 
             // 每次数据刷新时动态读取SP，确保设置页面修改后能实时生效
-            long dynamicMonthBudget = sp.getLong("month_budget_cents", 1200000L); // 默认 12000.00 元
+            long dynamicMonthBudget = sp.getLong("month_budget_cents", 500000L); // 默认 12000.00 元
 
             int percent = (int) ((totalMonthSpentCents * 100) / dynamicMonthBudget);
             if (percent > 100) percent = 100;
@@ -226,6 +226,52 @@ public class HistoryFragment extends Fragment {
                 transactionListContainer.addView(cardView);
             }
         });
+        updateSmartConsumptionTip(view);
+    }
+
+    private void updateSmartConsumptionTip(View view) {
+        TextView tvSmartTip = view.findViewById(R.id.tv_smart_tip);
+        if (tvSmartTip == null) return;
+
+        new Thread(() -> {
+            Calendar cal = Calendar.getInstance();
+
+            // 1. 获取本月时间区间
+            long thisMonthEnd = System.currentTimeMillis();
+            cal.set(Calendar.DAY_OF_MONTH, 1);
+            cal.set(Calendar.HOUR_OF_DAY, 0);
+            cal.set(Calendar.MINUTE, 0);
+            cal.set(Calendar.SECOND, 0);
+            long thisMonthStart = cal.getTimeInMillis();
+
+            // 2. 获取上月时间区间
+            cal.add(Calendar.MONTH, -1);
+            long lastMonthStart = cal.getTimeInMillis();
+            cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH));
+            cal.set(Calendar.HOUR_OF_DAY, 23);
+            cal.set(Calendar.MINUTE, 59);
+            cal.set(Calendar.SECOND, 59);
+            long lastMonthEnd = cal.getTimeInMillis();
+
+            // 3. 提取“餐饮美食”或“Food”类别的开销进行比对
+            long thisMonthDining = db.expenseDao().getCategoryTotalSync("%餐饮%", thisMonthStart, thisMonthEnd);
+            long lastMonthDining = db.expenseDao().getCategoryTotalSync("%餐饮%", lastMonthStart, lastMonthEnd);
+
+            // 4. 计算并更新 UI
+            requireActivity().runOnUiThread(() -> {
+                if (lastMonthDining > 0) {
+                    if (thisMonthDining < lastMonthDining) {
+                        int percent = (int) (((lastMonthDining - thisMonthDining) * 100) / lastMonthDining);
+                        tvSmartTip.setText(String.format(Locale.getDefault(), "您的餐饮支出比上月降低了 %d%%，\n继续保持！", percent));
+                    } else {
+                        int percent = (int) (((thisMonthDining - lastMonthDining) * 100) / lastMonthDining);
+                        tvSmartTip.setText(String.format(Locale.getDefault(), "您的餐饮支出比上月增加了 %d%%，\n请注意合理规划！", percent));
+                    }
+                } else {
+                    tvSmartTip.setText("合理规划每一笔开销，\n让财富稳步增长！");
+                }
+            });
+        }).start();
     }
 
     private void mapIconResource(String category, ImageView iv) {
@@ -237,14 +283,18 @@ public class HistoryFragment extends Fragment {
             iv.setImageResource(R.mipmap.ic_transport);
         } else if (category.contains("购物") || category.toLowerCase().contains("shop")) {
             iv.setImageResource(R.mipmap.ic_shopping);
+        } else if (category.contains("零食") || category.toLowerCase().contains("drinks")) {
+            iv.setImageResource(R.mipmap.ic_drinks);
+        } else if (category.contains("娱乐") || category.toLowerCase().contains("entertainment")) {
+            iv.setImageResource(R.mipmap.ic_entertainment);
         } else {
-            iv.setImageResource(R.mipmap.ic_food);
+            iv.setImageResource(R.mipmap.ic_other);
         }
     }
 
     private void renderEmptyView() {
         TextView emptyTv = new TextView(getContext());
-        emptyTv.setText("今日暂无记账流水\n点击下方 '+' 记录第一笔消费吧");
+        emptyTv.setText("今日暂无记账流水");
         emptyTv.setGravity(Gravity.CENTER);
         emptyTv.setLineSpacing(4, 1);
         emptyTv.setPadding(0, dp2px(40), 0, dp2px(40));

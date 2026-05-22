@@ -137,5 +137,11 @@ public class SmoothLineChartView extends View {
             canvas.drawText(xLabels[i], paddingSide + (i * labelStep), getHeight() - 10, textPaint);
         }
     }
+    // 在 SmoothLineChartView.java 中增加此方法
+    public void setDynamicLabels(String[] labels) {
+        this.xLabels = labels;
+        invalidate(); // 请求重绘底部文字
+    }
+
 }
 

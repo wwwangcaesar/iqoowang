@@ -35,4 +35,17 @@ public interface ExpenseDao {
     // 修正：表名从expenses改为expense_table
     @Query("SELECT * FROM expense_table WHERE timestamp >= :startTime AND timestamp <= :endTime ORDER BY timestamp DESC")
     LiveData<List<Expense>> getExpensesByTimeRange(long startTime, long endTime);
+
+    // ===============================================
+    // 高阶同步查询（用于后台线程的复杂数据分析）
+    // ===============================================
+
+    // 获取指定时间段内的所有消费记录
+    @Query("SELECT * FROM expense_table WHERE timestamp >= :startTime AND timestamp <= :endTime ORDER BY timestamp ASC")
+    List<Expense> getExpensesInRangeSync(long startTime, long endTime);
+
+    // 根据分类名称模糊查询指定时间段内的总消费
+    @Query("SELECT SUM(amount) FROM expense_table WHERE categoryName LIKE :category AND timestamp >= :startTime AND timestamp <= :endTime")
+    long getCategoryTotalSync(String category, long startTime, long endTime);
+
 }

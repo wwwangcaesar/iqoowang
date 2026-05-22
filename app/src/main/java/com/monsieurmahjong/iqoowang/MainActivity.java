@@ -30,7 +30,7 @@ public class MainActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         android.content.SharedPreferences sp = getSharedPreferences("AppConfig", android.content.Context.MODE_PRIVATE);
-        sp.edit().putLong("month_budget_cents", 10000).apply();
+        sp.edit().putLong("month_budget_cents", 3000).apply();
         sp.edit().putLong("daily_budget_cents", 500).apply();
 
         // 初始化三大核心 Fragment 实例

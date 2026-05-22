@@ -114,7 +114,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:layout_marginTop="@dimen/stack_sm"
-                            android:text="¥ 12,000.00"
+                            android:text="¥ - -"
                             android:textColor="@color/primary"
                             android:textSize="@dimen/display_lg_mobile"
                             android:textStyle="bold"/>
@@ -644,6 +644,7 @@
                         android:textStyle="bold"/>
 
                     <TextView
+                        android:id="@+id/tv_smart_tip"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="@dimen/stack_sm"
