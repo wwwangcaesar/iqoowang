@@ -47,5 +47,10 @@ public interface ExpenseDao {
     // 根据分类名称模糊查询指定时间段内的总消费
     @Query("SELECT SUM(amount) FROM expense_table WHERE categoryName LIKE :category AND timestamp >= :startTime AND timestamp <= :endTime")
     long getCategoryTotalSync(String category, long startTime, long endTime);
+    @Query("SELECT COUNT(*) FROM expense_table")
+    int getExpenseCountSync();
+
+    @Query("SELECT SUM(amount) FROM expense_table WHERE date_str LIKE :month || '%'")
+    long getMonthTotalCentsSync(String month);
 
 }

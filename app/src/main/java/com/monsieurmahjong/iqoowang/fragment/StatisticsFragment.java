@@ -77,16 +77,21 @@ public class StatisticsFragment extends Fragment {
         setupChartInteractions();
         return view;
     }
-
+    private int currentTab = 0;
     private void setupChartInteractions() {
         segmentedTab.setOnTabSelectedListener((index, text) -> {
-            loadAnalyticsData(index); // 0: 周, 1: 月, 2: 年
+            currentTab = index;
+            loadAnalyticsData(index);
         });
-
-        // 首次进入强制加载本周数据
         loadAnalyticsData(0);
     }
 
+    @Override
+    public void onResume() {
+        super.onResume();
+        // 瞬间重加载最新账本分析
+        loadAnalyticsData(currentTab);
+    }
     /**
      * 核心数据分析引擎 (运行在子线程防卡顿)
      */

@@ -1,5 +1,6 @@
 package com.monsieurmahjong.iqoowang.fragment;
 
+import android.content.Context;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.view.Gravity;
@@ -30,50 +31,68 @@ import java.util.Locale;
 
 public class HistoryFragment extends Fragment {
 
-    // 预算看板组件
     private CircularProgressView circularProgress;
     private TextView tvCircularText;
     private TextView tvMonthSpent;
     private TextView tvMonthLeft;
+    private TextView tvMonthBudgetTotal;
 
-    // 今日支出组件
     private TextView tvTodaySpending;
     private LinearProgressView linearProgress;
-
-    // 动态列表容器
     private LinearLayout transactionListContainer;
 
     private AppDatabase db;
-    private final long TOTAL_MONTH_BUDGET_CENTS = 1200000L; // 本月预算 12,000.00 元
-    private final long DAILY_BUDGET_LIMIT_CENTS = 50000L;    // 每日建议预算上限 500.00 元
+    private static final String PREFS_NAME = "SereneLedgerConfig";
+    private static final String KEY_MONTHLY_BUDGET = "monthly_budget_cents";
 
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.fragment_history, container, false);
 
-        // 1. 安全初始化：直接使用 XML 里刚刚添加的 ID，杜绝 ClassCastException 崩溃！
         circularProgress = view.findViewById(R.id.circularProgress);
         tvCircularText = view.findViewById(R.id.tv_circular_percent);
         tvMonthSpent = view.findViewById(R.id.tv_month_spent);
         tvMonthLeft = view.findViewById(R.id.tv_month_left);
 
-        // 初始化今日支出控件
+        // 依靠严密的 DOM 视树向下寻解并动态锚定没有给定明确 ID 的 tvMonthBudgetTotal
+        try {
+            MaterialCardView cardBudget = view.findViewById(R.id.card_budget);
+            LinearLayout rootLayout = (LinearLayout) cardBudget.getChildAt(0);
+            ConstraintLayout innerConstraint = (ConstraintLayout) rootLayout.getChildAt(0);
+            LinearLayout textContainer = (LinearLayout) innerConstraint.getChildAt(0);
+            tvMonthBudgetTotal = (TextView) textContainer.getChildAt(1);
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
         ConstraintLayout todaySpendingLayout = view.findViewById(R.id.today_spending);
         tvTodaySpending = (TextView) todaySpendingLayout.getChildAt(1);
         linearProgress = view.findViewById(R.id.linearProgress);
-
-        // 初始化流水列表容器
         transactionListContainer = view.findViewById(R.id.transaction_list);
 
         db = AppDatabase.getDatabase(requireContext());
 
-        buildReactiveDataPipelines(view);
-
         return view;
     }
 
-    private void buildReactiveDataPipelines(View view) {
+    @Override
+    public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+        super.onViewCreated(view, savedInstanceState);
+        // 挂载响应式观察者链路
+        buildReactiveDataPipelines();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        // 关键打通：每次用户切换切回本 Fragment 瞬间强制迫使观察者管线重绘刷新，解决不退出不刷新痛点！
+        buildReactiveDataPipelines();
+    }
+
+    private void buildReactiveDataPipelines() {
+        if (!isAdded() || getContext() == null) return;
+
         String todayStr = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
 
         Calendar cal = Calendar.getInstance();
@@ -86,62 +105,68 @@ public class HistoryFragment extends Fragment {
         cal.add(Calendar.MONTH, 1);
         long endOfMonth = cal.getTimeInMillis() - 1;
 
-        // 获取 SharedPreferences 实例（预留给设置页面）
-        android.content.SharedPreferences sp = requireContext().getSharedPreferences("AppConfig", android.content.Context.MODE_PRIVATE);
+        android.content.SharedPreferences sp = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
 
         // ==========================================
-        // 管道一：本月预算与环形图联动
+        // 管线一：本月预算、已消费、剩余金额动画全量滚动
         // ==========================================
         db.expenseDao().getTotalByTimeRange(startOfMonth, endOfMonth).observe(getViewLifecycleOwner(), monthCents -> {
             long totalMonthSpentCents = monthCents != null ? monthCents : 0L;
 
-            // 每次数据刷新时动态读取SP，确保设置页面修改后能实时生效
-            long dynamicMonthBudget = sp.getLong("month_budget_cents", 500000L); // 默认 12000.00 元
+            // 完美对齐设置页面同步输出
+            long dynamicMonthBudget = sp.getLong(KEY_MONTHLY_BUDGET, 500000L); // 默认5000元
 
-            int percent = (int) ((totalMonthSpentCents * 100) / dynamicMonthBudget);
+            int percent = (int) (dynamicMonthBudget <= 0 ? 0 : ((totalMonthSpentCents * 100) / dynamicMonthBudget));
             if (percent > 100) percent = 100;
 
-            circularProgress.setProgress(percent);
+            if (circularProgress != null) {
+                circularProgress.setProgress(percent);
+            }
             if (tvCircularText != null) {
                 tvCircularText.setText(String.format(Locale.getDefault(), "%d%%", percent));
             }
 
+            // 核心动画功能落地：全部交给高阶数值平滑动画
+            if (tvMonthBudgetTotal != null) {
+                AnimationUtils.animateAmount(tvMonthBudgetTotal, dynamicMonthBudget);
+            }
             if (tvMonthSpent != null) {
-                tvMonthSpent.setText(String.format(Locale.getDefault(), "¥ %.2f", totalMonthSpentCents / 100.0));
+                AnimationUtils.animateAmount(tvMonthSpent, totalMonthSpentCents);
             }
 
             long remainingCents = dynamicMonthBudget - totalMonthSpentCents;
             if (remainingCents < 0) remainingCents = 0;
             if (tvMonthLeft != null) {
-                tvMonthLeft.setText(String.format(Locale.getDefault(), "¥ %.2f", remainingCents / 100.0));
+                AnimationUtils.animateAmount(tvMonthLeft, remainingCents);
             }
         });
 
         // ==========================================
-        // 管道二：今日支出与动效
+        // 管线二：今日支出监控与安全色阶提醒
         // ==========================================
         db.expenseDao().getDailyTotal(todayStr).observe(getViewLifecycleOwner(), totalCents -> {
             long total = totalCents != null ? totalCents : 0L;
             AnimationUtils.animateAmount(tvTodaySpending, total);
 
-            // 动态读取日预算 SP
-            long dynamicDailyBudget = sp.getLong("daily_budget_cents", 50000L); // 默认 500.00 元
-
+            long dynamicDailyBudget = 50000L; // 预设 500.00 元建议上线
             int dailyPercent = (int) ((total * 100) / dynamicDailyBudget);
             if (dailyPercent > 100) dailyPercent = 100;
-            linearProgress.setProgress(dailyPercent);
 
-            if (total > dynamicDailyBudget) {
-                linearProgress.setProgressColor(Color.parseColor("#BA1A1A"));
-            } else {
-                linearProgress.setProgressColor(Color.parseColor("#2B6954"));
+            if (linearProgress != null) {
+                linearProgress.setProgress(dailyPercent);
+                if (total > dynamicDailyBudget) {
+                    linearProgress.setProgressColor(Color.parseColor("#BA1A1A"));
+                } else {
+                    linearProgress.setProgressColor(Color.parseColor("#003527"));
+                }
             }
         });
 
         // ==========================================
-        // 管道三：最近交易明细列表动态渲染
+        // 管线三：动态记账流水列表增量渲染
         // ==========================================
         db.expenseDao().getDailyExpenses(todayStr).observe(getViewLifecycleOwner(), list -> {
+            if (transactionListContainer == null) return;
             transactionListContainer.removeAllViews();
 
             if (list == null || list.isEmpty()) {
@@ -160,123 +185,62 @@ public class HistoryFragment extends Fragment {
                 cardParams.bottomMargin = dp2px(8);
                 cardView.setLayoutParams(cardParams);
 
-                androidx.constraintlayout.widget.ConstraintLayout itemContent = new androidx.constraintlayout.widget.ConstraintLayout(requireContext());
+                ConstraintLayout itemContent = new ConstraintLayout(requireContext());
                 itemContent.setPadding(dp2px(16), 0, dp2px(16), 0);
                 cardView.addView(itemContent);
 
                 ImageView ivIcon = new ImageView(requireContext());
                 ivIcon.setId(View.generateViewId());
-                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams iconParams = new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(dp2px(48), dp2px(48));
-                iconParams.startToStart = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
-                iconParams.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
-                iconParams.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
+                ConstraintLayout.LayoutParams iconParams = new ConstraintLayout.LayoutParams(dp2px(48), dp2px(48));
+                iconParams.startToStart = ConstraintLayout.LayoutParams.PARENT_ID;
+                iconParams.topToTop = ConstraintLayout.LayoutParams.PARENT_ID;
+                iconParams.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
                 ivIcon.setLayoutParams(iconParams);
                 ivIcon.setPadding(dp2px(12), dp2px(12), dp2px(12), dp2px(12));
-
                 mapIconResource(expense.getCategoryName(), ivIcon);
                 itemContent.addView(ivIcon);
 
-                TextView tvAmount = new TextView(requireContext());
-                tvAmount.setId(View.generateViewId());
-                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams amountParams = new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
-                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                amountParams.endToEnd = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
-                amountParams.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
-                amountParams.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
-                tvAmount.setLayoutParams(amountParams);
+                TextView tvCategory = new TextView(requireContext());
+                tvCategory.setId(View.generateViewId());
+                tvCategory.setText(expense.getCategoryName());
+                tvCategory.setTextColor(Color.parseColor("#111C2D"));
+                tvCategory.setTextSize(16);
+                ConstraintLayout.LayoutParams catParams = new ConstraintLayout.LayoutParams(
+                        ConstraintLayout.LayoutParams.WRAP_CONTENT, ConstraintLayout.LayoutParams.WRAP_CONTENT);
+                catParams.startToEnd = ivIcon.getId();
+                catParams.topToTop = ivIcon.getId();
+                catParams.bottomToBottom = ivIcon.getId();
+                tvCategory.setLayoutParams(catParams);
+                itemContent.addView(tvCategory);
 
-                // 【修复】：使用你现有的 getAmount() 方法
-                tvAmount.setText(String.format(Locale.getDefault(), "-¥ %.2f", expense.getAmount() / 100.0));
-                tvAmount.setTextColor(Color.parseColor("#BA1A1A"));
-                tvAmount.setTextSize(16);
-                itemContent.addView(tvAmount);
-
-                LinearLayout textGroup = new LinearLayout(requireContext());
-                textGroup.setOrientation(LinearLayout.VERTICAL);
-                androidx.constraintlayout.widget.ConstraintLayout.LayoutParams groupParams = new androidx.constraintlayout.widget.ConstraintLayout.LayoutParams(
-                        0, ViewGroup.LayoutParams.WRAP_CONTENT);
-                groupParams.startToEnd = ivIcon.getId();
-                groupParams.endToStart = tvAmount.getId();
-                groupParams.topToTop = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
-                groupParams.bottomToBottom = androidx.constraintlayout.widget.ConstraintLayout.LayoutParams.PARENT_ID;
-                groupParams.leftMargin = dp2px(12);
-                textGroup.setLayoutParams(groupParams);
-
-                TextView tvTitle = new TextView(requireContext());
-                tvTitle.setText(expense.getCategoryName());
-                tvTitle.setTextColor(Color.parseColor("#111C2D"));
-                tvTitle.setTextSize(15);
-
-                TextView tvSubtitle = new TextView(requireContext());
-                String amPmTimeStr = new SimpleDateFormat("a hh:mm", Locale.CHINA).format(new Date(expense.getTimestamp()));
-
-                // 【修复】：使用你现有的 getSource() 方法作为元数据展示
-                String sourceMeta = expense.getSource() != null && !expense.getSource().isEmpty() ? expense.getSource() : "智能记账";
-                String meta = amPmTimeStr + " · " + sourceMeta;
-
-                tvSubtitle.setText(meta);
-                tvSubtitle.setTextColor(Color.parseColor("#404944"));
-                tvSubtitle.setTextSize(12);
-                tvSubtitle.setPadding(0, dp2px(2), 0, 0);
-
-                textGroup.addView(tvTitle);
-                textGroup.addView(tvSubtitle);
-                itemContent.addView(textGroup);
+                TextView tvMoney = new TextView(requireContext());
+                tvMoney.setText(String.format(Locale.getDefault(), "¥ %.2f", expense.getAmount() / 100.0));
+                tvMoney.setTextColor(Color.parseColor("#003527"));
+                tvMoney.setTextSize(16);
+                ConstraintLayout.LayoutParams moneyParams = new ConstraintLayout.LayoutParams(
+                        ConstraintLayout.LayoutParams.WRAP_CONTENT, ConstraintLayout.LayoutParams.WRAP_CONTENT);
+                moneyParams.endToEnd = ConstraintLayout.LayoutParams.PARENT_ID;
+                moneyParams.topToTop = ConstraintLayout.LayoutParams.PARENT_ID;
+                moneyParams.bottomToBottom = ConstraintLayout.LayoutParams.PARENT_ID;
+                tvMoney.setLayoutParams(moneyParams);
+                itemContent.addView(tvMoney);
 
                 transactionListContainer.addView(cardView);
             }
         });
-        updateSmartConsumptionTip(view);
     }
 
-    private void updateSmartConsumptionTip(View view) {
-        TextView tvSmartTip = view.findViewById(R.id.tv_smart_tip);
-        if (tvSmartTip == null) return;
-
-        new Thread(() -> {
-            Calendar cal = Calendar.getInstance();
-
-            // 1. 获取本月时间区间
-            long thisMonthEnd = System.currentTimeMillis();
-            cal.set(Calendar.DAY_OF_MONTH, 1);
-            cal.set(Calendar.HOUR_OF_DAY, 0);
-            cal.set(Calendar.MINUTE, 0);
-            cal.set(Calendar.SECOND, 0);
-            long thisMonthStart = cal.getTimeInMillis();
-
-            // 2. 获取上月时间区间
-            cal.add(Calendar.MONTH, -1);
-            long lastMonthStart = cal.getTimeInMillis();
-            cal.set(Calendar.DAY_OF_MONTH, cal.getActualMaximum(Calendar.DAY_OF_MONTH));
-            cal.set(Calendar.HOUR_OF_DAY, 23);
-            cal.set(Calendar.MINUTE, 59);
-            cal.set(Calendar.SECOND, 59);
-            long lastMonthEnd = cal.getTimeInMillis();
-
-            // 3. 提取“餐饮美食”或“Food”类别的开销进行比对
-            long thisMonthDining = db.expenseDao().getCategoryTotalSync("%餐饮%", thisMonthStart, thisMonthEnd);
-            long lastMonthDining = db.expenseDao().getCategoryTotalSync("%餐饮%", lastMonthStart, lastMonthEnd);
-
-            // 4. 计算并更新 UI
-            requireActivity().runOnUiThread(() -> {
-                if (lastMonthDining > 0) {
-                    if (thisMonthDining < lastMonthDining) {
-                        int percent = (int) (((lastMonthDining - thisMonthDining) * 100) / lastMonthDining);
-                        tvSmartTip.setText(String.format(Locale.getDefault(), "您的餐饮支出比上月降低了 %d%%，\n继续保持！", percent));
-                    } else {
-                        int percent = (int) (((thisMonthDining - lastMonthDining) * 100) / lastMonthDining);
-                        tvSmartTip.setText(String.format(Locale.getDefault(), "您的餐饮支出比上月增加了 %d%%，\n请注意合理规划！", percent));
-                    }
-                } else {
-                    tvSmartTip.setText("合理规划每一笔开销，\n让财富稳步增长！");
-                }
-            });
-        }).start();
+    private void renderEmptyView() {
+        TextView emptyTv = new TextView(getContext());
+        emptyTv.setText("今日暂无记账流水");
+        emptyTv.setGravity(Gravity.CENTER);
+        emptyTv.setPadding(0, dp2px(32), 0, dp2px(32));
+        emptyTv.setTextColor(Color.parseColor("#505F76"));
+        transactionListContainer.addView(emptyTv);
     }
 
     private void mapIconResource(String category, ImageView iv) {
         if (category == null) category = "";
-
         if (category.contains("餐饮") || category.toLowerCase().contains("food")) {
             iv.setImageResource(R.mipmap.ic_food);
         } else if (category.contains("交通") || category.toLowerCase().contains("transport")) {
@@ -290,16 +254,6 @@ public class HistoryFragment extends Fragment {
         } else {
             iv.setImageResource(R.mipmap.ic_other);
         }
-    }
-
-    private void renderEmptyView() {
-        TextView emptyTv = new TextView(getContext());
-        emptyTv.setText("今日暂无记账流水");
-        emptyTv.setGravity(Gravity.CENTER);
-        emptyTv.setLineSpacing(4, 1);
-        emptyTv.setPadding(0, dp2px(40), 0, dp2px(40));
-        emptyTv.setTextColor(Color.parseColor("#404944"));
-        transactionListContainer.addView(emptyTv);
     }
 
     private int dp2px(int dp) {

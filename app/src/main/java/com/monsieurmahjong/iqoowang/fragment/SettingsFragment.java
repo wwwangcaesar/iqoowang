@@ -1,12 +1,16 @@
 package com.monsieurmahjong.iqoowang.fragment;
 
-
-
+import android.content.Context;
+import android.content.SharedPreferences;
+import android.graphics.Color;
 import android.os.Bundle;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.SeekBar;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -15,43 +19,44 @@ import androidx.fragment.app.Fragment;
 
 import com.monsieurmahjong.iqoowang.R;
 import com.monsieurmahjong.iqoowang.connect.Achievement;
-import com.monsieurmahjong.iqoowang.utils.CheckInManager;
+import com.monsieurmahjong.iqoowang.dao.AppDatabase;
+import com.monsieurmahjong.iqoowang.dao.Expense;
+import com.monsieurmahjong.iqoowang.utils.AchievementManager;
 import com.monsieurmahjong.iqoowang.utils.SpBudgetUtils;
+import com.monsieurmahjong.iqoowang.view.CoolBudgetSeekBar;
 
-import java.util.ArrayList;
+import java.text.SimpleDateFormat;
+import java.util.Calendar;
+import java.util.Date;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 public class SettingsFragment extends Fragment {
 
     private TextView tvBudgetValue;
     private TextView tvDailyLimit;
-    private SeekBar budgetSlider;
-    private View llTicks;
+    private CoolBudgetSeekBar budgetSlider;
+    private LinearLayout llTicks;
+
     private TextView tvCheckInCount;
-    private android.widget.ProgressBar checkInProgress;
-    private View llAchievementSection;
+    private ProgressBar checkInProgress;
 
+    private LinearLayout llAchievementSection;
+
+    private SharedPreferences sharedPreferences;
+    private AppDatabase db;
     private SpBudgetUtils spBudgetUtils;
-    private CheckInManager checkInManager;
-    private List<Achievement> achievementList;
 
-    // 预算刻度配置
+    private static final String PREFS_NAME = "SereneLedgerConfig";
+    private static final String KEY_MONTHLY_BUDGET = "monthly_budget_cents";
+
     private static final int MIN_BUDGET = 1000;
     private static final int MAX_BUDGET = 20000;
-    private static final int TICK_INTERVAL = 5000; // 每2000元一个刻度
-
-    public SettingsFragment() {
-        // Required empty public constructor
-    }
-
-    public static SettingsFragment newInstance() {
-        return new SettingsFragment();
-    }
 
     @Override
-    public View onCreateView(LayoutInflater inflater, ViewGroup container,
-                             Bundle savedInstanceState) {
-        // Inflate the layout for this fragment
+    public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
         return inflater.inflate(R.layout.activity_settings, container, false);
     }
 
@@ -59,130 +64,247 @@ public class SettingsFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        // 初始化工具类
-        spBudgetUtils = SpBudgetUtils.getInstance(requireContext());
-        checkInManager = CheckInManager.getInstance();
-
-        // 初始化视图
-        initViews(view);
-
-        // 初始化预算刻度
-        initBudgetTicks();
-
-        // 初始化成就数据
-        initAchievementData();
-
-        // 设置预算滑块逻辑
-        setupBudgetSlider();
-
-        // 设置每日打卡显示
-        setupCheckInDisplay();
-
-        // 设置成就点击事件
-        setupAchievementClick();
-    }
-
-    private void initViews(View view) {
+        // 1. 精确绑定你新版 XML 里的真实 ID
         tvBudgetValue = view.findViewById(R.id.budget_value);
         tvDailyLimit = view.findViewById(R.id.tv_daily_limit);
         budgetSlider = view.findViewById(R.id.budget_slider);
         llTicks = view.findViewById(R.id.ll_ticks);
+
         tvCheckInCount = view.findViewById(R.id.tv_check_in_count);
         checkInProgress = view.findViewById(R.id.check_in_progress);
         llAchievementSection = view.findViewById(R.id.ll_achievement_section);
-    }
 
-    private void initBudgetTicks() {
-        // 动态生成刻度线和数值
-        ViewGroup tickContainer = (ViewGroup) llTicks;
-        tickContainer.removeAllViews();
+        sharedPreferences = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        db = AppDatabase.getDatabase(requireContext());
+        spBudgetUtils = new SpBudgetUtils(getActivity());
 
-        // 计算刻度数量
-        int tickCount = (MAX_BUDGET - MIN_BUDGET) / TICK_INTERVAL + 1;
-
-        for (int i = 0; i < tickCount; i++) {
-            int budget = MIN_BUDGET + i * TICK_INTERVAL;
-
-            // 创建刻度容器
-            View tickView = LayoutInflater.from(requireContext()).inflate(R.layout.item_budget_tick, tickContainer, false);
-
-            // 设置刻度数值
-            TextView tvTickValue = tickView.findViewById(R.id.tv_tick_value);
-            tvTickValue.setText(String.format("¥%,d", budget));
-
-            // 添加到容器
-            tickContainer.addView(tickView);
-        }
-    }
-
-    private void initAchievementData() {
-        achievementList = new ArrayList<>();
-        // 添加所有成就（可根据需要扩展）
-        achievementList.add(new Achievement(1, "节俭大师", "连续3个月支出低于预算80%", R.drawable.pigmoney, true));
-        achievementList.add(new Achievement(2, "省钱专家", "月度结余达到 ¥1,000", R.drawable.trendingup2, true));
-        achievementList.add(new Achievement(3, "预算达人", "误差控制在月预算5%内", R.drawable.targetarrow, false));
-        achievementList.add(new Achievement(4, "满勤宝宝", "全月全勤记录", R.drawable.calendarcheck, false));
-        achievementList.add(new Achievement(5, "理财新手", "首次设置预算", R.drawable.creditcardrefund, true));
-        achievementList.add(new Achievement(6, "消费达人", "记录100笔支出", R.drawable.shoppingbagheart, false));
-        achievementList.add(new Achievement(7, "月度冠军", "单月结余超过50%", R.drawable.trophy, false));
-        achievementList.add(new Achievement(8, "坚持就是胜利", "连续使用30天", R.drawable.stars, false));
-    }
-
-    private void setupBudgetSlider() {
-        // 从SP读取预算并初始化
-        int savedBudget = spBudgetUtils.getMonthlyBudget();
-        budgetSlider.setProgress(savedBudget);
-        tvBudgetValue.setText(String.format("¥%,d", savedBudget));
-        tvDailyLimit.setText(spBudgetUtils.getDailyLimit());
-
-        // 设置滑块拖动监听
-        budgetSlider.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                // 实时更新显示
-                tvBudgetValue.setText(String.format("¥%,d", progress));
-                // 实时计算每日限额
-                double dailyLimit = (double) progress / spBudgetUtils.getDaysInCurrentMonth();
-                tvDailyLimit.setText(String.format("¥%.2f", dailyLimit));
-            }
-
-            @Override
-            public void onStartTrackingTouch(SeekBar seekBar) {
-                // 拖动开始时不需要操作
-            }
-
-            @Override
-            public void onStopTrackingTouch(SeekBar seekBar) {
-                // 拖动结束时保存到SP
-                int finalBudget = seekBar.getProgress();
-                spBudgetUtils.saveMonthlyBudget(finalBudget);
-            }
-        });
-    }
-
-    private void setupCheckInDisplay() {
-        // 获取本周打卡数据
-        int checkedDays = checkInManager.getWeekCheckInCount(requireContext());
-        int totalDays = checkInManager.getWeekTotalDays();
-        int progress = checkInManager.getCheckInProgress(requireContext());
-
-        // 更新UI
-        tvCheckInCount.setText(String.format("%d / %d 天", checkedDays, totalDays));
-        checkInProgress.setProgress(progress);
-    }
-
-    private void setupAchievementClick() {
-        llAchievementSection.setOnClickListener(v -> {
-            // 弹出成就列表Dialog（Fragment中使用getChildFragmentManager）
-            AchievementDialogFragment dialog = AchievementDialogFragment.newInstance(achievementList);
-            dialog.show(getChildFragmentManager(), "AchievementDialog");
-        });
+        setupBudgetSlider();
+        generateSliderTicks();
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        // 页面恢复时刷新打卡数据
-        setupCheckInDisplay();
+        // 瞬间同步数据
+        syncBudgetDisplay();
+        calculateRealTimeCheckIn();
+        updateAchievementsState();
+    }
+
+    private void setupBudgetSlider() {
+        budgetSlider.setOnBudgetChangeListener(new CoolBudgetSeekBar.OnBudgetChangeListener() {
+            @Override
+            public void getBudgetChanged(int budget) {
+                // 拖动中：实时更新数字
+                if (tvBudgetValue != null) {
+                    tvBudgetValue.setText(String.format(Locale.getDefault(), "¥%,d", budget));
+                }
+                if (tvDailyLimit != null) {
+                    double dailyLimit = (double) budget / getDaysInCurrentMonth();
+                    tvDailyLimit.setText(String.format(Locale.getDefault(), "¥%.2f", dailyLimit));
+                }
+            }
+
+            @Override
+            public void onBudgetChanged(int budget) {
+                // 抬手结束：写入 SP，并重新评估成就系统（因为预算额度变了，可能触发或丢失成就）
+                sharedPreferences.edit().putLong(KEY_MONTHLY_BUDGET, budget * 100L).apply();
+                updateAchievementsState();
+            }
+        });
+    }
+
+    private void generateSliderTicks() {
+        if (llTicks == null) return;
+        llTicks.removeAllViews();
+
+        TextView tvMin = new TextView(requireContext());
+        tvMin.setText("¥1,000");
+        tvMin.setTextColor(Color.parseColor("#707974"));
+        tvMin.setTextSize(12);
+        LinearLayout.LayoutParams minParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        tvMin.setLayoutParams(minParams);
+
+        TextView tvMax = new TextView(requireContext());
+        tvMax.setText("¥20,000");
+        tvMax.setTextColor(Color.parseColor("#707974"));
+        tvMax.setTextSize(12);
+        tvMax.setGravity(Gravity.END);
+        LinearLayout.LayoutParams maxParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+        tvMax.setLayoutParams(maxParams);
+
+        llTicks.addView(tvMin);
+        llTicks.addView(tvMax);
+    }
+
+    private void syncBudgetDisplay() {
+        long currentBudgetCents = sharedPreferences.getLong(KEY_MONTHLY_BUDGET, 850000L); // 默认 ¥8,500
+        int currentBudgetYuan = (int) (currentBudgetCents / 100);
+
+        if (budgetSlider != null) {
+            budgetSlider.setConfig(MIN_BUDGET, MAX_BUDGET, currentBudgetYuan);
+        }
+        if (tvBudgetValue != null) {
+            tvBudgetValue.setText(String.format(Locale.getDefault(), "¥%,d", currentBudgetYuan));
+        }
+        if (tvDailyLimit != null) {
+            double dailyLimit = (double) currentBudgetYuan / getDaysInCurrentMonth();
+            tvDailyLimit.setText(String.format(Locale.getDefault(), "¥%.2f", dailyLimit));
+        }
+    }
+
+    private void calculateRealTimeCheckIn() {
+        new Thread(() -> {
+            Calendar cal = Calendar.getInstance();
+            cal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY);
+            cal.set(Calendar.HOUR_OF_DAY, 0);
+            cal.set(Calendar.MINUTE, 0);
+            cal.set(Calendar.SECOND, 0);
+            long startOfWeek = cal.getTimeInMillis();
+            long endOfWeek = System.currentTimeMillis();
+
+            List<Expense> weekExpenses = db.expenseDao().getExpensesInRangeSync(startOfWeek, endOfWeek);
+            Set<String> activeDays = new HashSet<>();
+            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
+
+            if (weekExpenses != null) {
+                for (Expense e : weekExpenses) {
+                    activeDays.add(sdf.format(new Date(e.getTimestamp())));
+                }
+            }
+
+            int checkedCount = activeDays.size();
+            int progressPercent = (int) ((checkedCount * 100f) / 7f);
+
+            if (getActivity() != null) {
+                getActivity().runOnUiThread(() -> {
+                    if (tvCheckInCount != null) {
+                        tvCheckInCount.setText(String.format(Locale.getDefault(), "%d / 7 天", checkedCount));
+                    }
+                    if (checkInProgress != null) {
+                        checkInProgress.setProgress(progressPercent);
+                    }
+                });
+            }
+        }).start();
+    }
+
+    private void updateAchievementsState() {
+        long currentBudgetCents = sharedPreferences.getLong(KEY_MONTHLY_BUDGET, 850000L);
+
+        AchievementManager.computeRealAchievements(requireContext(), currentBudgetCents, (achievements, unlockedCount) -> {
+            if (llAchievementSection == null || getActivity() == null) return;
+
+            // 1. 保留标题区域（Header是第0个子View），清空下面的死数据
+            int childCount = llAchievementSection.getChildCount();
+            if (childCount > 1) {
+                llAchievementSection.removeViews(1, childCount - 1);
+            }
+
+            // 2. 动态更新 Header 上的 "X / 8 解锁"
+            try {
+                LinearLayout header = (LinearLayout) llAchievementSection.getChildAt(0);
+                TextView tvSummary = (TextView) header.getChildAt(1);
+                tvSummary.setText(String.format(Locale.getDefault(), "%d / %d 解锁", unlockedCount, achievements.size()));
+            } catch (Exception e) { e.printStackTrace(); }
+
+            // 3. 高度还原你的精美 XML 结构并动态注入你的成就
+            for (Achievement ach : achievements) {
+                LinearLayout itemRow = new LinearLayout(requireContext());
+                itemRow.setOrientation(LinearLayout.HORIZONTAL);
+                itemRow.setGravity(Gravity.START);
+                itemRow.setPadding(dp2px(12), dp2px(12), dp2px(12), dp2px(12));
+
+                LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                rowParams.topMargin = dp2px(12);
+                itemRow.setLayoutParams(rowParams);
+
+                // 根据解锁状态调节透明度
+                if (!ach.isUnlocked()) itemRow.setAlpha(0.6f);
+
+                // --- A. 左侧图标区域 ---
+                LinearLayout iconContainer = new LinearLayout(requireContext());
+                iconContainer.setLayoutParams(new LinearLayout.LayoutParams(dp2px(48), dp2px(48)));
+                iconContainer.setGravity(Gravity.CENTER);
+                if (ach.isUnlocked()) iconContainer.setElevation(dp2px(2)); // 已解锁加微弱阴影
+
+                ImageView ivIcon = new ImageView(requireContext());
+                // 这里接入了你的 R.drawable.pigmoney 等原始资源！
+                ivIcon.setImageResource(ach.getIcon());
+                int iconPadding = dp2px(8);
+                ivIcon.setPadding(iconPadding, iconPadding, iconPadding, iconPadding);
+
+                // 为了避免没有背景，给个浅色底衬
+                android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+                bg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+                bg.setColor(ach.isUnlocked() ? Color.parseColor("#E7EEFF") : Color.parseColor("#F2F2F7"));
+                iconContainer.setBackground(bg);
+
+                iconContainer.addView(ivIcon);
+                itemRow.addView(iconContainer);
+
+                // --- B. 右侧文字区域 ---
+                LinearLayout textGroup = new LinearLayout(requireContext());
+                textGroup.setOrientation(LinearLayout.VERTICAL);
+                LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+                textParams.leftMargin = dp2px(16);
+                textGroup.setLayoutParams(textParams);
+
+                // 标题行：成就名 + 状态徽章
+                LinearLayout titleRow = new LinearLayout(requireContext());
+                titleRow.setOrientation(LinearLayout.HORIZONTAL);
+                titleRow.setGravity(Gravity.CENTER_VERTICAL);
+
+                TextView tvTitle = new TextView(requireContext());
+                tvTitle.setText(ach.getName());
+                tvTitle.setTextColor(Color.parseColor("#111c2d"));
+                tvTitle.setTextSize(16);
+                titleRow.addView(tvTitle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+                TextView tvBadge = new TextView(requireContext());
+                if (ach.isUnlocked()) {
+                    tvBadge.setText("已解锁");
+                    tvBadge.setTextColor(Color.parseColor("#003527"));
+                    tvBadge.setTextSize(12);
+                    tvBadge.setPadding(dp2px(8), dp2px(2), dp2px(8), dp2px(2));
+
+                    android.graphics.drawable.GradientDrawable badgeBg = new android.graphics.drawable.GradientDrawable();
+                    badgeBg.setCornerRadius(dp2px(8));
+                    badgeBg.setColor(Color.parseColor("#B0F0D6")); // primary-fixed 浅绿背景
+                    tvBadge.setBackground(badgeBg);
+                } else {
+                    tvBadge.setText("未解锁"); // 你 XML 里的 lock
+                    tvBadge.setTextColor(Color.parseColor("#505f76"));
+                    tvBadge.setTextSize(12);
+                }
+                titleRow.addView(tvBadge);
+
+                textGroup.addView(titleRow);
+
+                // 描述说明
+                TextView tvDesc = new TextView(requireContext());
+                tvDesc.setText(ach.getDescription());
+                tvDesc.setTextColor(Color.parseColor("#505f76"));
+                tvDesc.setTextSize(12);
+                LinearLayout.LayoutParams descParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                descParams.topMargin = dp2px(4);
+                tvDesc.setLayoutParams(descParams);
+                textGroup.addView(tvDesc);
+
+                itemRow.addView(textGroup);
+
+                // 将动态拼装的卡片挂载进页面
+                llAchievementSection.addView(itemRow);
+            }
+        });
+    }
+
+    private int getDaysInCurrentMonth() {
+        Calendar calendar = Calendar.getInstance();
+        return calendar.getActualMaximum(Calendar.DAY_OF_MONTH);
+    }
+
+    private int dp2px(int dp) {
+        return (int) (dp * getResources().getDisplayMetrics().density);
     }
 }

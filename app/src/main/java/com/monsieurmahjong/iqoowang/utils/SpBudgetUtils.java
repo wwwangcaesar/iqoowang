@@ -15,7 +15,7 @@ public class SpBudgetUtils {
     private static SpBudgetUtils instance;
     private final SharedPreferences sp;
 
-    private SpBudgetUtils(Context context) {
+    public SpBudgetUtils(Context context) {
         sp = context.getApplicationContext().getSharedPreferences(SP_NAME, Context.MODE_PRIVATE);
     }
 

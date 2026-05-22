@@ -588,16 +588,11 @@
                             android:layout_height="wrap_content"
                             android:orientation="vertical">
 
-                            <SeekBar
+                            <com.monsieurmahjong.iqoowang.view.CoolBudgetSeekBar
                                 android:id="@+id/budget_slider"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:max="20000"
-                                android:min="1000"
-                                android:progress="8500"
-                                android:thumbTint="@color/primary_dark"
-                                android:progressTint="@color/primary_dark"
-                                android:progressBackgroundTint="@color/bg_gray" />
+                                android:layout_marginTop="16dp" />
 
                             <!-- 刻度线和数值 -->
                             <LinearLayout
