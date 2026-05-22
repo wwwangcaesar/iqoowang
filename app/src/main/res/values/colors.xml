@@ -45,8 +45,25 @@
     <color name="on_tertiary_container">#afb2b4</color>
 
     <!-- 错误色系列 -->
-    <color name="error">#ba1a1a</color>
     <color name="on_error">#ffffff</color>
     <color name="error_container">#ffdad6</color>
     <color name="on_error_container">#93000a</color>
+
+    <color name="primary_dark">#003527</color>
+    <color name="primary_light">#065f46</color>
+
+    <!-- 文本颜色系列 -->
+    <color name="text_primary">#111c2d</color>
+    <color name="text_secondary">#505f76</color>
+    <color name="text_tertiary">#707974</color>
+
+    <!-- 背景颜色系列 -->
+    <color name="bg_primary">#f9f9ff</color>
+    <color name="bg_card">#ffffff</color>
+    <color name="bg_gray">#e0e3e5</color>
+
+    <!-- 功能色 -->
+    <color name="error">#ba1a1a</color>
+    <color name="success">#064e3b</color>
+    <color name="divider">#bfc9c3</color>
 </resources>
