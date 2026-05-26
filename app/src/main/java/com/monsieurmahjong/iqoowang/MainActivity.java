@@ -9,6 +9,8 @@ import androidx.appcompat.app.AppCompatActivity;
 
 import android.content.Intent;
 import android.os.Bundle;
+import android.util.Log;
+
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentManager;
@@ -33,6 +35,8 @@ public class MainActivity extends AppCompatActivity {
         sp.edit().putLong("month_budget_cents", 3000).apply();
         sp.edit().putLong("daily_budget_cents", 500).apply();
 
+        Log.e("MainActivity", "中文打印啊 啊啊啊啊啊啊");
+        handleIntent(getIntent());
         // 初始化三大核心 Fragment 实例
         historyFragment = new HistoryFragment();
         statisticsFragment = new StatisticsFragment();
@@ -69,5 +73,17 @@ public class MainActivity extends AppCompatActivity {
             }
             return false;
         });
+    }
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        // 处理应用已在后台时的Intent
+        handleIntent(intent);
+    }
+    private void handleIntent(Intent intent) {
+        Log.d("NFC_DEBUG", "Action: " + intent.getAction());
+        Log.d("NFC_DEBUG", "Data: " + intent.getData());
+        Log.d("NFC_DEBUG", "Scheme: " + intent.getScheme());
+//        Log.d("NFC_DEBUG", "Host: " + intent.getData() != null ? intent.getData().getHost() : "null");
     }
 }

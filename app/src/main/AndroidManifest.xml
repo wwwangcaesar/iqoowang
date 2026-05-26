@@ -13,9 +13,9 @@
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@mipmap/stairsgoal"
         android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="@mipmap/stairsgoal"
         android:supportsRtl="true"
         android:theme="@style/Theme.ExpenseTracker">
         <!-- 首页 Dashboard -->
@@ -28,38 +28,26 @@
             </intent-filter>
         </activity>
 
-        <!-- 极速录入弹窗：绑定半透明主题，拦截 NFC -->
-<!--        <activity-->
-<!--            android:name=".QuickLogActivity"-->
-<!--            android:theme="@style/Theme.TransparentQuickLog"-->
-<!--            android:launchMode="singleTask"-->
-<!--            android:exported="true">-->
-
-<!--            &lt;!&ndash; 核心：拦截 NFC NDEF 消息，碰一碰直接唤醒 &ndash;&gt;-->
-<!--            <intent-filter>-->
-<!--                <action android:name="android.nfc.action.NDEF_DISCOVERED" />-->
-<!--                <category android:name="android.intent.category.DEFAULT" />-->
-<!--                &lt;!&ndash; 预设你的贴纸写入的域名，例如：https://log.me/expense &ndash;&gt;-->
-<!--                <data-->
-<!--                    android:host="log.me"-->
-<!--                    android:pathPrefix="/expense"-->
-<!--                    android:scheme="https" />-->
-<!--            </intent-filter>-->
-<!--        </activity>-->
         <activity
             android:name=".QuickLogActivity"
-            android:theme="@style/Theme.TransparentQuickLog"
             android:launchMode="singleTask"
             android:exported="true">
 
             <intent-filter>
-                <action android:name="android.nfc.action.TECH_DISCOVERED" />
+                <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/com.monsieurmahjong.iqoowang.quicklog" />
             </intent-filter>
 
-            <meta-data
-                android:name="android.nfc.action.TECH_DISCOVERED"
-                android:resource="@xml/nfc_tech_list" />
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="iqoowang" android:host="quicklog" />
+            </intent-filter>
+
         </activity>
+
 
     </application>
 

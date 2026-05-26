@@ -209,9 +209,33 @@ public class HistoryFragment extends Fragment {
                         ConstraintLayout.LayoutParams.WRAP_CONTENT, ConstraintLayout.LayoutParams.WRAP_CONTENT);
                 catParams.startToEnd = ivIcon.getId();
                 catParams.topToTop = ivIcon.getId();
-                catParams.bottomToBottom = ivIcon.getId();
+                catParams.topMargin = dp2px(4); // 微调与图标顶部的对齐
                 tvCategory.setLayoutParams(catParams);
                 itemContent.addView(tvCategory);
+
+                // ========== 核心修改：tvSubtitle位置调整 ==========
+                TextView tvSubtitle = new TextView(requireContext());
+                tvSubtitle.setId(View.generateViewId()); // 必须设置id才能使用约束
+                String amPmTimeStr = new SimpleDateFormat("a hh:mm", Locale.CHINA).format(new Date(expense.getTimestamp()));
+
+                String sourceMeta = expense.getSource() != null && !expense.getSource().isEmpty() ? expense.getSource() : "智能记账";
+                String meta = amPmTimeStr + " · " + sourceMeta;
+                tvSubtitle.setText(meta);
+                tvSubtitle.setTextColor(Color.parseColor("#404944"));
+                tvSubtitle.setTextSize(12);
+                // 移除原有的paddingTop，改用margin控制间距
+                // tvSubtitle.setPadding(0, dp2px(2), 0, 0);
+
+                // 配置tvSubtitle的约束：在ivIcon右侧、tvCategory下方，上边距10dp
+                ConstraintLayout.LayoutParams subtitleParams = new ConstraintLayout.LayoutParams(
+                        ConstraintLayout.LayoutParams.WRAP_CONTENT, ConstraintLayout.LayoutParams.WRAP_CONTENT);
+                subtitleParams.startToEnd = ivIcon.getId();
+                subtitleParams.topToBottom = tvCategory.getId();
+                subtitleParams.topMargin = dp2px(4); // 距离上面10dp
+                tvSubtitle.setLayoutParams(subtitleParams);
+
+                itemContent.addView(tvSubtitle);
+                // ========== 核心修改结束 ==========
 
                 TextView tvMoney = new TextView(requireContext());
                 tvMoney.setText(String.format(Locale.getDefault(), "¥ %.2f", expense.getAmount() / 100.0));

@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">MediaPipe Pose Java</string>
+    <string name="app_name">消消乐</string>
 
     <string-array name="model_options">
         <item>轻量模型 (最快)</item>

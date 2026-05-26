@@ -2,6 +2,7 @@ package com.monsieurmahjong.iqoowang;
 
 import android.content.ContentUris;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
@@ -11,6 +12,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
+import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.widget.Button;
@@ -96,20 +98,24 @@ public class QuickLogActivity extends AppCompatActivity {
         handleNfcIntent(intent);
     }
 
-    // 核心：解析电梯卡 UID 的方法
-    private void handleNfcIntent(android.content.Intent intent) {
-        if (intent != null && NfcAdapter.ACTION_TECH_DISCOVERED.equals(intent.getAction())) {
-            triggerSource = "ELEVATOR_CARD"; // 标记来源为电梯卡
+    // 核心：解析电梯卡或专属 215 标签 UID 的方法
+    private void handleNfcIntent(Intent intent) {
+        if (intent == null) return;
 
-            // 从 Intent 中提取 Tag 对象
+        String action = intent.getAction();
+        if (NfcAdapter.ACTION_NDEF_DISCOVERED.equals(action)) {
+            // 此时已经是 100% 精准定向跳转，绝无杂牌卡干扰
+            Log.d("NFC_LOG", "专属 215 标签成功免选择直达拉起！");
+
+            // 如果需要读取物理 UID
             Tag tag = intent.getParcelableExtra(NfcAdapter.EXTRA_TAG);
             if (tag != null) {
                 byte[] uidBytes = tag.getId();
-                detectedCardUid = bytesToHexString(uidBytes); // 转换为16进制字符串
-
-                // 提示用户读卡成功（测试用，实际使用时可删掉）
-                Toast.makeText(this, "检测到电梯卡，卡号: " + detectedCardUid, Toast.LENGTH_LONG).show();
+                String cardUid = bytesToHexString(uidBytes);
+                Toast.makeText(this, "🚀 专属记账标签已识别！卡号: " + cardUid, Toast.LENGTH_SHORT).show();
             }
+
+            // TODO: 在这里直接触发你的记账悬浮窗或聚焦到输入框
         }
     }
 

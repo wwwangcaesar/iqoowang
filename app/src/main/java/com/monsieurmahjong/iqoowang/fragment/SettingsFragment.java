@@ -12,6 +12,7 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -19,9 +20,10 @@ import androidx.fragment.app.Fragment;
 
 import com.monsieurmahjong.iqoowang.R;
 import com.monsieurmahjong.iqoowang.connect.Achievement;
+import com.monsieurmahjong.iqoowang.dao.AchievementManager;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
-import com.monsieurmahjong.iqoowang.utils.AchievementManager;
+import com.monsieurmahjong.iqoowang.utils.CheckInManager;
 import com.monsieurmahjong.iqoowang.utils.SpBudgetUtils;
 import com.monsieurmahjong.iqoowang.view.CoolBudgetSeekBar;
 
@@ -38,16 +40,15 @@ public class SettingsFragment extends Fragment {
     private TextView tvBudgetValue;
     private TextView tvDailyLimit;
     private CoolBudgetSeekBar budgetSlider;
-    private LinearLayout llTicks;
-
     private TextView tvCheckInCount;
     private ProgressBar checkInProgress;
-
     private LinearLayout llAchievementSection;
+    private TextView tvAchievementSummary;
 
     private SharedPreferences sharedPreferences;
     private AppDatabase db;
     private SpBudgetUtils spBudgetUtils;
+    private CheckInManager checkInManager;
 
     private static final String PREFS_NAME = "SereneLedgerConfig";
     private static final String KEY_MONTHLY_BUDGET = "monthly_budget_cents";
@@ -64,38 +65,36 @@ public class SettingsFragment extends Fragment {
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);
 
-        // 1. 精确绑定你新版 XML 里的真实 ID
+        // 绑定 XML 视图组件
         tvBudgetValue = view.findViewById(R.id.budget_value);
         tvDailyLimit = view.findViewById(R.id.tv_daily_limit);
         budgetSlider = view.findViewById(R.id.budget_slider);
-        llTicks = view.findViewById(R.id.ll_ticks);
-
         tvCheckInCount = view.findViewById(R.id.tv_check_in_count);
         checkInProgress = view.findViewById(R.id.check_in_progress);
         llAchievementSection = view.findViewById(R.id.ll_achievement_section);
+        tvAchievementSummary = view.findViewById(R.id.tv_achievement_summary);
 
         sharedPreferences = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         db = AppDatabase.getDatabase(requireContext());
         spBudgetUtils = new SpBudgetUtils(getActivity());
+        checkInManager = CheckInManager.getInstance();
 
         setupBudgetSlider();
-        generateSliderTicks();
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        // 瞬间同步数据
         syncBudgetDisplay();
         calculateRealTimeCheckIn();
-        updateAchievementsState();
+        updateAchievementsState(); // 当切换回/进入当前 Fragment 页面时，触发成就精准核对与动画
     }
 
     private void setupBudgetSlider() {
+        if (budgetSlider == null) return;
         budgetSlider.setOnBudgetChangeListener(new CoolBudgetSeekBar.OnBudgetChangeListener() {
             @Override
             public void getBudgetChanged(int budget) {
-                // 拖动中：实时更新数字
                 if (tvBudgetValue != null) {
                     tvBudgetValue.setText(String.format(Locale.getDefault(), "¥%,d", budget));
                 }
@@ -107,38 +106,14 @@ public class SettingsFragment extends Fragment {
 
             @Override
             public void onBudgetChanged(int budget) {
-                // 抬手结束：写入 SP，并重新评估成就系统（因为预算额度变了，可能触发或丢失成就）
                 sharedPreferences.edit().putLong(KEY_MONTHLY_BUDGET, budget * 100L).apply();
                 updateAchievementsState();
             }
         });
     }
 
-    private void generateSliderTicks() {
-        if (llTicks == null) return;
-        llTicks.removeAllViews();
-
-        TextView tvMin = new TextView(requireContext());
-        tvMin.setText("¥1,000");
-        tvMin.setTextColor(Color.parseColor("#707974"));
-        tvMin.setTextSize(12);
-        LinearLayout.LayoutParams minParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        tvMin.setLayoutParams(minParams);
-
-        TextView tvMax = new TextView(requireContext());
-        tvMax.setText("¥20,000");
-        tvMax.setTextColor(Color.parseColor("#707974"));
-        tvMax.setTextSize(12);
-        tvMax.setGravity(Gravity.END);
-        LinearLayout.LayoutParams maxParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-        tvMax.setLayoutParams(maxParams);
-
-        llTicks.addView(tvMin);
-        llTicks.addView(tvMax);
-    }
-
     private void syncBudgetDisplay() {
-        long currentBudgetCents = sharedPreferences.getLong(KEY_MONTHLY_BUDGET, 850000L); // 默认 ¥8,500
+        long currentBudgetCents = sharedPreferences.getLong(KEY_MONTHLY_BUDGET, 850000L);
         int currentBudgetYuan = (int) (currentBudgetCents / 100);
 
         if (budgetSlider != null) {
@@ -155,26 +130,8 @@ public class SettingsFragment extends Fragment {
 
     private void calculateRealTimeCheckIn() {
         new Thread(() -> {
-            Calendar cal = Calendar.getInstance();
-            cal.set(Calendar.DAY_OF_WEEK, Calendar.MONDAY);
-            cal.set(Calendar.HOUR_OF_DAY, 0);
-            cal.set(Calendar.MINUTE, 0);
-            cal.set(Calendar.SECOND, 0);
-            long startOfWeek = cal.getTimeInMillis();
-            long endOfWeek = System.currentTimeMillis();
-
-            List<Expense> weekExpenses = db.expenseDao().getExpensesInRangeSync(startOfWeek, endOfWeek);
-            Set<String> activeDays = new HashSet<>();
-            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
-
-            if (weekExpenses != null) {
-                for (Expense e : weekExpenses) {
-                    activeDays.add(sdf.format(new Date(e.getTimestamp())));
-                }
-            }
-
-            int checkedCount = activeDays.size();
-            int progressPercent = (int) ((checkedCount * 100f) / 7f);
+            int checkedCount = checkInManager.getWeekCheckInCount(requireContext());
+            int progressPercent = checkInManager.getCheckInProgress(requireContext());
 
             if (getActivity() != null) {
                 getActivity().runOnUiThread(() -> {
@@ -189,119 +146,104 @@ public class SettingsFragment extends Fragment {
         }).start();
     }
 
+    /**
+     * 核心高动态渲染层：完成高精度判定、注入你原有的图片资源，并拦截发放动画通知
+     */
     private void updateAchievementsState() {
         long currentBudgetCents = sharedPreferences.getLong(KEY_MONTHLY_BUDGET, 850000L);
 
-        AchievementManager.computeRealAchievements(requireContext(), currentBudgetCents, (achievements, unlockedCount) -> {
+        AchievementManager.computeRealAchievements(requireContext(), currentBudgetCents, (achievements, unlockedCount, newlyUnlocked) -> {
             if (llAchievementSection == null || getActivity() == null) return;
 
-            // 1. 保留标题区域（Header是第0个子View），清空下面的死数据
+            // 1. 动态刷新顶层头部的摘要汇总文本
+            if (tvAchievementSummary != null) {
+                tvAchievementSummary.setText(String.format(Locale.getDefault(), "%d / %d 解锁", unlockedCount, achievements.size()));
+            }
+
+            // 2. 清理历史动态注入的卡片子View（保留第0个Header）
             int childCount = llAchievementSection.getChildCount();
             if (childCount > 1) {
                 llAchievementSection.removeViews(1, childCount - 1);
             }
 
-            // 2. 动态更新 Header 上的 "X / 8 解锁"
-            try {
-                LinearLayout header = (LinearLayout) llAchievementSection.getChildAt(0);
-                TextView tvSummary = (TextView) header.getChildAt(1);
-                tvSummary.setText(String.format(Locale.getDefault(), "%d / %d 解锁", unlockedCount, achievements.size()));
-            } catch (Exception e) { e.printStackTrace(); }
+            // 3. 【动画唤醒核心】：检查是否有在此刻新鲜生成的解锁成就
+            if (newlyUnlocked != null && !newlyUnlocked.isEmpty()) {
+                for (Achievement newAch : newlyUnlocked) {
+                    // 🚀 TODO: 这里就是你的全局解锁弹出动画挂载点！
+                    // 你可以在此处构造类似 CustomLottieDialogFragment、波纹弹窗或者飘带提示
+                    Toast.makeText(getContext(), "🎉 恭喜达成新成就: " + newAch.getName(), Toast.LENGTH_LONG).show();
+                }
+            }
 
-            // 3. 高度还原你的精美 XML 结构并动态注入你的成就
+            // 4. 动态绘制 UI
             for (Achievement ach : achievements) {
                 LinearLayout itemRow = new LinearLayout(requireContext());
                 itemRow.setOrientation(LinearLayout.HORIZONTAL);
-                itemRow.setGravity(Gravity.START);
+                itemRow.setGravity(Gravity.CENTER_VERTICAL);
                 itemRow.setPadding(dp2px(12), dp2px(12), dp2px(12), dp2px(12));
 
                 LinearLayout.LayoutParams rowParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
                 rowParams.topMargin = dp2px(12);
                 itemRow.setLayoutParams(rowParams);
 
-                // 根据解锁状态调节透明度
-                if (!ach.isUnlocked()) itemRow.setAlpha(0.6f);
+                if (!ach.isUnlocked()) itemRow.setAlpha(0.5f); // 未解锁淡化
 
-                // --- A. 左侧图标区域 ---
+                // 图标外衬圈
                 LinearLayout iconContainer = new LinearLayout(requireContext());
-                iconContainer.setLayoutParams(new LinearLayout.LayoutParams(dp2px(48), dp2px(48)));
+                iconContainer.setLayoutParams(new LinearLayout.LayoutParams(dp2px(44), dp2px(44)));
                 iconContainer.setGravity(Gravity.CENTER);
-                if (ach.isUnlocked()) iconContainer.setElevation(dp2px(2)); // 已解锁加微弱阴影
 
-                ImageView ivIcon = new ImageView(requireContext());
-                // 这里接入了你的 R.drawable.pigmoney 等原始资源！
-                ivIcon.setImageResource(ach.getIcon());
-                int iconPadding = dp2px(8);
-                ivIcon.setPadding(iconPadding, iconPadding, iconPadding, iconPadding);
-
-                // 为了避免没有背景，给个浅色底衬
                 android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
                 bg.setShape(android.graphics.drawable.GradientDrawable.OVAL);
                 bg.setColor(ach.isUnlocked() ? Color.parseColor("#E7EEFF") : Color.parseColor("#F2F2F7"));
                 iconContainer.setBackground(bg);
 
+                ImageView ivIcon = new ImageView(requireContext());
+                ivIcon.setImageResource(ach.getIcon()); // 完美回填对应的 R.drawable.* 资源
+                ivIcon.setPadding(dp2px(8), dp2px(8), dp2px(8), dp2px(8));
                 iconContainer.addView(ivIcon);
                 itemRow.addView(iconContainer);
 
-                // --- B. 右侧文字区域 ---
+                // 文本描述树
                 LinearLayout textGroup = new LinearLayout(requireContext());
                 textGroup.setOrientation(LinearLayout.VERTICAL);
                 LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
-                textParams.leftMargin = dp2px(16);
+                textParams.leftMargin = dp2px(14);
                 textGroup.setLayoutParams(textParams);
 
-                // 标题行：成就名 + 状态徽章
                 LinearLayout titleRow = new LinearLayout(requireContext());
                 titleRow.setOrientation(LinearLayout.HORIZONTAL);
-                titleRow.setGravity(Gravity.CENTER_VERTICAL);
 
                 TextView tvTitle = new TextView(requireContext());
                 tvTitle.setText(ach.getName());
                 tvTitle.setTextColor(Color.parseColor("#111c2d"));
-                tvTitle.setTextSize(16);
+                tvTitle.setTextSize(15);
                 titleRow.addView(tvTitle, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-                TextView tvBadge = new TextView(requireContext());
-                if (ach.isUnlocked()) {
-                    tvBadge.setText("已解锁");
-                    tvBadge.setTextColor(Color.parseColor("#003527"));
-                    tvBadge.setTextSize(12);
-                    tvBadge.setPadding(dp2px(8), dp2px(2), dp2px(8), dp2px(2));
-
-                    android.graphics.drawable.GradientDrawable badgeBg = new android.graphics.drawable.GradientDrawable();
-                    badgeBg.setCornerRadius(dp2px(8));
-                    badgeBg.setColor(Color.parseColor("#B0F0D6")); // primary-fixed 浅绿背景
-                    tvBadge.setBackground(badgeBg);
-                } else {
-                    tvBadge.setText("未解锁"); // 你 XML 里的 lock
-                    tvBadge.setTextColor(Color.parseColor("#505f76"));
-                    tvBadge.setTextSize(12);
-                }
-                titleRow.addView(tvBadge);
-
+                TextView tvStatus = new TextView(requireContext());
+                tvStatus.setText(ach.isUnlocked() ? "已解锁" : "未解锁");
+                tvStatus.setTextSize(12);
+                tvStatus.setTextColor(ach.isUnlocked() ? Color.parseColor("#003527") : Color.parseColor("#707974"));
+                titleRow.addView(tvStatus);
                 textGroup.addView(titleRow);
 
-                // 描述说明
                 TextView tvDesc = new TextView(requireContext());
                 tvDesc.setText(ach.getDescription());
                 tvDesc.setTextColor(Color.parseColor("#505f76"));
                 tvDesc.setTextSize(12);
                 LinearLayout.LayoutParams descParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                descParams.topMargin = dp2px(4);
+                descParams.topMargin = dp2px(2);
                 tvDesc.setLayoutParams(descParams);
                 textGroup.addView(tvDesc);
 
                 itemRow.addView(textGroup);
-
-                // 将动态拼装的卡片挂载进页面
                 llAchievementSection.addView(itemRow);
             }
         });
     }
 
     private int getDaysInCurrentMonth() {
-        Calendar calendar = Calendar.getInstance();
-        return calendar.getActualMaximum(Calendar.DAY_OF_MONTH);
+        return Calendar.getInstance().getActualMaximum(Calendar.DAY_OF_MONTH);
     }
 
     private int dp2px(int dp) {
