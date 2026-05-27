@@ -247,14 +247,14 @@ public class AchievementManager {
             int totalUnlockedCount = 0;
 
             // 你指定的原始 1 - 8 成就 (匹配 R.drawable 资源)
-            totalUnlockedCount += evaluate(1, "节俭大师", "连续3个月支出低于预算80%", R.drawable.pigmoney, arch1FrugalMaster, sp, editor, fullList, newlyUnlockedList);
-            totalUnlockedCount += evaluate(2, "省钱专家", "完结月度结余达到 ¥1,000", R.drawable.trendingup2, arch2SaverExpert, sp, editor, fullList, newlyUnlockedList);
-            totalUnlockedCount += evaluate(3, "预算达人", "完结月误差控制在月预算5%内", R.drawable.targetarrow, arch3BudgetMaster, sp, editor, fullList, newlyUnlockedList);
-            totalUnlockedCount += evaluate(4, "满勤宝宝", "达成全月全勤记账记录", R.drawable.calendarcheck, arch4FullAttendance, sp, editor, fullList, newlyUnlockedList);
-            totalUnlockedCount += evaluate(5, "理财新手", "首次成功设置财务预算", R.drawable.creditcardrefund, arch5Rookie, sp, editor, fullList, newlyUnlockedList);
-            totalUnlockedCount += evaluate(6, "消费达人", "累计记录达到 100 笔支出", R.drawable.shoppingbagheart, arch6Consumer, sp, editor, fullList, newlyUnlockedList);
-            totalUnlockedCount += evaluate(7, "月度冠军", "完结单月结余超过总预算 50%", R.drawable.trophy, arch7MonthChamp, sp, editor, fullList, newlyUnlockedList);
-            totalUnlockedCount += evaluate(8, "坚持就是胜利", "历史最高连续记账达到 30 天", R.drawable.stars, arch8Persistence, sp, editor, fullList, newlyUnlockedList);
+            totalUnlockedCount += evaluate(1, "节俭大师", "连续3个月支出低于预算80%", R.drawable.old0, arch1FrugalMaster, sp, editor, fullList, newlyUnlockedList);
+            totalUnlockedCount += evaluate(2, "省钱专家", "完结月度结余达到 ¥1,000", R.drawable.old1, arch2SaverExpert, sp, editor, fullList, newlyUnlockedList);
+            totalUnlockedCount += evaluate(3, "预算达人", "完结月误差控制在月预算5%内", R.drawable.old2, arch3BudgetMaster, sp, editor, fullList, newlyUnlockedList);
+            totalUnlockedCount += evaluate(4, "满勤宝宝", "达成全月全勤记账记录", R.drawable.old3, arch4FullAttendance, sp, editor, fullList, newlyUnlockedList);
+            totalUnlockedCount += evaluate(5, "理财新手", "首次成功设置财务预算", R.drawable.old4, arch5Rookie, sp, editor, fullList, newlyUnlockedList);
+            totalUnlockedCount += evaluate(6, "消费达人", "累计记录达到 100 笔支出", R.drawable.old5, arch6Consumer, sp, editor, fullList, newlyUnlockedList);
+            totalUnlockedCount += evaluate(7, "月度冠军", "完结单月结余超过总预算 50%", R.drawable.old6, arch7MonthChamp, sp, editor, fullList, newlyUnlockedList);
+            totalUnlockedCount += evaluate(8, "坚持就是胜利", "历史最高连续记账达到 30 天", R.drawable.old7, arch8Persistence, sp, editor, fullList, newlyUnlockedList);
 
             // 新增的 9 - 18 趣味成就
             totalUnlockedCount += evaluate(9, "铁公鸡", "日支出竟控制在 10 元以内", R.drawable.piglock, arch9IronRooster, sp, editor, fullList, newlyUnlockedList);
