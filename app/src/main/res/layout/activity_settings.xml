@@ -39,11 +39,15 @@
                 android:textStyle="bold" />
         </LinearLayout>
 
+        <!-- ✅ 日历按钮添加 ID 以便在 Java 中绑定点击事件 -->
         <TextView
+            android:id="@+id/tv_calendar_month"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:clickable="true"
             android:focusable="true"
+            android:foreground="?android:attr/selectableItemBackground"
+            android:padding="8dp"
             android:text="calendar_month"
             android:textColor="#003527"
             android:textSize="24sp" />
@@ -78,70 +82,112 @@
                     android:textColor="#707974"
                     android:textSize="12sp" />
 
+                <!-- ✅ 家庭档案 CardView：添加 ID + 可点击 -->
                 <androidx.cardview.widget.CardView
+                    android:id="@+id/card_family_archive"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:foreground="?android:attr/selectableItemBackground"
                     app:cardBackgroundColor="#ffffff"
                     app:cardCornerRadius="16dp"
                     app:cardElevation="4dp">
 
+                    <!-- ✅ 改为竖向布局以容纳新闻列表 -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:padding="24dp">
+                        android:orientation="vertical">
 
+                        <!-- 用户信息行（保持原始横向布局） -->
                         <LinearLayout
-                            android:layout_width="0dp"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
                             android:gravity="center_vertical"
-                            android:orientation="horizontal">
+                            android:orientation="horizontal"
+                            android:padding="24dp">
 
                             <LinearLayout
-                                android:layout_width="56dp"
-                                android:layout_height="56dp"
-                                android:gravity="center">
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:gravity="center_vertical"
+                                android:orientation="horizontal">
 
-                                <TextView
+                                <LinearLayout
+                                    android:layout_width="56dp"
+                                    android:layout_height="56dp"
+                                    android:gravity="center">
+
+                                    <TextView
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:text="group"
+                                        android:textColor="#002117"
+                                        android:textSize="32sp" />
+                                </LinearLayout>
+
+                                <LinearLayout
                                     android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:text="group"
-                                    android:textColor="#002117"
-                                    android:textSize="32sp" />
+                                    android:layout_marginLeft="16dp"
+                                    android:orientation="vertical">
+
+                                    <TextView
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:text="Alex 及其家人"
+                                        android:textColor="#111c2d"
+                                        android:textSize="20sp" />
+
+                                    <TextView
+                                        android:layout_width="wrap_content"
+                                        android:layout_height="wrap_content"
+                                        android:layout_marginTop="4dp"
+                                        android:text="本地账本"
+                                        android:textColor="#505f76"
+                                        android:textSize="12sp" />
+                                </LinearLayout>
                             </LinearLayout>
 
-                            <LinearLayout
+                            <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:layout_marginLeft="16dp"
-                                android:orientation="vertical">
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:text="Alex 及其家人"
-                                    android:textColor="#111c2d"
-                                    android:textSize="20sp" />
-
-                                <TextView
-                                    android:layout_width="wrap_content"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginTop="4dp"
-                                    android:text="本地账本"
-                                    android:textColor="#505f76"
-                                    android:textSize="12sp" />
-                            </LinearLayout>
+                                android:text="chevron_right"
+                                android:textColor="#707974"
+                                android:textSize="24sp" />
                         </LinearLayout>
 
-                        <TextView
-                            android:layout_width="wrap_content"
+                        <!-- 分割线 -->
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="1px"
+                            android:layout_marginLeft="16dp"
+                            android:layout_marginRight="16dp"
+                            android:alpha="0.2"
+                            android:background="#707974" />
+
+                        <!-- ✅ 新闻列表区域：由 Java 动态填充 3 条网络数据 -->
+                        <LinearLayout
+                            android:id="@+id/ll_family_news_container"
+                            android:layout_width="match_parent"
                             android:layout_height="wrap_content"
-                            android:text="chevron_right"
-                            android:textColor="#707974"
-                            android:textSize="24sp" />
+                            android:orientation="vertical"
+                            android:padding="16dp">
+
+                            <!-- 加载状态文字（Java 中替换为真实数据） -->
+                            <TextView
+                                android:id="@+id/tv_family_news_loading"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:gravity="center"
+                                android:padding="12dp"
+                                android:text="资讯加载中..."
+                                android:textColor="#b0b8c1"
+                                android:textSize="13sp" />
+                        </LinearLayout>
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
             </LinearLayout>
@@ -246,7 +292,7 @@
                             android:alpha="0.3"
                             android:background="@drawable/divider_1px" />
 
-                        <!-- 成就徽章 -->
+                        <!-- ✅ 成就徽章：整个区域可点击，点击后弹出全部成就对话框 -->
                         <LinearLayout
                             android:id="@+id/ll_achievement_section"
                             android:layout_width="match_parent"
@@ -254,11 +300,18 @@
                             android:layout_marginTop="24dp"
                             android:orientation="vertical">
 
+                            <!-- ✅ 成就头部点击区域 -->
                             <LinearLayout
+                                android:id="@+id/ll_achievement_header"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
+                                android:clickable="true"
+                                android:focusable="true"
+                                android:foreground="?android:attr/selectableItemBackground"
                                 android:gravity="center_vertical"
-                                android:orientation="horizontal">
+                                android:orientation="horizontal"
+                                android:paddingTop="4dp"
+                                android:paddingBottom="4dp">
 
                                 <TextView
                                     android:layout_width="0dp"
@@ -275,265 +328,19 @@
                                     android:text="2 / 8 解锁"
                                     android:textColor="#003527"
                                     android:textSize="12sp" />
-                            </LinearLayout>
 
-                            <!-- 节俭大师 -->
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="12dp"
-                                android:gravity="start"
-                                android:orientation="horizontal"
-                                android:padding="12dp">
-
-                                <LinearLayout
-                                    android:layout_width="48dp"
-                                    android:layout_height="48dp"
-                                    android:elevation="2dp"
-                                    android:gravity="center">
-
-                                    <TextView
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:text=""
-                                        android:textColor="#002117"
-                                        android:textSize="24sp"
-                                        app:fontVariationSettings="'FILL' 1" />
-                                </LinearLayout>
-
-                                <LinearLayout
-                                    android:layout_width="0dp"
+                                <!-- 查看全部箭头 -->
+                                <TextView
+                                    android:layout_width="wrap_content"
                                     android:layout_height="wrap_content"
-                                    android:layout_marginLeft="16dp"
-                                    android:layout_weight="1"
-                                    android:orientation="vertical">
-
-                                    <LinearLayout
-                                        android:layout_width="match_parent"
-                                        android:layout_height="wrap_content"
-                                        android:gravity="center_vertical"
-                                        android:orientation="horizontal">
-
-                                        <TextView
-                                            android:layout_width="0dp"
-                                            android:layout_height="wrap_content"
-                                            android:layout_weight="1"
-                                            android:text="节俭大师"
-                                            android:textColor="#111c2d"
-                                            android:textSize="16sp" />
-
-                                        <TextView
-                                            android:layout_width="wrap_content"
-                                            android:layout_height="wrap_content"
-                                            android:paddingLeft="8dp"
-                                            android:paddingRight="8dp"
-                                            android:paddingTop="2dp"
-                                            android:paddingBottom="2dp"
-                                            android:text="已解锁"
-                                            android:textColor="#003527"
-                                            android:textSize="12sp" />
-                                    </LinearLayout>
-
-                                    <TextView
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:layout_marginTop="4dp"
-                                        android:text="连续3个月支出低于预算80%"
-                                        android:textColor="#505f76"
-                                        android:textSize="12sp" />
-                                </LinearLayout>
+                                    android:layout_marginLeft="4dp"
+                                    android:text="chevron_right"
+                                    android:textColor="#b0b8c1"
+                                    android:textSize="16sp" />
                             </LinearLayout>
 
-                            <!-- 省钱专家 -->
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="12dp"
-                                android:gravity="start"
-                                android:orientation="horizontal"
-                                android:padding="12dp">
-
-                                <LinearLayout
-                                    android:layout_width="48dp"
-                                    android:layout_height="48dp"
-                                    android:elevation="2dp"
-                                    android:gravity="center">
-
-                                    <TextView
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:text=""
-                                        android:textColor="#002117"
-                                        android:textSize="24sp"
-                                        app:fontVariationSettings="'FILL' 1" />
-                                </LinearLayout>
-
-                                <LinearLayout
-                                    android:layout_width="0dp"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginLeft="16dp"
-                                    android:layout_weight="1"
-                                    android:orientation="vertical">
-
-                                    <LinearLayout
-                                        android:layout_width="match_parent"
-                                        android:layout_height="wrap_content"
-                                        android:gravity="center_vertical"
-                                        android:orientation="horizontal">
-
-                                        <TextView
-                                            android:layout_width="0dp"
-                                            android:layout_height="wrap_content"
-                                            android:layout_weight="1"
-                                            android:text="省钱专家"
-                                            android:textColor="#111c2d"
-                                            android:textSize="16sp" />
-
-                                        <TextView
-                                            android:layout_width="wrap_content"
-                                            android:layout_height="wrap_content"
-                                            android:paddingLeft="8dp"
-                                            android:paddingRight="8dp"
-                                            android:paddingTop="2dp"
-                                            android:paddingBottom="2dp"
-                                            android:text="已解锁"
-                                            android:textColor="#003527"
-                                            android:textSize="12sp" />
-                                    </LinearLayout>
-
-                                    <TextView
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:layout_marginTop="4dp"
-                                        android:text="月度结余达到 ¥1,000"
-                                        android:textColor="#505f76"
-                                        android:textSize="12sp" />
-                                </LinearLayout>
-                            </LinearLayout>
-
-                            <!-- 预算达人(锁定) -->
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="12dp"
-                                android:alpha="0.6"
-                                android:gravity="start"
-                                android:orientation="horizontal"
-                                android:padding="12dp">
-
-                                <LinearLayout
-                                    android:layout_width="48dp"
-                                    android:layout_height="48dp"
-                                    android:gravity="center">
-
-                                    <TextView
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:text=""
-                                        android:textColor="#505f76"
-                                        android:textSize="24sp" />
-                                </LinearLayout>
-
-                                <LinearLayout
-                                    android:layout_width="0dp"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginLeft="16dp"
-                                    android:layout_weight="1"
-                                    android:orientation="vertical">
-
-                                    <LinearLayout
-                                        android:layout_width="match_parent"
-                                        android:layout_height="wrap_content"
-                                        android:gravity="center_vertical"
-                                        android:orientation="horizontal">
-
-                                        <TextView
-                                            android:layout_width="0dp"
-                                            android:layout_height="wrap_content"
-                                            android:layout_weight="1"
-                                            android:text="预算达人"
-                                            android:textColor="#111c2d"
-                                            android:textSize="16sp" />
-
-                                        <TextView
-                                            android:layout_width="wrap_content"
-                                            android:layout_height="wrap_content"
-                                            android:text="lock"
-                                            android:textColor="#505f76"
-                                            android:textSize="16sp" />
-                                    </LinearLayout>
-
-                                    <TextView
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:layout_marginTop="4dp"
-                                        android:text="误差控制在月预算5%内"
-                                        android:textColor="#505f76"
-                                        android:textSize="12sp" />
-                                </LinearLayout>
-                            </LinearLayout>
-
-                            <!-- 满勤宝宝(锁定) -->
-                            <LinearLayout
-                                android:layout_width="match_parent"
-                                android:layout_height="wrap_content"
-                                android:layout_marginTop="12dp"
-                                android:alpha="0.6"
-                                android:gravity="start"
-                                android:orientation="horizontal"
-                                android:padding="12dp">
-
-                                <LinearLayout
-                                    android:layout_width="48dp"
-                                    android:layout_height="48dp"
-                                    android:gravity="center">
-
-                                    <TextView
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:text=""
-                                        android:textColor="#505f76"
-                                        android:textSize="24sp" />
-                                </LinearLayout>
-
-                                <LinearLayout
-                                    android:layout_width="0dp"
-                                    android:layout_height="wrap_content"
-                                    android:layout_marginLeft="16dp"
-                                    android:layout_weight="1"
-                                    android:orientation="vertical">
-
-                                    <LinearLayout
-                                        android:layout_width="match_parent"
-                                        android:layout_height="wrap_content"
-                                        android:gravity="center_vertical"
-                                        android:orientation="horizontal">
-
-                                        <TextView
-                                            android:layout_width="0dp"
-                                            android:layout_height="wrap_content"
-                                            android:layout_weight="1"
-                                            android:text="满勤宝宝"
-                                            android:textColor="#111c2d"
-                                            android:textSize="16sp" />
-
-                                        <TextView
-                                            android:layout_width="wrap_content"
-                                            android:layout_height="wrap_content"
-                                            android:text="lock"
-                                            android:textColor="#505f76"
-                                            android:textSize="16sp" />
-                                    </LinearLayout>
-
-                                    <TextView
-                                        android:layout_width="wrap_content"
-                                        android:layout_height="wrap_content"
-                                        android:layout_marginTop="4dp"
-                                        android:text="全月全勤记录"
-                                        android:textColor="#505f76"
-                                        android:textSize="12sp" />
-                                </LinearLayout>
-                            </LinearLayout>
+                            <!-- ✅ 已解锁成就列表：由 Java 动态注入，只显示已解锁 -->
+                            <!-- 动态内容区域（Java 会移除 index > 0 的子 View，本处保留空结构） -->
                         </LinearLayout>
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>
@@ -595,17 +402,12 @@
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="16dp" />
 
-                            <!-- 刻度线和数值 -->
                             <LinearLayout
                                 android:id="@+id/ll_ticks"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="8dp"
-                                android:orientation="horizontal"
-                                >
-
-                                <!-- 刻度会在代码中动态生成 -->
-                            </LinearLayout>
+                                android:orientation="horizontal" />
                         </LinearLayout>
 
                         <LinearLayout

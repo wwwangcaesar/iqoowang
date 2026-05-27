@@ -53,4 +53,8 @@ public interface ExpenseDao {
     @Query("SELECT SUM(amount) FROM expense_table WHERE date_str LIKE :month || '%'")
     long getMonthTotalCentsSync(String month);
 
+    // 日历视图专用：获取指定月份全部消费记录
+// month 传入格式 "yyyy-MM"，例如 "2026-05"
+    @Query("SELECT * FROM expense_table WHERE date_str LIKE :month || '%' ORDER BY date_str ASC")
+    List<Expense> getAllExpensesByMonthSync(String month);
 }
