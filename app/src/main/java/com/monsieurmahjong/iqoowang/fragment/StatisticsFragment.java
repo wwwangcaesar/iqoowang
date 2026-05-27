@@ -38,7 +38,6 @@ public class StatisticsFragment extends Fragment {
     private SmoothLineChartView smoothLineChart;
     private PercentagePieChartView percentagePieChart;
 
-    // 动态绑定的 UI 控件
     private TextView tvTotalAmount;
     private TextView tvTrendPercent;
     private ImageView ivTrendArrow;
@@ -49,9 +48,7 @@ public class StatisticsFragment extends Fragment {
 
     private AppDatabase db;
 
-    // 高级莫兰迪品牌色盘 (对应你饼图的切片颜色)
     private final String[] CHART_HEX_COLORS = {"#003527", "#505F76", "#B7C8E1", "#E7EEFF"};
-    // 进度条背景色
     private final String TRACK_COLOR = "#F0F3FF";
 
     @Nullable
@@ -59,7 +56,6 @@ public class StatisticsFragment extends Fragment {
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
         View view = inflater.inflate(R.layout.fragment_statistics, container, false);
 
-        // 1. 初始化所有核心组件
         segmentedTab = view.findViewById(R.id.segmented_tab);
         smoothLineChart = view.findViewById(R.id.smooth_line_chart);
         percentagePieChart = view.findViewById(R.id.percentage_pie_chart);
@@ -77,29 +73,17 @@ public class StatisticsFragment extends Fragment {
         setupChartInteractions();
         return view;
     }
-    private int currentTab = 0;
+
     private void setupChartInteractions() {
         segmentedTab.setOnTabSelectedListener((index, text) -> {
-            currentTab = index;
             loadAnalyticsData(index);
         });
-        loadAnalyticsData(0);
+        loadAnalyticsData(0); // 默认加载周数据
     }
 
-    @Override
-    public void onResume() {
-        super.onResume();
-        // 瞬间重加载最新账本分析
-        loadAnalyticsData(currentTab);
-    }
-    /**
-     * 核心数据分析引擎 (运行在子线程防卡顿)
-     */
     private void loadAnalyticsData(int periodIndex) {
         new Thread(() -> {
-            long currentStart, currentEnd;
-            long prevStart, prevEnd; // 用于计算环比
-
+            long currentStart, currentEnd, prevStart, prevEnd;
             Calendar cal = Calendar.getInstance();
             currentEnd = cal.getTimeInMillis();
 
@@ -109,35 +93,42 @@ public class StatisticsFragment extends Fragment {
             String periodName;
 
             // =====================================
-            // 1. 时间切片算法
+            // 1. 标准自然日切片算法（修复时间轴错位）
             // =====================================
             if (periodIndex == 0) {
-                // 【本周】：最近 7 天
+                // 【周】：往前推6天，包含今天共7个自然日
                 daysInPeriod = 7;
                 periodName = "本周";
+                pointCount = 7;
+
                 cal.add(Calendar.DAY_OF_YEAR, -6);
                 cal.set(Calendar.HOUR_OF_DAY, 0);
                 cal.set(Calendar.MINUTE, 0);
                 cal.set(Calendar.SECOND, 0);
+                cal.set(Calendar.MILLISECOND, 0);
                 currentStart = cal.getTimeInMillis();
 
                 prevEnd = currentStart - 1;
                 prevStart = prevEnd - (7L * 24 * 60 * 60 * 1000) + 1;
 
-                pointCount = 7;
                 xAxisLabels = new String[7];
                 Calendar labelCal = Calendar.getInstance();
                 labelCal.setTimeInMillis(currentStart);
                 SimpleDateFormat sdf = new SimpleDateFormat("MM/dd", Locale.getDefault());
-                for(int i=0; i<7; i++) {
+                for(int i = 0; i < 7; i++) {
                     xAxisLabels[i] = sdf.format(labelCal.getTime());
                     labelCal.add(Calendar.DAY_OF_YEAR, 1);
                 }
             } else if (periodIndex == 1) {
-                // 【本月】：自然月
+                // 【月】：标准自然月切分（按当月日期划分为5个周档位）
                 periodName = "本月";
+                pointCount = 5;
+
                 cal.set(Calendar.DAY_OF_MONTH, 1);
                 cal.set(Calendar.HOUR_OF_DAY, 0);
+                cal.set(Calendar.MINUTE, 0);
+                cal.set(Calendar.SECOND, 0);
+                cal.set(Calendar.MILLISECOND, 0);
                 currentStart = cal.getTimeInMillis();
                 daysInPeriod = cal.getActualMaximum(Calendar.DAY_OF_MONTH);
 
@@ -146,13 +137,17 @@ public class StatisticsFragment extends Fragment {
                 cal.set(Calendar.DAY_OF_MONTH, 1);
                 prevStart = cal.getTimeInMillis();
 
-                pointCount = 5;
-                xAxisLabels = new String[]{"第1周", "第2周", "第3周", "第4周", "第5周"};
+                xAxisLabels = new String[]{"W1", "W2", "W3", "W4", "W5"};
             } else {
-                // 【本年】：自然年
+                // 【年】：标准自然年切分（12个月）
                 periodName = "今年";
+                pointCount = 12;
+
                 cal.set(Calendar.DAY_OF_YEAR, 1);
                 cal.set(Calendar.HOUR_OF_DAY, 0);
+                cal.set(Calendar.MINUTE, 0);
+                cal.set(Calendar.SECOND, 0);
+                cal.set(Calendar.MILLISECOND, 0);
                 currentStart = cal.getTimeInMillis();
                 daysInPeriod = cal.getActualMaximum(Calendar.DAY_OF_YEAR);
 
@@ -161,12 +156,11 @@ public class StatisticsFragment extends Fragment {
                 cal.set(Calendar.DAY_OF_YEAR, 1);
                 prevStart = cal.getTimeInMillis();
 
-                pointCount = 12;
-                xAxisLabels = new String[]{"1月", "3月", "6月", "9月", "12月"};
+                xAxisLabels = new String[]{"1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"};
             }
 
             // =====================================
-            // 2. 数据库拉取聚合
+            // 2. 真实数据库投递与精准坐标映射
             // =====================================
             List<Expense> currentExpenses = db.expenseDao().getExpensesInRangeSync(currentStart, currentEnd);
             List<Expense> prevExpenses = db.expenseDao().getExpensesInRangeSync(prevStart, prevEnd);
@@ -174,63 +168,79 @@ public class StatisticsFragment extends Fragment {
             long currentTotalCents = 0;
             Map<String, Long> categoryTotals = new HashMap<>();
             float[] trendData = new float[pointCount];
-            long intervalStep = (currentEnd - currentStart) / pointCount;
+            Calendar extractCal = Calendar.getInstance();
 
-            // 循环拆解当前周期数据
             for (Expense e : currentExpenses) {
-                currentTotalCents += e.getAmount();
+                long amount = e.getAmount();
+                currentTotalCents += amount;
 
-                // 饼图/列表 分类聚合
-                long currentCat = categoryTotals.containsKey(e.getCategoryName()) ? categoryTotals.get(e.getCategoryName()) : 0L;
-                categoryTotals.put(e.getCategoryName(), currentCat + e.getAmount());
+                String catName = e.getCategoryName() != null ? e.getCategoryName() : "其他";
+                categoryTotals.put(catName, categoryTotals.getOrDefault(catName, 0L) + amount);
 
-                // 折线图分桶计算
-                int bucketIndex = (int) ((e.getTimestamp() - currentStart) / intervalStep);
+                extractCal.setTimeInMillis(e.getTimestamp());
+                int bucketIndex = 0;
+
+                // 绝对日历时间轴对齐，彻底解决相对偏差溢出
+                if (periodIndex == 0) {
+                    long diffMillis = e.getTimestamp() - currentStart;
+                    bucketIndex = (int) (diffMillis / (24 * 60 * 60 * 1000L));
+                } else if (periodIndex == 1) {
+                    int day = extractCal.get(Calendar.DAY_OF_MONTH);
+                    bucketIndex = (day - 1) / 7;
+                } else {
+                    bucketIndex = extractCal.get(Calendar.MONTH);
+                }
+
                 if (bucketIndex >= pointCount) bucketIndex = pointCount - 1;
-                trendData[bucketIndex] += e.getAmount();
+                if (bucketIndex < 0) bucketIndex = 0;
+
+                trendData[bucketIndex] += amount;
             }
 
             long prevTotalCents = 0;
             Map<String, Long> prevCategoryTotals = new HashMap<>();
             for (Expense e : prevExpenses) {
                 prevTotalCents += e.getAmount();
-                long prevCat = prevCategoryTotals.containsKey(e.getCategoryName()) ? prevCategoryTotals.get(e.getCategoryName()) : 0L;
-                prevCategoryTotals.put(e.getCategoryName(), prevCat + e.getAmount());
+                String catName = e.getCategoryName() != null ? e.getCategoryName() : "其他";
+                prevCategoryTotals.put(catName, prevCategoryTotals.getOrDefault(catName, 0L) + e.getAmount());
             }
 
             // =====================================
-            // 3. 算法处理 (环比、归一化、排序)
+            // 3. 趋势比对与异常态（零基准）修复
             // =====================================
-            // 环比增长率
-            String trendText = "0%";
-            boolean isTrendUp = false;
+            String trendText;
+            boolean isTrendUp;
+
             if (prevTotalCents > 0) {
                 long diff = currentTotalCents - prevTotalCents;
                 int pct = (int) ((diff * 100) / prevTotalCents);
-                isTrendUp = pct > 0;
+                isTrendUp = diff > 0;
                 trendText = (isTrendUp ? "+" : "") + pct + "%";
+            } else if (currentTotalCents > 0) {
+                isTrendUp = true;
+                trendText = "+100%"; // 修复上周期为0，当前突增的极端态
+            } else {
+                isTrendUp = false;
+                trendText = "0%";
             }
 
-            // 归一化折线图 (0.0f - 1.0f)
+            // 图表纵轴归一化与防塌陷处理
             float maxBucket = 0;
             for (float val : trendData) if (val > maxBucket) maxBucket = val;
             float[] normalizedTrend = new float[pointCount];
-            if (maxBucket > 0) {
-                for (int i = 0; i < pointCount; i++) normalizedTrend[i] = trendData[i] / maxBucket;
-            } else {
-                for (int i = 0; i < pointCount; i++) normalizedTrend[i] = 0.05f;
+            for (int i = 0; i < pointCount; i++) {
+                normalizedTrend[i] = (maxBucket == 0) ? 0.0f : (trendData[i] / maxBucket);
             }
 
-            // 排序分类找出 Top
+            // 分类提取 Top
             List<Map.Entry<String, Long>> sortedCategories = new ArrayList<>(categoryTotals.entrySet());
             Collections.sort(sortedCategories, (o1, o2) -> o2.getValue().compareTo(o1.getValue()));
 
-            // 智能提示文本生成 (找消费最高的类别比对)
             String smartTipText;
             if (!sortedCategories.isEmpty()) {
                 String topCategory = sortedCategories.get(0).getKey();
                 long currentTopAmt = sortedCategories.get(0).getValue();
-                long prevTopAmt = prevCategoryTotals.containsKey(topCategory) ? prevCategoryTotals.get(topCategory) : 0L;
+                long prevTopAmt = prevCategoryTotals.getOrDefault(topCategory, 0L);
 
                 if (prevTopAmt > 0) {
                     long diff = currentTopAmt - prevTopAmt;
@@ -247,48 +257,56 @@ public class StatisticsFragment extends Fragment {
                 smartTipText = "暂无消费数据，良好的财务规划从第一笔记账开始。";
             }
 
-            // 算出每日平均
             long dailyAvgCents = currentTotalCents / daysInPeriod;
 
             // =====================================
-            // 4. UI 渲染 (切回主线程)
+            // 4. 主线程 UI 同步挂载
             // =====================================
             final long finalCurrentTotalCents = currentTotalCents;
             final String finalTrendText = trendText;
             final boolean finalIsTrendUp = isTrendUp;
+
+            long finalPrevTotalCents = prevTotalCents;
             requireActivity().runOnUiThread(() -> {
-                // A. 更新总支出与数字滚动动画
                 AnimationUtils.animateAmount(tvTotalAmount, finalCurrentTotalCents);
+
+                // 正确接管状态展示
                 tvTrendPercent.setText(finalTrendText);
-                if (finalIsTrendUp) {
-                    tvTrendPercent.setTextColor(Color.parseColor("#BA1A1A")); // 支出增加标红
-                    ivTrendArrow.setImageResource(R.drawable.ic_trending_up); // 请确保您有这个图标
+                if (finalCurrentTotalCents == 0 && finalPrevTotalCents == 0) {
+                    // 无数据时的中立灰态
+                    tvTrendPercent.setTextColor(Color.parseColor("#707974"));
+                    ivTrendArrow.setImageResource(R.drawable.ic_trending_up);
+                } else if (finalIsTrendUp) {
+                    // 支出增加，警告红
+                    tvTrendPercent.setTextColor(Color.parseColor("#BA1A1A"));
+                    ivTrendArrow.setImageResource(R.drawable.ic_trending_up);
                 } else {
-                    tvTrendPercent.setTextColor(Color.parseColor("#2B6954")); // 支出减少标绿 (surface-tint)
-                    ivTrendArrow.setImageResource(R.drawable.ic_down); // 对应向下图标
+                    // 支出减少，安全绿
+                    tvTrendPercent.setTextColor(Color.parseColor("#2B6954"));
+                    ivTrendArrow.setImageResource(R.drawable.ic_down);
                 }
 
-                // B. 更新折线图
-                smoothLineChart.setDynamicLabels(periodIndex == 0 ? new String[]{xAxisLabels[0], xAxisLabels[3], xAxisLabels[6]} : xAxisLabels);
+                // 更新折线图
+                if (periodIndex == 0) {
+                    // 周图展示头、中、尾标签
+                    smoothLineChart.setDynamicLabels(new String[]{xAxisLabels[0], xAxisLabels[3], xAxisLabels[6]});
+                } else if (periodIndex == 2) {
+                    // 年图抽取季节点
+                    smoothLineChart.setDynamicLabels(new String[]{xAxisLabels[0], xAxisLabels[3], xAxisLabels[6], xAxisLabels[9]});
+                } else {
+                    smoothLineChart.setDynamicLabels(xAxisLabels);
+                }
                 smoothLineChart.setData(normalizedTrend);
 
-                // C. 更新右侧信息小卡片
                 tvDailyAvg.setText(String.format(Locale.getDefault(), "¥ %.2f", dailyAvgCents / 100.0));
                 tvActiveDays.setText(currentExpenses.size() + " 笔记录");
-
-                // D. 更新底部明智提示
                 tvSmartTip.setText(smartTipText);
 
-                // E. 动态渲染饼图与精美分类列表
                 renderCategoryBreakdown(sortedCategories, finalCurrentTotalCents);
             });
-
         }).start();
     }
 
-    /**
-     * 动态生成带有独立颜色 Bar 的类别列表
-     */
     private void renderCategoryBreakdown(List<Map.Entry<String, Long>> sortedCategories, long totalCents) {
         containerCategoryList.removeAllViews();
         List<PercentagePieChartView.PieEntry> pieEntries = new ArrayList<>();
@@ -300,25 +318,22 @@ public class StatisticsFragment extends Fragment {
         }
 
         long top3Total = 0;
-        int listLimit = Math.min(sortedCategories.size(), 4); // 列表最多展示4项
+        int listLimit = Math.min(sortedCategories.size(), 4);
 
         for (int i = 0; i < listLimit; i++) {
             Map.Entry<String, Long> entry = sortedCategories.get(i);
             long amountCents = entry.getValue();
             float percentage = (float) amountCents / totalCents;
 
-            // 饼图数据收集 (最多处理前3+其他)
             String hexColor = CHART_HEX_COLORS[Math.min(i, 3)];
             if (i < 3) {
                 pieEntries.add(new PercentagePieChartView.PieEntry(percentage, Color.parseColor(hexColor)));
                 top3Total += amountCents;
             } else if (i == 3) {
-                // 第四项代表所有“其他”
                 float otherPercent = (float) (totalCents - top3Total) / totalCents;
                 pieEntries.add(new PercentagePieChartView.PieEntry(otherPercent, Color.parseColor(hexColor)));
             }
 
-            // === 动态构建完美还原设计的列表项 ===
             LinearLayout row = new LinearLayout(requireContext());
             row.setOrientation(LinearLayout.HORIZONTAL);
             row.setGravity(Gravity.CENTER_VERTICAL);
@@ -326,14 +341,12 @@ public class StatisticsFragment extends Fragment {
             if (i > 0) rowParams.topMargin = dp2px(8);
             row.setLayoutParams(rowParams);
 
-            // 1. 图标
             ImageView iv = new ImageView(requireContext());
             iv.setLayoutParams(new LinearLayout.LayoutParams(dp2px(48), dp2px(48)));
             iv.setPadding(dp2px(12), dp2px(12), dp2px(12), dp2px(12));
             mapIconResource(entry.getKey(), iv);
             row.addView(iv);
 
-            // 2. 中间：类别名 + 水平进度条
             LinearLayout middleGroup = new LinearLayout(requireContext());
             middleGroup.setOrientation(LinearLayout.VERTICAL);
             LinearLayout.LayoutParams middleParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
@@ -345,7 +358,6 @@ public class StatisticsFragment extends Fragment {
             tvName.setTextColor(Color.parseColor("#111C2D"));
             tvName.setTextSize(16);
 
-            // 绘制横向圆角进度条
             View barContainer = new View(requireContext());
             LinearLayout.LayoutParams barParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp2px(8));
             barParams.topMargin = dp2px(8);
@@ -356,7 +368,6 @@ public class StatisticsFragment extends Fragment {
             middleGroup.addView(barContainer);
             row.addView(middleGroup);
 
-            // 3. 右侧：百分比 + 金额
             LinearLayout rightGroup = new LinearLayout(requireContext());
             rightGroup.setOrientation(LinearLayout.VERTICAL);
             rightGroup.setGravity(Gravity.END);
@@ -379,13 +390,9 @@ public class StatisticsFragment extends Fragment {
             containerCategoryList.addView(row);
         }
 
-        // 推送给饼图重新绘制和动画
         percentagePieChart.setEntries(pieEntries);
     }
 
-    /**
-     * 绘制双层叠加的水平进度条（左侧实体色，右侧底色）
-     */
     private android.graphics.drawable.LayerDrawable createProgressBarDrawable(String hexActiveColor, float percentage) {
         GradientDrawable track = new GradientDrawable();
         track.setShape(GradientDrawable.RECTANGLE);
@@ -399,7 +406,7 @@ public class StatisticsFragment extends Fragment {
 
         android.graphics.drawable.ClipDrawable clipProgress = new android.graphics.drawable.ClipDrawable(
                 progress, Gravity.LEFT, android.graphics.drawable.ClipDrawable.HORIZONTAL);
-        clipProgress.setLevel((int) (percentage * 10000)); // Level 是 0-10000
+        clipProgress.setLevel((int) (percentage * 10000));
 
         return new android.graphics.drawable.LayerDrawable(new android.graphics.drawable.Drawable[]{track, clipProgress});
     }

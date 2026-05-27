@@ -1,5 +1,6 @@
 package com.monsieurmahjong.iqoowang.fragment;
 
+
 import android.app.Dialog;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -21,6 +22,7 @@ import androidx.fragment.app.DialogFragment;
 
 import com.monsieurmahjong.iqoowang.R;
 import com.monsieurmahjong.iqoowang.connect.Achievement;
+import com.monsieurmahjong.iqoowang.utils.AchievementCelebrationDialog;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -149,7 +151,7 @@ public class AchievementDialogFragment extends DialogFragment {
         tvIcon.setTextColor(Color.parseColor("#e0a800"));
         LinearLayout.LayoutParams iconP = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        iconP.setMarginEnd(dp2px(8));
+        iconP.setMarginEnd( dp2px(8));
         tvIcon.setLayoutParams(iconP);
 
         TextView tvTitle = new TextView(requireContext());
@@ -383,6 +385,25 @@ public class AchievementDialogFragment extends DialogFragment {
         }
 
         row.addView(textGroup);
+
+        // ✅ 点击成就行 → 弹出庆祝动画（已解锁=红焰，未解锁=紫焰+朦胧）
+        final Achievement finalAch = ach;
+        row.setClickable(true);
+        row.setFocusable(true);
+        row.setForeground(
+                requireContext().obtainStyledAttributes(
+                                new int[]{android.R.attr.selectableItemBackground})
+                        .getDrawable(0));
+        row.setOnClickListener(v -> {
+            AchievementCelebrationDialog dialog =
+                    AchievementCelebrationDialog.newInstance(
+                            finalAch.getIcon(),
+                            finalAch.getName(),
+                            finalAch.getDescription(),
+                            finalAch.isUnlocked());
+            dialog.show(getChildFragmentManager(), "CelebrationDialog");
+        });
+
         return row;
     }
 

@@ -24,6 +24,7 @@ import com.monsieurmahjong.iqoowang.connect.Achievement;
 import com.monsieurmahjong.iqoowang.dao.AchievementManager;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
+import com.monsieurmahjong.iqoowang.utils.AchievementCelebrationDialog;
 import com.monsieurmahjong.iqoowang.utils.CheckInManager;
 import com.monsieurmahjong.iqoowang.utils.SpBudgetUtils;
 import com.monsieurmahjong.iqoowang.view.CoolBudgetSeekBar;
@@ -156,11 +157,12 @@ public class SettingsFragment extends Fragment {
     // ─────────────────────────────────────────────────────
 
     private void openCalendarDialog() {
-        // 异步查询本月支出，再弹出日历
+        // 异步查询当前月份支出，再弹出日历
+        // 使用 ExpenseDao.getAllExpensesByMonthSync(month)
+        // month 格式 "yyyy-MM"，与 date_str 字段的 LIKE 匹配一致
         new Thread(() -> {
-            // 修正后（使用新增方法，只查当月）
-            String monthKey = new SimpleDateFormat("yyyy-MM", Locale.getDefault())
-                    .format(Calendar.getInstance().getTime());
+            String monthKey = new java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.getDefault())
+                    .format(java.util.Calendar.getInstance().getTime());
             List<Expense> monthExpenses = db.expenseDao().getAllExpensesByMonthSync(monthKey);
             if (getActivity() == null) return;
             getActivity().runOnUiThread(() -> {
@@ -420,11 +422,24 @@ public class SettingsFragment extends Fragment {
                         llAchievementSection.removeViews(1, childCount - 1);
                     }
 
-                    // 4. 新解锁动画提示
+                    // 4. ✅ 新解锁成就 → 弹出炫酷庆祝动画（支持多个成就依次弹出）
                     if (newlyUnlocked != null && !newlyUnlocked.isEmpty()) {
-                        for (Achievement newAch : newlyUnlocked) {
-                            Toast.makeText(getContext(),
-                                    "🎉 恭喜达成新成就: " + newAch.getName(), Toast.LENGTH_LONG).show();
+                        // 多个成就依次延迟弹出，每隔 600ms 一个
+                        for (int achIdx = 0; achIdx < newlyUnlocked.size(); achIdx++) {
+                            final Achievement newAch = newlyUnlocked.get(achIdx);
+                            final int delay = achIdx * 600;
+                            new android.os.Handler(android.os.Looper.getMainLooper())
+                                    .postDelayed(() -> {
+                                        if (!isAdded()) return;
+                                        AchievementCelebrationDialog dialog =
+                                                AchievementCelebrationDialog.newInstance(
+                                                        newAch.getIcon(),
+                                                        newAch.getName(),
+                                                        newAch.getDescription(),
+                                                        true /* 已解锁 */);
+                                        dialog.show(getChildFragmentManager(),
+                                                "CelebrationDialog_" + newAch.getName());
+                                    }, delay);
                         }
                     }
 

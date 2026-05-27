@@ -25,8 +25,10 @@ import com.monsieurmahjong.iqoowang.view.CircularProgressView;
 import com.monsieurmahjong.iqoowang.view.LinearProgressView;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 
 public class HistoryFragment extends Fragment {
@@ -72,7 +74,8 @@ public class HistoryFragment extends Fragment {
         transactionListContainer = view.findViewById(R.id.transaction_list);
 
         db = AppDatabase.getDatabase(requireContext());
-
+        ImageView tvCalendarMonth = view.findViewById(R.id.iv_calendar);
+        tvCalendarMonth.setOnClickListener(v -> openCalendarDialog());
         return view;
     }
 
@@ -279,7 +282,21 @@ public class HistoryFragment extends Fragment {
             iv.setImageResource(R.mipmap.ic_other);
         }
     }
-
+    private void openCalendarDialog() {
+        // 异步查询本月支出，再弹出日历
+        new Thread(() -> {
+            // 修正后（使用新增方法，只查当月）
+            String monthKey = new SimpleDateFormat("yyyy-MM", Locale.getDefault())
+                    .format(Calendar.getInstance().getTime());
+            List<Expense> monthExpenses = db.expenseDao().getAllExpensesByMonthSync(monthKey);
+            if (getActivity() == null) return;
+            getActivity().runOnUiThread(() -> {
+                CalendarDialogFragment dialog =
+                        CalendarDialogFragment.newInstance(new ArrayList<>(monthExpenses));
+                dialog.show(getChildFragmentManager(), "CalendarDialog");
+            });
+        }).start();
+    }
     private int dp2px(int dp) {
         return (int) (dp * getResources().getDisplayMetrics().density);
     }
