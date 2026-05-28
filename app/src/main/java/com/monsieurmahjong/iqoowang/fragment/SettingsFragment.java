@@ -360,8 +360,6 @@ public class SettingsFragment extends Fragment {
             tvTitle.setText(item.title);
             tvTitle.setTextSize(13);
             tvTitle.setTextColor(Color.parseColor("#111c2d"));
-            tvTitle.setMaxLines(2);
-            tvTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
             tvTitle.setLayoutParams(new LinearLayout.LayoutParams(0,
                     ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 

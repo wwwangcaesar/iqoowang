@@ -1,6 +1,7 @@
 package com.monsieurmahjong.iqoowang.fragment;
 
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.view.Gravity;
@@ -17,6 +18,7 @@ import androidx.fragment.app.Fragment;
 import androidx.constraintlayout.widget.ConstraintLayout;
 
 import com.google.android.material.card.MaterialCardView;
+import com.monsieurmahjong.iqoowang.HistoryGalleryActivity;
 import com.monsieurmahjong.iqoowang.R;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
@@ -56,6 +58,8 @@ public class HistoryFragment extends Fragment {
         tvCircularText = view.findViewById(R.id.tv_circular_percent);
         tvMonthSpent = view.findViewById(R.id.tv_month_spent);
         tvMonthLeft = view.findViewById(R.id.tv_month_left);
+        TextView btnCancel =view.findViewById(R.id.tv_more);
+        if (btnCancel != null) btnCancel.setOnClickListener(v -> toAC());
 
         // 依靠严密的 DOM 视树向下寻解并动态锚定没有给定明确 ID 的 tvMonthBudgetTotal
         try {
@@ -296,6 +300,10 @@ public class HistoryFragment extends Fragment {
                 dialog.show(getChildFragmentManager(), "CalendarDialog");
             });
         }).start();
+    }
+    private void toAC(){
+        Intent intent = new Intent(requireContext(), HistoryGalleryActivity.class);
+        startActivity(intent);
     }
     private int dp2px(int dp) {
         return (int) (dp * getResources().getDisplayMetrics().density);

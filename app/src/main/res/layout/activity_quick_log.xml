@@ -1,64 +1,288 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    QuickLogActivity 布局：赛博朋克风格
+    层次：
+      [0] CyberpunkBgView  ← 全屏呼吸灯 + 粒子 + 扫描条 + 角装饰
+      [1] 内容区（居中）   ← 霓虹玻璃卡片 + NFC 标题 + 表单 + 按钮
+-->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:gravity="center"
-    android:padding="32dp">
+    >
 
-    <androidx.cardview.widget.CardView
+    <!-- ══════════════════════════════════════════════
+         [0] 动画背景层
+         ═══════════════════════════════════════════ -->
+    <com.monsieurmahjong.iqoowang.view.CyberpunkBgView
+        android:id="@+id/cyberpunk_bg"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+
+        />
+
+    <!-- ══════════════════════════════════════════════
+         [1] 内容层：垂直居中
+         ═══════════════════════════════════════════ -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        app:cardCornerRadius="20dp"
-        app:cardElevation="12dp"
-        app:cardBackgroundColor="#FFFFFF">
+        android:layout_gravity="center_vertical"
+        android:orientation="vertical"
+        android:layout_marginTop="28dp"
+        android:layout_marginBottom="28dp"
+        android:paddingLeft="28dp"
+        android:paddingRight="28dp"
+        >
 
+        <!-- ── NFC 信号指示头 ─────────────────────── -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="24dp">
+            android:layout_marginBottom="16dp"
+            android:gravity="center"
+            android:visibility="gone"
+            android:orientation="horizontal">
+
+            <!-- NFC 波纹信号图标 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="nfc"
+                android:textColor="#FF00FFFF"
+                android:textSize="20sp"
+                android:alpha="0.9" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="⚡ 极速记账"
-                android:textStyle="bold"
-                android:textSize="18sp"
-                android:textColor="#1C1C1E" />
+                android:layout_marginLeft="10dp"
+                android:text="NFC 已识别"
+                android:textColor="#AA00FFFF"
+                android:textSize="13sp"
+                android:letterSpacing="0.12"
+                android:textAllCaps="true" />
 
-            <!-- 输入框：自动唤起数字键盘 -->
-            <EditText
-                android:id="@+id/et_amount"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="16dp"
-                android:hint="0.00"
-                android:inputType="numberDecimal"
-                android:textSize="36sp"
-                android:textColor="#1C1C1E"
-                android:textAlignment="center"
-                android:background="@null" />
+            <!-- 分隔点 -->
+            <View
+                android:layout_width="4dp"
+                android:layout_height="4dp"
+                android:layout_marginLeft="12dp"
+                android:layout_marginRight="12dp"
+                android:layout_gravity="center_vertical"
+                android:background="#8800FFFF"
+                android:alpha="0.8" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="选择基础分类"
-                android:textSize="14sp"
-                android:textColor="#8E8E93"
-                android:layout_marginTop="16dp"
-                android:layout_marginBottom="12dp" />
-
-            <!-- 使用两列网格动态填充分类 -->
-            <GridLayout
-                android:id="@+id/grid_categories"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:columnCount="2"
-                android:rowCount="3"
-                android:alignmentMode="alignBounds" />
-
+                android:text="QUICK LOG"
+                android:textColor="#66AA00FF"
+                android:textSize="12sp"
+                android:letterSpacing="0.15"
+                android:textAllCaps="true" />
         </LinearLayout>
-    </androidx.cardview.widget.CardView>
+
+        <!-- ── 霓虹边框包裹层（渐变描边） ──────────── -->
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/neon_card_border"
+            android:padding="1.5dp">
+
+            <!-- ── 玻璃卡片主体 ──────────────────── -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/dark_glass_card"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+                <!-- 标题行 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <!-- 左侧竖条装饰 -->
+                    <View
+                        android:layout_width="3dp"
+                        android:layout_height="22dp"
+                        android:layout_marginRight="10dp"
+                        android:background="#FF00FFFF" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="⚡ 极速记账"
+                        android:textStyle="bold"
+                        android:textSize="19sp"
+                        android:textColor="#FFFFFFFF"
+                        android:letterSpacing="0.04" />
+
+                    <!-- 右上角标签 -->
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="CYBER PAY"
+                        android:textSize="9sp"
+                        android:textColor="#7700FFFF"
+                        android:letterSpacing="0.15"
+                        android:textAllCaps="true" />
+                </LinearLayout>
+
+                <!-- 横向分割线（渐变淡出） -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1px"
+                    android:layout_marginTop="16dp"
+                    android:layout_marginBottom="4dp"
+                    android:background="#3300FFFF" />
+
+                <!-- 金额输入框 -->
+                <EditText
+                    android:id="@+id/et_amount"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:hint="0.00"
+                    android:inputType="numberDecimal"
+                    android:textSize="42sp"
+                    android:textColor="#FFFFFFFF"
+                    android:textColorHint="#33FFFFFF"
+                    android:textAlignment="center"
+                    android:textStyle="bold"
+                    android:background="@null"
+                    android:cursorVisible="true" />
+
+                <!-- 货币单位提示 -->
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="CNY  ¥"
+                    android:textSize="11sp"
+                    android:textColor="#4400FFFF"
+                    android:textAlignment="center"
+                    android:letterSpacing="0.2"
+                    android:layout_marginTop="2dp"
+                    android:layout_marginBottom="16dp" />
+
+                <!-- 分割线（带颜色标记） -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1px"
+                    android:background="#2200FFFF"
+                    android:layout_marginBottom="16dp" />
+
+                <!-- 分类选择标签 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="12dp">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="选择分类"
+                        android:textSize="13sp"
+                        android:textColor="#AAFFFFFF"
+                        android:letterSpacing="0.05" />
+
+                    <!-- 装饰性小点列 -->
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <View android:layout_width="5dp" android:layout_height="5dp"
+                            android:layout_marginRight="4dp"
+                            android:background="#FF00FFFF" />
+                        <View android:layout_width="5dp" android:layout_height="5dp"
+                            android:layout_marginRight="4dp"
+                            android:background="#88AA00FF" />
+                        <View android:layout_width="5dp" android:layout_height="5dp"
+                            android:background="#44FF00CC" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <!-- 分类网格（由 Java 动态填充，保留 ID） -->
+                <GridLayout
+                    android:id="@+id/grid_categories"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:columnCount="2"
+                    android:rowCount="3"
+                    android:alignmentMode="alignBounds"
+                    android:useDefaultMargins="false" />
+
+                <!-- 分割线 -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1px"
+                    android:background="#1A00FFFF"
+                    android:layout_marginTop="16dp"
+                    android:layout_marginBottom="16dp" />
+
+                <!-- 操作按钮行 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:weightSum="3">
+
+                    <!-- 取消按钮 -->
+                    <TextView
+                        android:id="@+id/btn_cancel"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="1"
+                        android:text="取消"
+                        android:textSize="15sp"
+                        android:textColor="#88FFFFFF"
+                        android:gravity="center"
+                        android:background="@drawable/neon_button_cancel"
+                        android:clickable="true"
+                        android:focusable="true" />
+
+                    <View
+                        android:layout_width="12dp"
+                        android:layout_height="1dp" />
+
+                    <!-- 确认按钮 -->
+                    <TextView
+                        android:id="@+id/btn_confirm"
+                        android:layout_width="0dp"
+                        android:layout_height="44dp"
+                        android:layout_weight="2"
+                        android:text="⚡ 记账"
+                        android:textSize="15sp"
+                        android:textColor="#FF0A0820"
+                        android:textStyle="bold"
+                        android:gravity="center"
+                        android:background="@drawable/neon_button_confirm"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:letterSpacing="0.06" />
+                </LinearLayout>
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- ── 底部提示文字 ─────────────────────────── -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:text="点击空白处关闭  ·  数据安全加密"
+            android:textSize="11sp"
+            android:textColor="#33FFFFFF"
+            android:textAlignment="center"
+            android:letterSpacing="0.08" />
+
+    </LinearLayout>
 </FrameLayout>

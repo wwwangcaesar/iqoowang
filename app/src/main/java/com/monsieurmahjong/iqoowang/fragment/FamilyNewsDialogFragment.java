@@ -243,8 +243,6 @@ public class FamilyNewsDialogFragment extends DialogFragment {
         tvContent.setText(item.content);
         tvContent.setTextSize(12);
         tvContent.setTextColor(Color.parseColor("#505f76"));
-        tvContent.setMaxLines(3);
-        tvContent.setEllipsize(TextUtils.TruncateAt.END);
         tvContent.setLineSpacing(dp2px(2), 1.0f);
         LinearLayout.LayoutParams contentP = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
