@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -19,6 +20,8 @@ import androidx.annotation.Nullable;
 import androidx.cardview.widget.CardView;
 import androidx.fragment.app.Fragment;
 
+import com.google.gson.Gson;
+import com.google.gson.reflect.TypeToken;
 import com.monsieurmahjong.iqoowang.R;
 import com.monsieurmahjong.iqoowang.connect.Achievement;
 import com.monsieurmahjong.iqoowang.dao.AchievementManager;
@@ -29,12 +32,22 @@ import com.monsieurmahjong.iqoowang.utils.CheckInManager;
 import com.monsieurmahjong.iqoowang.utils.SpBudgetUtils;
 import com.monsieurmahjong.iqoowang.view.CoolBudgetSeekBar;
 
+import java.io.IOException;
+import java.lang.reflect.Type;
+import java.text.ParseException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.TimeUnit;
+
+import okhttp3.Call;
+import okhttp3.Callback;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.Response;
 
 public class SettingsFragment extends Fragment {
 
@@ -74,6 +87,11 @@ public class SettingsFragment extends Fragment {
     // ─────────────────────────────────────────────────────
     //  家庭新闻数据模型
     // ─────────────────────────────────────────────────────
+    public static class NewsResponse {
+        public int code;
+        public List<FamilyNewsItem> data;
+        public String date;
+    }
     public static class FamilyNewsItem {
         public final String category;
         public final String content;
@@ -176,48 +194,112 @@ public class SettingsFragment extends Fragment {
     // ─────────────────────────────────────────────────────
     //  家庭档案 - 网络数据加载 & 显示
     // ─────────────────────────────────────────────────────
-
+    private static final String TAG = "SettingsFragment";
+    // Gson 解析器（全局单例）
+    private Gson gson = new Gson();
     /** 模拟网络请求获取家庭资讯，展示前 3 条到卡片内 */
+    // 全局初始化OkHttp客户端（带超时）
+    private OkHttpClient okHttpClient = new OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .writeTimeout(10, TimeUnit.SECONDS)
+            .build();
+
     private void loadFamilyNews() {
-        new Thread(() -> {
-            // 模拟网络延迟
-            try { Thread.sleep(600); } catch (InterruptedException e) { /* ignore */ }
+        // 显示加载中
+        if (tvFamilyNewsLoading != null) {
+            tvFamilyNewsLoading.setVisibility(View.VISIBLE);
+        }
 
-            // 构造模拟数据（对应接口返回的 JSON 格式）
-            List<FamilyNewsItem> items = new ArrayList<>();
-            items.add(new FamilyNewsItem(
-                    "本地民生",
-                    "【硬核事实】因管道维修，朝阳区部分区域将于5月26日停水15小时。【分析应对】受影响居民请提前储备生活用水。",
-                    1,
-                    "今天",
-                    "长春市水务局",
-                    "长春市朝阳区5月26日部分区域停水通知"
-            ));
-            items.add(new FamilyNewsItem(
-                    "家庭健康",
-                    "【健康提示】夏季气温升高，儿童防暑降温尤为重要。建议户外活动时间选在上午10点前或下午4点后，并及时补充水分。",
-                    2,
-                    "昨天",
-                    "长春市卫生健康委员会",
-                    "夏季儿童防暑降温健康指南"
-            ));
-            items.add(new FamilyNewsItem(
-                    "社区公告",
-                    "【温馨提示】本社区将于本周六上午9:00举行消防安全演练，请居民积极参与，了解紧急疏散路线和灭火器使用方法。",
-                    3,
-                    "2天前",
-                    "绿园街道办事处",
-                    "2026年社区消防安全演练通知"
-            ));
+        String apiUrl = "https://satanwang.pythonanywhere.com/api/news";
+        Request request = new Request.Builder()
+                .url(apiUrl)
+                .get()
+                .build();
 
-            if (getActivity() == null) return;
-            getActivity().runOnUiThread(() -> {
-                familyNewsList = items;
-                displayFamilyNewsInCard(items);
-            });
-        }).start();
+        okHttpClient.newCall(request).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                Log.e(TAG, "网络请求失败: ", e);
+                if (getActivity() == null) return;
+
+                getActivity().runOnUiThread(() -> {
+                    if (tvFamilyNewsLoading != null) {
+                        tvFamilyNewsLoading.setVisibility(View.GONE);
+                    }
+                    showFamilyNewsError("网络连接失败，请检查网络");
+                });
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) throws IOException {
+                if (getActivity() == null) return;
+
+                try {
+                    if (!response.isSuccessful()) {
+                        throw new IOException("HTTP错误: " + response.code());
+                    }
+
+                    String responseBody = response.body().string();
+                    Log.d(TAG, "接口返回数据: " + responseBody);
+
+                    // ✅ 关键：先解析外层NewsResponse对象
+                    NewsResponse newsResponse = gson.fromJson(responseBody, NewsResponse.class);
+
+                    // 校验业务状态码
+                    if (newsResponse.code != 200) {
+                        throw new IOException("接口业务错误: code=" + newsResponse.code);
+                    }
+
+                    // 获取新闻列表（空值兜底）
+                    final List<FamilyNewsItem> items = newsResponse.data != null ? newsResponse.data : new ArrayList<>();
+
+                    getActivity().runOnUiThread(() -> {
+                        if (tvFamilyNewsLoading != null) {
+                            tvFamilyNewsLoading.setVisibility(View.GONE);
+                        }
+
+                        if (items.isEmpty()) {
+                            showFamilyNewsError("暂无最新新闻");
+                            return;
+                        }
+
+                        // 保存数据并渲染
+                        familyNewsList = items;
+                        displayFamilyNewsInCard(items);
+                    });
+
+                } catch (Exception e) {
+                    Log.e(TAG, "数据解析失败: ", e);
+                    getActivity().runOnUiThread(() -> {
+                        if (tvFamilyNewsLoading != null) {
+                            tvFamilyNewsLoading.setVisibility(View.GONE);
+                        }
+                        showFamilyNewsError("数据加载失败，请稍后重试");
+                    });
+                } finally {
+                    if (response.body() != null) {
+                        response.body().close();
+                    }
+                }
+            }
+        });
     }
+    private void showFamilyNewsError(String errorMsg) {
+        if (llFamilyNewsContainer == null || getContext() == null) return;
 
+        // 清空原有内容
+        llFamilyNewsContainer.removeAllViews();
+
+        // 添加错误提示TextView
+        TextView tvError = new TextView(requireContext());
+        tvError.setText(errorMsg);
+        tvError.setTextSize(12);
+        tvError.setTextColor(Color.parseColor("#ff4444"));
+        tvError.setGravity(Gravity.CENTER);
+        tvError.setPadding(dp2px(16), dp2px(16), dp2px(16), dp2px(16));
+        llFamilyNewsContainer.addView(tvError);
+    }
     /** 将前 3 条新闻动态渲染到家庭档案 Card 内 */
     private void displayFamilyNewsInCard(List<FamilyNewsItem> items) {
         if (llFamilyNewsContainer == null || getContext() == null) return;
@@ -225,12 +307,13 @@ public class SettingsFragment extends Fragment {
         // 移除加载占位文字
         if (tvFamilyNewsLoading != null) tvFamilyNewsLoading.setVisibility(View.GONE);
 
-        // 移除旧动态 item（保留第 0 个 loading TextView 槽位）
+        // 移除旧动态item（保留第0个loading TextView槽位）
         int childCount = llFamilyNewsContainer.getChildCount();
         if (childCount > 1) {
             llFamilyNewsContainer.removeViews(1, childCount - 1);
         }
 
+        // 只显示前3条最新新闻
         int showCount = Math.min(3, items.size());
         for (int i = 0; i < showCount; i++) {
             FamilyNewsItem item = items.get(i);
@@ -240,20 +323,20 @@ public class SettingsFragment extends Fragment {
                 View divider = new View(requireContext());
                 LinearLayout.LayoutParams dvParams = new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT, 1);
-                dvParams.topMargin    = dp2px(10);
+                dvParams.topMargin = dp2px(10);
                 dvParams.bottomMargin = dp2px(10);
                 divider.setLayoutParams(dvParams);
                 divider.setBackgroundColor(Color.parseColor("#f0f0f0"));
                 llFamilyNewsContainer.addView(divider);
             }
 
-            // ── 条目容器 ──────────────────────────────
+            // 条目容器
             LinearLayout itemLayout = new LinearLayout(requireContext());
             itemLayout.setOrientation(LinearLayout.VERTICAL);
             itemLayout.setLayoutParams(new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-            // 标题行：[分类标签]  标题文字
+            // 标题行：[分类标签] 标题文字
             LinearLayout titleRow = new LinearLayout(requireContext());
             titleRow.setOrientation(LinearLayout.HORIZONTAL);
             titleRow.setGravity(Gravity.CENTER_VERTICAL);
@@ -313,7 +396,6 @@ public class SettingsFragment extends Fragment {
             llFamilyNewsContainer.addView(itemLayout);
         }
     }
-
     /** 点击家庭档案卡片 → 弹出全部新闻对话框 */
     private void openFamilyNewsDialog() {
         FamilyNewsDialogFragment dialog =
@@ -531,7 +613,14 @@ public class SettingsFragment extends Fragment {
                     }
                 });
     }
-
+    @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        // 取消所有未完成的网络请求
+        if (okHttpClient != null) {
+            okHttpClient.dispatcher().cancelAll();
+        }
+    }
     // ─────────────────────────────────────────────────────
     //  工具
     // ─────────────────────────────────────────────────────
