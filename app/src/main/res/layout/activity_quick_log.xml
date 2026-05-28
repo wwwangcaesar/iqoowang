@@ -8,8 +8,7 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    >
+    android:layout_height="match_parent">
 
     <!-- ══════════════════════════════════════════════
          [0] 动画背景层
@@ -17,9 +16,7 @@
     <com.monsieurmahjong.iqoowang.view.CyberpunkBgView
         android:id="@+id/cyberpunk_bg"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-
-        />
+        android:layout_height="match_parent" />
 
     <!-- ══════════════════════════════════════════════
          [1] 内容层：垂直居中
@@ -32,8 +29,7 @@
         android:layout_marginTop="28dp"
         android:layout_marginBottom="28dp"
         android:paddingLeft="28dp"
-        android:paddingRight="28dp"
-        >
+        android:paddingRight="28dp">
 
         <!-- ── NFC 信号指示头 ─────────────────────── -->
         <LinearLayout
@@ -83,18 +79,15 @@
                 android:textAllCaps="true" />
         </LinearLayout>
 
-        <!-- ── 霓虹边框包裹层（渐变描边） ──────────── -->
-        <FrameLayout
+        <!-- ── 霓虹玻璃卡片（自带呼吸光 + 跑马灯描边，与背景颜色同步） ─── -->
+        <com.monsieurmahjong.iqoowang.view.NeonCardView
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/neon_card_border"
-            android:padding="1.5dp">
+            android:layout_height="wrap_content">
 
-            <!-- ── 玻璃卡片主体 ──────────────────── -->
+            <!-- 内容容器（NeonCardView 是 FrameLayout，内容用 LinearLayout 排列） -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:background="@drawable/dark_glass_card"
                 android:orientation="vertical"
                 android:padding="24dp">
 
@@ -271,7 +264,7 @@
                         android:letterSpacing="0.06" />
                 </LinearLayout>
             </LinearLayout>
-        </FrameLayout>
+        </com.monsieurmahjong.iqoowang.view.NeonCardView>
 
         <!-- ── 底部提示文字 ─────────────────────────── -->
         <TextView

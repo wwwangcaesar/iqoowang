@@ -178,6 +178,9 @@ public class CyberpunkBgView extends View {
             px[i] += pvx[i] + (float)Math.sin(py[i] * 0.018f) * 0.4f;
             if (py[i] < -dp(20)) resetParticle(i, false);
         }
+
+        // ✅ 广播当前混合色，NeonCardView 通过 CyberpunkColorSync 实时同步
+        CyberpunkColorSync.updateColor(lerpColor(curColor, tgtColor, colorLerp));
     }
 
     // ─────────────────────────────────────────────────────
@@ -443,3 +446,4 @@ public class CyberpunkBgView extends View {
         return dp * getResources().getDisplayMetrics().density;
     }
 }
+
