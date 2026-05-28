@@ -1,8 +1,10 @@
 package com.monsieurmahjong.iqoowang;
 
+import android.content.BroadcastReceiver;
 import android.content.ContentUris;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Color;
@@ -15,6 +17,8 @@ import android.provider.MediaStore;
 import android.util.Log;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.GridLayout;
@@ -67,6 +71,8 @@ import java.util.regex.Pattern;
 import android.Manifest; // 必须是这个 Android 系统包
 import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
+import com.monsieurmahjong.iqoowang.server.ScreenshotService;
+import com.monsieurmahjong.iqoowang.view.CyberpunkBgView;
 
 public class QuickLogActivity extends AppCompatActivity {
 
@@ -75,66 +81,104 @@ public class QuickLogActivity extends AppCompatActivity {
     private AppDatabase db;
     private String triggerSource = "MANUAL";
     private String detectedCardUid = ""; // 记录当前碰到的电梯卡卡号
+    private CyberpunkBgView cyberpunkBg;
+
+    private String payTypeName="";
+    private static final String TAG = "NFC_Screenshot_Activity";
+
+    private BroadcastReceiver screenshotReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            Log.d(TAG, "📥 Activity 收到广播，Action = " + intent.getAction());
+            if (ScreenshotService.ACTION_SCREENSHOT_DONE.equals(intent.getAction())) {
+                String imgUriString = intent.getStringExtra(ScreenshotService.EXTRA_IMAGE_URI);
+                Log.d(TAG, "🎉 成功拿到相册图片 URI: " + imgUriString + "，准备解除透明并显示真实 UI！");
+                showRealUI(imgUriString);
+            }
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_quick_log);
+        Log.d(TAG, "📱 onCreate 启动");
+        supportRequestWindowFeature(Window.FEATURE_NO_TITLE);
 
-        etAmount = findViewById(R.id.et_amount);
-        gridCategories = findViewById(R.id.grid_categories);
-        db = AppDatabase.getDatabase(this);
-        checkStoragePermissionAndProcess();
-        // 处理第一次唤醒
+        ContextCompat.registerReceiver(this, screenshotReceiver,
+                new IntentFilter(ScreenshotService.ACTION_SCREENSHOT_DONE), ContextCompat.RECEIVER_EXPORTED);
+        Log.d(TAG, "📡 成功注册完成截图的广播监听器");
+
         handleNfcIntent(getIntent());
-        setupCategoryGrid();
     }
 
-    // 当 Activity 已经在后台，再次物理碰卡时触发此方法（因为设置了 singleTask）
     @Override
-    protected void onNewIntent(android.content.Intent intent) {
+    protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        Log.d(TAG, "🔄 onNewIntent 被触发（热启动碰卡）");
         setIntent(intent);
         handleNfcIntent(intent);
     }
 
-    // 核心：解析电梯卡或专属 215 标签 UID 的方法
     private void handleNfcIntent(Intent intent) {
-        if (intent == null) return;
-
-        String action = intent.getAction();
-        if (NfcAdapter.ACTION_NDEF_DISCOVERED.equals(action)) {
-            // 此时已经是 100% 精准定向跳转，绝无杂牌卡干扰
-            Log.d("NFC_LOG", "专属 215 标签成功免选择直达拉起！");
-
-            // 如果需要读取物理 UID
-            Tag tag = intent.getParcelableExtra(NfcAdapter.EXTRA_TAG);
-            if (tag != null) {
-                byte[] uidBytes = tag.getId();
-                String cardUid = bytesToHexString(uidBytes);
-                Toast.makeText(this, "🚀 专属记账标签已识别！卡号: " + cardUid, Toast.LENGTH_SHORT).show();
-            }
-
-            // TODO: 在这里直接触发你的记账悬浮窗或聚焦到输入框
+        if (intent != null && NfcAdapter.ACTION_NDEF_DISCOVERED.equals(intent.getAction())) {
+            Log.d(TAG, "⚡ NFC 碰卡触发！当前 Activity 处于【全透明隐身状态】，正在向后台无障碍发截图命令...");
+            sendBroadcast(new Intent(ScreenshotService.ACTION_REQUEST_SCREENSHOT));
+        } else {
+            Log.d(TAG, "👆 正常点击图标或非 NFC 唤醒，无需隐身截图，直接展示 UI");
+            showRealUI(null);
         }
     }
 
-    // 实用工具：将字节数组转换为16进制可见文本 (JDK 1.8 传统写法)
-    private String bytesToHexString(byte[] src) {
-        StringBuilder stringBuilder = new StringBuilder();
-        if (src == null || src.length <= 0) {
-            return "";
+
+    private void showRealUI(String imagePath) {
+        // 全屏及透明导航栏/状态栏的配置（必须在 setContentView 之前）
+        getWindow().setFlags(
+                WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+        getWindow().setStatusBarColor(Color.TRANSPARENT);
+        getWindow().setNavigationBarColor(Color.TRANSPARENT);
+
+        // 3. 正式挂载布局
+        setContentView(R.layout.activity_quick_log);
+
+        cyberpunkBg = findViewById(R.id.cyberpunk_bg);
+        if (cyberpunkBg != null) {
+            cyberpunkBg.startAnim();
+            cyberpunkBg.setOnClickListener(v -> finish());
         }
-        for (byte b : src) {
-            int v = b & 0xFF;
-            String hv = Integer.toHexString(v);
-            if (hv.length() < 2) {
-                stringBuilder.append(0);
-            }
-            stringBuilder.append(hv);
+
+        overridePendingTransition(R.anim.quicklog_enter, 0);
+
+        etAmount = findViewById(R.id.et_amount);
+        gridCategories = findViewById(R.id.grid_categories);
+        db = AppDatabase.getDatabase(this);
+
+        checkStoragePermissionAndProcess();
+
+        // 🚨【已删除】：删除了导致无限死循环的 handleNfcIntent(getIntent());
+
+        setupCategoryGrid();
+
+        // ── 取消/确认按钮 ──
+        TextView btnCancel = findViewById(R.id.btn_cancel);
+        if (btnCancel != null) btnCancel.setOnClickListener(v -> finish());
+
+        TextView btnConfirm = findViewById(R.id.btn_confirm);
+        if (btnConfirm != null) btnConfirm.setOnClickListener(v -> {
+            // 在此处理你的记账逻辑，完成后调用 finish()
+            // saveAndExit(payTypeName);
+            finish();
+        });
+
+        if (imagePath != null) {
+            // TODO: 将截图路径渲染到你的 ImageView 上
+            Toast.makeText(this, "凭证已自动截取！", Toast.LENGTH_SHORT).show();
         }
-        return stringBuilder.toString().toUpperCase();
     }
+
+
+
     // 记录当前选中的分类位置（-1表示未选中）
     private int selectedPosition = -1;
     // 保存所有分类item的引用，方便更新选中状态
@@ -213,7 +257,7 @@ public class QuickLogActivity extends AppCompatActivity {
                 // 保存并退出（可以加个延迟，让用户看到选中效果）
                 v.postDelayed(() -> saveAndExit(category.getName()), 150);
             });
-
+            applyCyberpunkCategoryStyle(itemLayout);
             // 添加到网格和列表
             gridCategories.addView(itemLayout);
             categoryItems.add(itemLayout);
@@ -328,7 +372,7 @@ public class QuickLogActivity extends AppCompatActivity {
                         categoryName,
                         System.currentTimeMillis(),
                         todayStr,
-                        recordSource
+                        "NFC触摸"
                 );
 
                 db.expenseDao().insertExpense(expense);
@@ -353,12 +397,16 @@ public class QuickLogActivity extends AppCompatActivity {
             if (i == selectedPosition) {
                 // 选中状态：深一点的灰色背景
                 bg.setColor(Color.parseColor("#E5E5EA"));
+                TextView textView = (TextView) ((LinearLayout) item).getChildAt(1);
+                textView.setTextColor(getResources().getColor(R.color.on_error_container));
                 // 可选：给选中的图标加个蓝色滤镜
                 ImageView ivIcon = (ImageView) ((LinearLayout) item).getChildAt(0);
                 ivIcon.setColorFilter(ContextCompat.getColor(this, R.color.teal_700));
             } else {
                 // 未选中状态：默认浅灰色背景
                 bg.setColor(Color.parseColor("#F2F2F7"));
+                TextView textView = (TextView) ((LinearLayout) item).getChildAt(1);
+                textView.setTextColor(getResources().getColor(R.color.primary_light));
                 // 清除图标滤镜
                 ImageView ivIcon = (ImageView) ((LinearLayout) item).getChildAt(0);
                 ivIcon.clearColorFilter();
@@ -366,6 +414,66 @@ public class QuickLogActivity extends AppCompatActivity {
 
             item.invalidate();
         }
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        // ── [插入位置 7] 停止动画防止内存泄漏 ──
+        if (cyberpunkBg != null) cyberpunkBg.stopAnim();
+        try {
+            unregisterReceiver(screenshotReceiver);
+        } catch (Exception e) {}
+    }
+
+    @Override
+    public void finish() {
+        super.finish();
+        // ── [插入位置 8] 退出动画 ──
+        overridePendingTransition(0, R.anim.quicklog_exit);
+    }
+
+    /**
+     * 为单个分类按钮应用赛博朋克样式。
+     * 在你的 setupCategoryGrid() 里，每次 addView 之前调用此方法。
+     */
+    public static void applyCyberpunkCategoryStyle(View itemView) {
+        if (itemView == null) return;
+
+        // 背景：深色透明 + 青色细边框
+        android.graphics.drawable.GradientDrawable bg =
+                new android.graphics.drawable.GradientDrawable();
+        bg.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        bg.setCornerRadius(itemView.getResources().getDisplayMetrics().density * 10);
+        bg.setColor(0x220A0820);
+        bg.setStroke(
+                (int)(itemView.getResources().getDisplayMetrics().density * 1f),
+                0x6600FFFF);
+        itemView.setBackground(bg);
+
+        // 如果是 TextView，设置文字颜色
+        if (itemView instanceof TextView) {
+            ((TextView) itemView).setTextColor(0xFFDDFFFF);
+        }
+        // 如果是 ViewGroup，找到内部 TextView
+        else if (itemView instanceof LinearLayout) {
+            android.view.ViewGroup vg = (android.view.ViewGroup) itemView;
+            for (int j = 0; j < vg.getChildCount(); j++) {
+                View child = vg.getChildAt(j);
+                if (child instanceof TextView) {
+                    ((TextView) child).setTextColor(0xFFDDFFFF);
+                }
+            }
+        }
+
+        // 点击水波纹（暗色背景下的亮色水波纹）
+        itemView.setClickable(true);
+        itemView.setFocusable(true);
+        int[] attrs = { android.R.attr.selectableItemBackground };
+        android.content.res.TypedArray ta =
+                itemView.getContext().obtainStyledAttributes(attrs);
+        itemView.setForeground(ta.getDrawable(0));
+        ta.recycle();
     }
 
     /**
