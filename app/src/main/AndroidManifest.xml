@@ -7,6 +7,8 @@
     <uses-feature android:name="android.hardware.camera.any" />
     <uses-feature android:name="android.hardware.camera.autofocus" />
     <uses-permission android:name="android.permission.NFC" />
+    <uses-feature android:name="android.hardware.nfc" android:required="true" />
+
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -19,6 +21,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/stairsgoal"
         android:supportsRtl="true"
+        android:usesCleartextTraffic="true"
         android:theme="@style/Theme.ExpenseTracker">
         <!-- 首页 Dashboard -->
         <activity
@@ -61,6 +64,18 @@
             android:launchMode="singleTask"
             android:theme="@style/Theme.TransparentLog"
             android:exported="true">
+        </activity>
+
+        <activity
+            android:name=".NfcTriggerActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"> <intent-filter>
+            <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <data android:scheme="macproxy" android:host="action" />
+        </intent-filter>
+
         </activity>
         <service
             android:name=".server.ScreenshotService"

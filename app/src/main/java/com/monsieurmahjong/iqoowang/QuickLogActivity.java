@@ -119,12 +119,15 @@ public class QuickLogActivity extends AppCompatActivity {
         handleNfcIntent(intent);
     }
 
+    private boolean isNfc=true;
     private void handleNfcIntent(Intent intent) {
         if (intent != null && NfcAdapter.ACTION_NDEF_DISCOVERED.equals(intent.getAction())) {
             Log.d(TAG, "⚡ NFC 碰卡触发！当前 Activity 处于【全透明隐身状态】，正在向后台无障碍发截图命令...");
+            isNfc=true;
             sendBroadcast(new Intent(ScreenshotService.ACTION_REQUEST_SCREENSHOT));
         } else {
             Log.d(TAG, "👆 正常点击图标或非 NFC 唤醒，无需隐身截图，直接展示 UI");
+            isNfc=false;
             showRealUI(null);
         }
     }
@@ -361,18 +364,22 @@ public class QuickLogActivity extends AppCompatActivity {
         final String todayStr = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
 
         // 拼接记录来源，将电梯卡卡号一起存入数据库备查
-        final String recordSource = triggerSource + "[" + detectedCardUid + "]";
-
         new Thread(new Runnable() {
             @Override
             public void run() {
+                String recordSource = triggerSource + "[" + detectedCardUid + "]";
+                if (isNfc){
+                    recordSource="NFC触摸";
+                }else {
+                    recordSource="手动录入";
+                }
                 Expense expense = new Expense(
                         0,
                         amountInCents,
                         categoryName,
                         System.currentTimeMillis(),
                         todayStr,
-                        "NFC触摸"
+                        recordSource
                 );
 
                 db.expenseDao().insertExpense(expense);

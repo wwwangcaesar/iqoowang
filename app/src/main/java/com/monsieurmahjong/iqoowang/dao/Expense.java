@@ -1,5 +1,6 @@
 package com.monsieurmahjong.iqoowang.dao;
 
+import androidx.room.ColumnInfo;
 import androidx.room.Entity;
 import androidx.room.Index;
 import androidx.room.PrimaryKey;
@@ -17,11 +18,19 @@ public class Expense {
     @PrimaryKey(autoGenerate = true)
     private final long id;
 
-    private final long amount;          // 单位：分
-    private final String categoryName;  // 分类名称
+    private long amount;          // 单位：分
+    private  String categoryName;  // 分类名称
     private final long timestamp;
     private final String date_str;      // 格式化日期：yyyy-MM-dd
     private final String source;        // 来源：NFC, MANUAL, SCREENSHOT
+    @ColumnInfo(name = "remark")
+    private String remark;
+
+    public String getRemark() { return remark; }
+    public void setRemark(String remark) { this.remark = remark; }
+
+    public void setAmount(long amount) { this.amount = amount; }
+    public void setCategoryName(String categoryName) { this.categoryName = categoryName; }
 
     // ✅ 保留这个作为Room的主构造函数（不要加@Ignore）
     // Room会用这个构造函数从数据库中读取数据并创建对象

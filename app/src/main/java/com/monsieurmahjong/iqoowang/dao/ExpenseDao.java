@@ -2,8 +2,11 @@ package com.monsieurmahjong.iqoowang.dao;
 
 import androidx.lifecycle.LiveData;
 import androidx.room.Dao;
+import androidx.room.Delete;
 import androidx.room.Insert;
 import androidx.room.Query;
+import androidx.room.Update;
+
 import kotlinx.coroutines.flow.Flow;
 import java.util.List;
 
@@ -57,4 +60,11 @@ public interface ExpenseDao {
 // month 传入格式 "yyyy-MM"，例如 "2026-05"
     @Query("SELECT * FROM expense_table WHERE date_str LIKE :month || '%' ORDER BY date_str ASC")
     List<Expense> getAllExpensesByMonthSync(String month);
+
+    @Update
+    void updateExpense(Expense expense);
+
+    @Delete
+    void deleteExpense(Expense expense);
+
 }
