@@ -7,6 +7,8 @@ import androidx.room.Insert;
 import androidx.room.Query;
 import androidx.room.Update;
 
+import com.monsieurmahjong.iqoowang.pet.CategoryTotal;
+
 import kotlinx.coroutines.flow.Flow;
 import java.util.List;
 
@@ -66,5 +68,20 @@ public interface ExpenseDao {
 
     @Delete
     void deleteExpense(Expense expense);
+
+    // ════════════════════════════════════════════════════
+    //  宠物系统专用查询
+    // ════════════════════════════════════════════════════
+    @Query("SELECT COALESCE(SUM(amount), 0) FROM expense_table WHERE categoryName = :categoryName")
+    long getCategoryTotalSync(String categoryName);
+
+    @Query("SELECT COALESCE(SUM(amount), 0) FROM expense_table")
+    long getAllTimeTotalSync();
+
+    @Query("SELECT CAST((julianday('now') - julianday(MIN(date_str))) AS INTEGER) FROM expense_table")
+    long getDaysSinceFirstExpense();
+
+    @Query("SELECT categoryName as categoryName, COALESCE(SUM(amount),0) as total FROM expense_table GROUP BY categoryName ORDER BY total DESC")
+    List<CategoryTotal> getCategoryTotalsSync();
 
 }

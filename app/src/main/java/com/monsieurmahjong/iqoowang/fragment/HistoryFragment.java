@@ -22,6 +22,7 @@ import com.monsieurmahjong.iqoowang.HistoryGalleryActivity;
 import com.monsieurmahjong.iqoowang.R;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
+import com.monsieurmahjong.iqoowang.pet.PetActivity;
 import com.monsieurmahjong.iqoowang.utils.AnimationUtils;
 import com.monsieurmahjong.iqoowang.view.CircularProgressView;
 import com.monsieurmahjong.iqoowang.view.LinearProgressView;
@@ -80,9 +81,15 @@ public class HistoryFragment extends Fragment {
         db = AppDatabase.getDatabase(requireContext());
         ImageView tvCalendarMonth = view.findViewById(R.id.iv_calendar);
         tvCalendarMonth.setOnClickListener(v -> openCalendarDialog());
+        ImageView iv_avatar = view.findViewById(R.id.iv_avatar);
+        iv_avatar.setOnClickListener(v -> openActvity());
         return view;
     }
 
+    private void openActvity() {
+        Intent intent = new Intent(getActivity(), PetActivity.class);
+        startActivity(intent);
+    }
     @Override
     public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
         super.onViewCreated(view, savedInstanceState);

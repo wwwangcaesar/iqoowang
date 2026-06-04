@@ -19,7 +19,7 @@ public class CategoryProvider {
                     new ExpenseCategory(3, "日用百货", R.mipmap.ic_shopping),
                     new ExpenseCategory(4, "零食饮品", R.mipmap.ic_drinks),
                     new ExpenseCategory(5, "娱乐交际", R.mipmap.ic_entertainment),
-                    new ExpenseCategory(6, "其他", R.mipmap.ic_other)
+                    new ExpenseCategory(6, "其他消费", R.mipmap.ic_other)
             )
     );
 }
