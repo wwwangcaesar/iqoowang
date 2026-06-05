@@ -123,6 +123,145 @@
 .dev-stage-btn{border:none;border-radius:10px;padding:8px 12px;font-size:12px;
   font-weight:700;cursor:pointer;transition:all .15s}
 .dev-stage-btn:active{transform:scale(.92)}
+
+
+
+
+        /* ══ ANIME VFX SYSTEM ════════════════════════════════ */
+:root{ --gr:108;--gg:92;--gb:231 }
+
+/* 屏幕震动 */
+@keyframes sk-shake{
+  0%  {transform:translate(0,0) rotate(0)}
+  12% {transform:translate(-7px,4px) rotate(-.9deg)}
+  24% {transform:translate(6px,-5px) rotate(.7deg)}
+  36% {transform:translate(-5px,6px) rotate(-.6deg)}
+  48% {transform:translate(5px,-4px) rotate(.5deg)}
+  65% {transform:translate(-3px,3px) rotate(-.3deg)}
+  82% {transform:translate(2px,-2px) rotate(.15deg)}
+  100%{transform:translate(0,0) rotate(0)}
+}
+.screen-shake{animation:sk-shake .52s cubic-bezier(0.175,0.885,0.32,1.275) forwards}
+
+/* 技能横幅 — 蓄力→弹出→回弹 */
+@keyframes sk-in{
+  0%  {transform:translate(-50%,-50%) scale(.12) rotate(-10deg);opacity:0;filter:brightness(4)}
+  32% {transform:translate(-50%,-50%) scale(.92) rotate(-3deg);opacity:.9;filter:brightness(1.8)}
+  /* ★ 蓄力帧 */
+  44% {transform:translate(-50%,-50%) scale(.88) rotate(-3deg) scaleY(.9);filter:brightness(1.5)}
+  /* ★ 瞬间弹出 */
+  52% {transform:translate(-50%,-50%) scale(1.14) rotate(1.5deg) scaleY(1.08);opacity:1;filter:brightness(1.1)}
+  68% {transform:translate(-50%,-50%) scale(.96) rotate(-.4deg)}
+  82% {transform:translate(-50%,-50%) scale(1.03) rotate(.15deg)}
+  100%{transform:translate(-50%,-50%) scale(1) rotate(0);filter:brightness(1)}
+}
+@keyframes sk-out{
+  0%  {transform:translate(-50%,-50%) scale(1) rotate(0);opacity:1;clip-path:polygon(0 0,100% 0,100% 100%,0 100%)}
+  35% {transform:translate(-50%,-50%) scale(1.06) rotate(1.2deg)}
+  /* ★ 切割感撕裂 */
+  65% {transform:translate(-50%,-50%) scale(.88) rotate(-2.5deg);opacity:.7;
+       clip-path:polygon(0 0,100% 0,100% 48%,0 48%)}
+  100%{transform:translate(-50%,-50%) scale(.65) rotate(-6deg);opacity:0;
+       clip-path:polygon(0 0,100% 0,100% 0,0 0)}
+}
+.sk-banner{
+  position:fixed;top:50%;left:50%;
+  transform:translate(-50%,-50%);
+  z-index:35;pointer-events:none;
+  padding:14px 32px;border-radius:18px;
+  font-size:20px;font-weight:900;color:#fff;
+  text-align:center;white-space:nowrap;
+  text-shadow:0 0 20px rgba(var(--gr),var(--gg),var(--gb),1);
+  box-shadow:0 0 0 2px rgba(255,255,255,.3),
+             0 0 35px 12px rgba(var(--gr),var(--gg),var(--gb),.65),
+             0 0 70px 25px rgba(var(--gr),var(--gg),var(--gb),.3);
+}
+.sk-banner.in {animation:sk-in  .62s cubic-bezier(0.175,0.885,0.32,1.275) forwards}
+.sk-banner.out{animation:sk-out .42s cubic-bezier(0.55,0,.1,1) forwards}
+
+/* 刀芒划过 */
+@keyframes sk-slash{
+  0%  {clip-path:inset(0 100% 0 0);opacity:1}
+  45% {clip-path:inset(0 0 0 0)   ;opacity:1}
+  65% {clip-path:inset(0 0 0 0)   ;opacity:.75}
+  100%{clip-path:inset(0 0 0 100%);opacity:0}
+}
+.sk-slash{
+  position:fixed;left:-5%;width:110%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.95),rgba(255,255,255,.6),transparent);
+  pointer-events:none;z-index:32;
+  box-shadow:0 0 22px 8px rgba(255,255,255,.75);
+  animation:sk-slash .38s cubic-bezier(0.175,0.885,0.32,1.275) forwards;
+}
+
+/* 冲击波圆环 */
+@keyframes sk-ring{
+  0%  {transform:translate(-50%,-50%) scale(0) ;opacity:.95}
+  65% {opacity:.55}
+  100%{transform:translate(-50%,-50%) scale(2.8);opacity:0}
+}
+.sk-ring{
+  position:fixed;left:50%;top:44%;
+  width:180px;height:180px;border-radius:50%;
+  border:3px solid rgba(var(--gr),var(--gg),var(--gb),.9);
+  box-shadow:0 0 22px rgba(var(--gr),var(--gg),var(--gb),.6),
+             inset 0 0 16px rgba(var(--gr),var(--gg),var(--gb),.25);
+  pointer-events:none;z-index:31;
+  animation:sk-ring .85s cubic-bezier(0.175,0.885,0.32,1.275) forwards;
+}
+
+/* CSS 粒子 */
+@keyframes sk-p{
+  0%  {transform:translate(0,0) scale(1.6);opacity:1}
+  100%{transform:translate(var(--tx),var(--ty)) scale(0);opacity:0}
+}
+.sk-p{
+  position:fixed;border-radius:50%;pointer-events:none;z-index:33;
+  animation:sk-p var(--dur) cubic-bezier(0.175,0.885,0.32,1.275) forwards;
+}
+
+/* 屏幕能量闪光 */
+@keyframes sk-flash{0%{opacity:0}12%{opacity:.32}100%{opacity:0}}
+.sk-flash{position:fixed;inset:0;pointer-events:none;z-index:30;
+  animation:sk-flash .55s ease-out forwards}
+
+/* 宠物 Squash & Stretch */
+@keyframes pet-squash{
+  0%  {transform:scaleX(1)    scaleY(1)   }
+  /* ★ 蓄力压扁 */
+  22% {transform:scaleX(1.18) scaleY(.80) }
+  /* ★ 拉伸弹出 */
+  42% {transform:scaleX(.86)  scaleY(1.22)}
+  62% {transform:scaleX(1.07) scaleY(.95) }
+  80% {transform:scaleX(.97)  scaleY(1.03)}
+  100%{transform:scaleX(1)    scaleY(1)   }
+}
+.pet-squash{animation:pet-squash .55s cubic-bezier(0.175,0.885,0.32,1.275)}
+
+/* 技能槽位呼吸光晕 */
+@keyframes sk-slot-glow{
+  0%,100%{box-shadow:0 0 8px  rgba(var(--gr),var(--gg),var(--gb),.4)}
+  50%    {box-shadow:0 0 28px 8px rgba(var(--gr),var(--gg),var(--gb),.85)}
+}
+.sks.filled{animation:sk-slot-glow 2.4s ease-in-out infinite}
+
+/* 技能按钮悬停刀芒 */
+.sks.filled{position:relative;overflow:hidden}
+.sks.filled::after{
+  content:'';position:absolute;top:-100%;left:-60%;
+  width:40%;height:300%;
+  background:linear-gradient(105deg,transparent,rgba(255,255,255,.75),transparent);
+  transform:skewX(-20deg);pointer-events:none;
+  transition:none;opacity:0;
+}
+.sks.filled:active::after{
+  animation:slot-slash .3s cubic-bezier(0.175,0.885,0.32,1.275) forwards;
+}
+@keyframes slot-slash{
+  0%  {left:-60%;opacity:0}
+  20% {opacity:1}
+  100%{left:120%;opacity:0}
+}
     </style>
 </head>
 <body>
@@ -1499,18 +1638,74 @@ document.addEventListener('DOMContentLoaded',()=>{
       if(!onCD(id))setTimeout(()=>activateSkill(id),600);
     }
     function showSkillBanner(sk){
-      const clrs=['','#00b894','#0984e3','#6c5ce7','#e84393'];
-      const b=document.createElement('div');
-      b.style.cssText=`position:fixed;top:50%;left:50%;transform:translate(-50%,-50%) scale(0);
-        background:linear-gradient(135deg,${clrs[sk.tier]},${clrs[sk.tier]}99);
-        color:white;border-radius:20px;padding:14px 28px;z-index:30;
-        font-size:18px;font-weight:900;text-align:center;pointer-events:none;
-        box-shadow:0 8px 32px ${clrs[sk.tier]}66;transition:transform .3s cubic-bezier(.34,1.56,.64,1),opacity .3s`;
-      b.innerHTML=`${sk.ic} ${sk.nm}`;document.body.appendChild(b);
-      requestAnimationFrame(()=>{b.style.transform='translate(-50%,-50%) scale(1)';
-        setTimeout(()=>{b.style.opacity='0';b.style.transform='translate(-50%,-60%) scale(.9)';
-          setTimeout(()=>b.remove(),400);},900);});
-    }
+  const tClr=['','#00b894','#0984e3','#6c5ce7','#e84393'][sk.tier];
+  const rgb=(()=>{const h=tClr.replace('#','');return[parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)];})();
+  const rv=`--gr:${rgb[0]};--gg:${rgb[1]};--gb:${rgb[2]}`;
+
+  // ① 屏幕闪光
+  const fl=document.createElement('div');fl.className='sk-flash';
+  fl.style.cssText=`${rv};background:radial-gradient(ellipse at 50% 44%,rgba(${rgb.join(',')},0.38),transparent 68%)`;
+  document.body.appendChild(fl);setTimeout(()=>fl.remove(),560);
+
+  // ② 屏幕震动
+  const ui=document.getElementById('ui');
+  ui.classList.add('screen-shake');
+  setTimeout(()=>ui.classList.remove('screen-shake'),530);
+
+  // ③ 刀芒（tier≥2 触发，tier≥3 双刀芒）
+  if(sk.tier>=2){
+    [[40,0],[sk.tier>=3?56:null,.08]].forEach(([top,delay])=>{
+      if(top===null)return;
+      const s=document.createElement('div');s.className='sk-slash';
+      s.style.cssText=`top:${top}%;height:${sk.tier+2}px;animation-delay:${delay}s`;
+      document.body.appendChild(s);setTimeout(()=>s.remove(),500);
+    });
+  }
+
+  // ④ 冲击波圆环（层数 = tier）
+  for(let i=0;i<sk.tier;i++){
+    const r=document.createElement('div');r.className='sk-ring';
+    r.style.cssText=`${rv};border-color:rgba(${rgb.join(',')},${.9-i*.2});animation-delay:${i*.13}s;
+      width:${180+i*30}px;height:${180+i*30}px`;
+    document.body.appendChild(r);setTimeout(()=>r.remove(),1000);
+  }
+
+  // ⑤ 粒子迸发（数量随 tier 增加）
+  const cx=innerWidth/2,cy=innerHeight*.44;
+  const pc=8+sk.tier*5;
+  for(let i=0;i<pc;i++){
+    const p=document.createElement('div');p.className='sk-p';
+    const a=(i/pc)*Math.PI*2+Math.random()*.3;
+    const d=55+Math.random()*90;
+    const sz=3+Math.random()*5;
+    p.style.cssText=`left:${cx}px;top:${cy}px;${rv};
+      background:${i%3===0?'white':tClr};
+      box-shadow:0 0 8px ${tClr};
+      width:${sz}px;height:${sz}px;
+      --tx:${Math.cos(a)*d}px;--ty:${Math.sin(a)*d-25}px;
+      --dur:${.45+Math.random()*.45}s`;
+    document.body.appendChild(p);setTimeout(()=>p.remove(),1000);
+  }
+
+  // ⑥ 主横幅（多行，有图标+名称+描述）
+  const b=document.createElement('div');b.className=`sk-banner in`;
+  b.style.cssText=`${rv};background:linear-gradient(135deg,${tClr},${tClr}cc)`;
+  b.innerHTML=`<div style="font-size:28px;line-height:1;margin-bottom:5px">${sk.ic}</div>
+    <div style="letter-spacing:.04em">${sk.nm}</div>
+    <div style="font-size:11px;opacity:.82;margin-top:5px;font-weight:500">${sk.desc}</div>`;
+  document.body.appendChild(b);
+
+  // ⑦ 宠物 Squash & Stretch
+  const pc2=document.getElementById('pet-canvas');
+  pc2.classList.add('pet-squash');
+  setTimeout(()=>pc2.classList.remove('pet-squash'),560);
+
+  // 横幅退出
+  setTimeout(()=>{
+    b.classList.replace('in','out');
+    setTimeout(()=>b.remove(),430);
+  },1300);
+}
 
     // ══════════════════════════════════════════════════════
     //  SKILL EFFECTS ENGINE
@@ -1554,7 +1749,13 @@ document.addEventListener('DOMContentLoaded',()=>{
         (EFXR[e.type]||function(){})(fxX,p,e);
       }
     }
-
+// ── ANIME EASING ENGINE ──────────────────────────────
+function easeOutBack(t,o=1.70158){const s=o+1;return 1+s*(t-1)**3+o*(t-1)**2;}
+function easeOutElastic(t){
+  if(t<=0||t>=1)return t;
+  return Math.pow(2,-10*t)*Math.sin((t-.075)*Math.PI*2/.3)+1;
+}
+function easeInQuint(t){return t*t*t*t*t;}
     const EFXR={
       stardust(ctx,p,e){
         const cx=W/2,cy=H*.44,baseR=H*.18+H*.04*Math.sin(e.elapsed*.006);
@@ -1636,19 +1837,89 @@ document.addEventListener('DOMContentLoaded',()=>{
         ctx.restore();ctx.globalAlpha=1;
       },
       galaxyburst(ctx,p,e){
-        const cx=W/2,cy=H*.42;const t=e.elapsed*.003;ctx.save();ctx.globalCompositeOperation='lighter';
-        e.data.arms.forEach(pt=>{const r=pt.r*Math.min(1,p*1.5)*2.5;const x=cx+Math.cos(pt.a)*r,y=cy+Math.sin(pt.a)*r*.55;ctx.shadowColor=pt.col;ctx.shadowBlur=6;ctx.fillStyle=pt.col;ctx.globalAlpha=Math.max(0,(1-p*.9)*(.9-pt.r/80*.3));ctx.beginPath();ctx.arc(x,y,pt.sz,0,Math.PI*2);ctx.fill();});
-        ctx.globalAlpha=Math.max(0,.6-p*.8);ctx.strokeStyle='rgba(200,150,255,.8)';ctx.lineWidth=3+Math.sin(t*5)*2;ctx.shadowColor='#c896ff';ctx.shadowBlur=25;ctx.beginPath();ctx.arc(cx,cy,H*.3*Math.min(1,p*2.5),0,Math.PI*2);ctx.stroke();
-        ctx.restore();ctx.globalAlpha=1;
-      },
+  const cx=W/2,cy=H*.42;
+  ctx.save();ctx.globalCompositeOperation='lighter';
+  // 蓄力核（0~15%）
+  if(p<.15){
+    const cp=p/.15;
+    const coreR=H*.06*(1+easeOutBack(cp,3)*.4);
+    const cg=ctx.createRadialGradient(cx,cy,0,cx,cy,coreR);
+    cg.addColorStop(0,'rgba(255,255,255,.95)');
+    cg.addColorStop(.4,'rgba(200,140,255,.7)');
+    cg.addColorStop(1,'rgba(140,90,255,0)');
+    ctx.fillStyle=cg;ctx.globalAlpha=1;
+    ctx.beginPath();ctx.arc(cx,cy,coreR,0,Math.PI*2);ctx.fill();
+    // 螺旋蓄力线
+    ctx.strokeStyle='rgba(200,140,255,.5)';ctx.lineWidth=1.2;
+    for(let i=0;i<6;i++){
+      const a=i*Math.PI/3+cp*Math.PI*2;
+      ctx.beginPath();
+      ctx.moveTo(cx,cy);
+      ctx.lineTo(cx+Math.cos(a)*coreR*1.8,cy+Math.sin(a)*coreR*1.8);
+      ctx.stroke();
+    }
+    ctx.restore();return;
+  }
+  // 弹性爆炸展开
+  e.data.arms.forEach(pt=>{
+    const ep=easeOutBack(Math.min(1,(p-.15)/.85*1.5),2.6);
+    const r=pt.r*ep*3.2;
+    const x=cx+Math.cos(pt.a)*r,y=cy+Math.sin(pt.a)*r*.55;
+    const alpha=Math.max(0,(1-p*.92)*(.92-pt.r/80*.28));
+    ctx.shadowColor=pt.col;ctx.shadowBlur=7;
+    ctx.fillStyle=pt.col;ctx.globalAlpha=alpha;
+    ctx.beginPath();ctx.arc(x,y,pt.sz*(1+easeOutElastic(Math.min(1,(p-.15)*3))*.2),0,Math.PI*2);ctx.fill();
+  });
+  // 扩张环（弹性）
+  const ringR=H*.32*easeOutElastic(Math.min(1,(p-.1)/.9));
+  ctx.globalAlpha=Math.max(0,.65-p*.8);
+  ctx.strokeStyle='rgba(200,140,255,.85)';
+  ctx.lineWidth=3+Math.sin((p-.1)*Math.PI*4)*2;
+  ctx.shadowColor='#c896ff';ctx.shadowBlur=28;
+  ctx.beginPath();ctx.arc(cx,cy,ringR,0,Math.PI*2);ctx.stroke();
+  ctx.restore();ctx.globalAlpha=1;
+},
       doomsday(ctx,p,e){
-        ctx.fillStyle=`rgba(0,0,20,${Math.max(0,.6-p*.7)})`;ctx.fillRect(0,0,W,H);
-        ctx.save();ctx.globalCompositeOperation='lighter';
-        e.data.bolts.forEach(b=>{if(e.elapsed<b.delay||e.elapsed>b.delay+1000)return;const lp=(e.elapsed-b.delay)/800;ctx.strokeStyle=`rgba(180,220,255,${Math.max(0,(1-lp*2)*(.6+Math.random()*.4))})`;ctx.lineWidth=2+Math.random()*3;ctx.shadowColor='#aaccff';ctx.shadowBlur=25;drawLightning(ctx,b.x,-20,b.x+(Math.random()-.5)*80,H*.8,100,5);});
-        ctx.restore();EFXR.flamefist(ctx,p,e);
-        if(p>.2){ctx.save();ctx.globalAlpha=Math.max(0,.5-(p-.2)/.8*.7);ctx.strokeStyle='rgba(255,180,0,.8)';ctx.lineWidth=4;ctx.shadowColor='#ff8800';ctx.shadowBlur=20;ctx.beginPath();ctx.arc(W/2,H*.44,H*.4*(p-.2)/.8,0,Math.PI*2);ctx.stroke();ctx.restore();}
-        ctx.globalAlpha=1;
-      },
+  // 天空变暗（带弹性曲线）
+  const darkP=easeInQuint(Math.min(1,p*3))*(1-easeInQuint(Math.max(0,(p-.7)/.3)));
+  ctx.fillStyle=`rgba(0,0,18,${darkP*.68})`;ctx.fillRect(0,0,W,H);
+  // 闪电（精准时序）
+  ctx.save();ctx.globalCompositeOperation='lighter';
+  e.data.bolts.forEach((b,i)=>{
+    if(e.elapsed<b.delay||e.elapsed>b.delay+950)return;
+    const lp=(e.elapsed-b.delay)/750;
+    const flicker=Math.random()>.35?.8+Math.random()*.2:.15; // 闪烁感
+    ctx.strokeStyle=b.col;
+    ctx.lineWidth=easeOutBack(Math.max(0,1-lp*1.5),1.5)*(2.5+Math.random()*3);
+    ctx.shadowColor='#aaccff';ctx.shadowBlur=30;
+    ctx.globalAlpha=Math.max(0,(1-lp*2))*flicker;
+    drawLightning(ctx,b.x,-20,b.x+(Math.random()-.5)*70,H*.78,95,5);
+  });
+  ctx.restore();
+  // 火焰
+  EFXR.flamefist(ctx,p,e);
+  // 爆炸冲击圈（弹性扩张）
+  if(p>.18){
+    const sp=(p-.18)/.82;
+    const sr=H*.42*easeOutElastic(Math.min(1,sp*1.2));
+    ctx.save();
+    ctx.globalAlpha=Math.max(0,.62-sp*.7);
+    ctx.strokeStyle='rgba(255,160,0,.9)';
+    ctx.lineWidth=5+Math.sin(sp*Math.PI)*4;
+    ctx.shadowColor='#ff8800';ctx.shadowBlur=25;
+    ctx.beginPath();ctx.arc(W/2,H*.44,sr,0,Math.PI*2);ctx.stroke();
+    // 裂缝射线
+    ctx.strokeStyle=`rgba(255,200,80,${Math.max(0,.4-sp*.5)})`;
+    ctx.lineWidth=1.5;
+    for(let i=0;i<8;i++){
+      const a=i*Math.PI/4+sp*.3;
+      ctx.beginPath();ctx.moveTo(W/2,H*.44);
+      ctx.lineTo(W/2+Math.cos(a)*sr*1.3,H*.44+Math.sin(a)*sr*1.3);ctx.stroke();
+    }
+    ctx.restore();
+  }
+  ctx.globalAlpha=1;
+},
       dragon(ctx,p,e){
         ctx.save();
         [-1,1].forEach(sd=>{
@@ -1662,12 +1933,52 @@ document.addEventListener('DOMContentLoaded',()=>{
         if(p>.4&&p<.7)spawnFx(W/2,H*.4,'🔥',1);
       },
       supernova(ctx,p,e){
-        const cx=W/2,cy=H*.44;
-        if(p<.15){ctx.fillStyle=`rgba(255,255,255,${(1-p/.15)*.7})`;ctx.fillRect(0,0,W,H);}
-        ctx.save();ctx.globalCompositeOperation='lighter';
-        [[0,.9,'255,200,100'],[.05,.85,'100,200,255'],[.1,.75,'255,100,200']].forEach(([delay,fade,rgb])=>{const rp=Math.max(0,p-delay)/(1-delay);const r=rp*Math.min(W,H)*.7;const a=Math.max(0,fade-rp*1.1);ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);ctx.strokeStyle=`rgba(${rgb},${a})`;ctx.lineWidth=(1-rp)*14+1;ctx.shadowColor=`rgb(${rgb})`;ctx.shadowBlur=30;ctx.stroke();});
-        ctx.restore();ctx.globalAlpha=1;
-      },
+  const cx=W/2,cy=H*.44;
+  // 蓄力阶段（0~10%）：能量向心汇聚
+  if(p<.10){
+    const cp=p/.10;
+    ctx.save();ctx.globalAlpha=cp*.45;
+    ctx.fillStyle=`rgba(255,255,200,${cp*.28})`;ctx.fillRect(0,0,W,H);
+    const rIn=H*.28*(1-cp*.55);
+    const gIn=ctx.createRadialGradient(cx,cy,0,cx,cy,rIn);
+    gIn.addColorStop(0,'rgba(255,255,255,.9)');
+    gIn.addColorStop(.5,'rgba(255,220,80,.5)');
+    gIn.addColorStop(1,'rgba(255,200,100,0)');
+    ctx.fillStyle=gIn;ctx.beginPath();ctx.arc(cx,cy,rIn,0,Math.PI*2);ctx.fill();
+    // 8条收缩光线
+    ctx.strokeStyle='rgba(255,240,120,.6)';ctx.lineWidth=1.5;
+    for(let i=0;i<8;i++){
+      const a=i*Math.PI/4;const len=(1-cp)*(H*.25);
+      ctx.beginPath();ctx.moveTo(cx+Math.cos(a)*(rIn+len),cy+Math.sin(a)*(rIn+len));
+      ctx.lineTo(cx+Math.cos(a)*rIn,cy+Math.sin(a)*rIn);ctx.stroke();
+    }
+    ctx.restore();return;
+  }
+  // 爆炸白闪（10%~20%）
+  if(p<.20){ctx.fillStyle=`rgba(255,255,255,${(1-(p-.10)/.10)*.88})`;ctx.fillRect(0,0,W,H);}
+  // 弹性冲击波
+  ctx.save();ctx.globalCompositeOperation='lighter';
+  [[0,'255,200,100'],[.07,'100,220,255'],[.14,'255,100,200']].forEach(([delay,rgb])=>{
+    const rp=Math.max(0,p-delay)/(1-delay);
+    const ep=easeOutElastic(Math.min(1,rp*1.1));
+    const r=ep*Math.min(W,H)*.74;const a=Math.max(0,.92-rp*1.15);
+    if(r<=0)return;
+    ctx.beginPath();ctx.arc(cx,cy,r,0,Math.PI*2);
+    ctx.strokeStyle=`rgba(${rgb},${a})`;
+    ctx.lineWidth=Math.max(.5,(1-rp)*18);
+    ctx.shadowColor=`rgb(${rgb})`;ctx.shadowBlur=38;ctx.stroke();
+  });
+  // 中心余晖
+  if(p<.55){
+    const ep2=easeOutBack(Math.min(1,(p-.1)/.45),2.2);
+    const cg=ctx.createRadialGradient(cx,cy,0,cx,cy,H*.12*ep2);
+    cg.addColorStop(0,`rgba(255,255,255,${.7*(1-p/.55)})`);
+    cg.addColorStop(1,'rgba(255,200,100,0)');
+    ctx.fillStyle=cg;ctx.globalAlpha=1;
+    ctx.beginPath();ctx.arc(cx,cy,H*.12*ep2,0,Math.PI*2);ctx.fill();
+  }
+  ctx.restore();ctx.globalAlpha=1;
+},
       rainbow_fire(ctx,p,e){
         ctx.save();ctx.globalCompositeOperation='lighter';
         e.data.fp.forEach(fp=>{fp.life+=fp.ls;fp.x+=fp.vx+Math.sin(fp.life*4)*.6;fp.y+=fp.vy;fp.vy*=.98;fp.hue=(fp.hue+2)%360;if(fp.life>=1){fp.life=0;fp.x=Math.random()*W;fp.y=H+30;fp.vy=-(3+Math.random()*6);}const a=(1-fp.life)*Math.max(0,1-p*1.1+.1)*.85;ctx.shadowColor=`hsl(${fp.hue},100%,60%)`;ctx.shadowBlur=fp.sz*.7;ctx.fillStyle=`hsl(${fp.hue},100%,60%)`;ctx.globalAlpha=a;ctx.beginPath();ctx.arc(fp.x,fp.y,fp.sz*(1-fp.life*.6)*.5,0,Math.PI*2);ctx.fill();});
