@@ -116,6 +116,13 @@
         .t1.act{background:#00b894;color:#fff}.t2.act{background:#0984e3;color:#fff}
         .t3.act{background:#6c5ce7;color:#fff}.t4.act{background:#e84393;color:#fff}
         .tall{background:#f5f5f5;color:#636e72}.tall.act{background:#636e72;color:#fff}
+        #devpan-btn{position:absolute;top:14px;left:50%;transform:translateX(-50%);
+  font-size:11px;padding:3px 10px;border-radius:12px;border:1.5px dashed #b2bec3;
+  background:rgba(255,255,255,.7);color:#636e72;cursor:pointer;pointer-events:auto;
+  z-index:5;display:none}  /* 长按标题3秒后出现 */
+.dev-stage-btn{border:none;border-radius:10px;padding:8px 12px;font-size:12px;
+  font-weight:700;cursor:pointer;transition:all .15s}
+.dev-stage-btn:active{transform:scale(.92)}
     </style>
 </head>
 <body>
@@ -127,32 +134,45 @@
         <div class="trow"><span id="pname">萌宠</span><span id="sbadge">🐾 宠物养成</span></div>
         <div class="xrow">
             <div id="lvc">1</div>
-            <div id="xpt"><div id="xpf" style="width:0%"></div></div>
+            <div id="xpt">
+                <div id="xpf" style="width:0%"></div>
+            </div>
             <div id="xpl">0/100</div>
         </div>
     </div>
     <div id="mood">😊 <span id="moodtxt">开心</span></div>
     <div id="speech"></div>
     <div id="bgsel">
-        <div class="bgd" style="background:linear-gradient(135deg,#90ee90,#2e8b57)" onclick="setBg('meadow')"></div>
-        <div class="bgd" style="background:linear-gradient(135deg,#87ceeb,#f4a460)" onclick="setBg('beach')"></div>
-        <div class="bgd" style="background:linear-gradient(135deg,#228b22,#0d5016)" onclick="setBg('forest')"></div>
-        <div class="bgd" style="background:linear-gradient(135deg,#0a0a2e,#6c5ce7)" onclick="setBg('night')"></div>
+        <div class="bgd" style="background:linear-gradient(135deg,#90ee90,#2e8b57)"
+             onclick="setBg('meadow')"></div>
+        <div class="bgd" style="background:linear-gradient(135deg,#87ceeb,#f4a460)"
+             onclick="setBg('beach')"></div>
+        <div class="bgd" style="background:linear-gradient(135deg,#228b22,#0d5016)"
+             onclick="setBg('forest')"></div>
+        <div class="bgd" style="background:linear-gradient(135deg,#0a0a2e,#6c5ce7)"
+             onclick="setBg('night')"></div>
     </div>
     <!-- Equipment panel -->
     <div class="pan" id="epan">
-        <h3>🎒 装备库<button class="px" onclick="cPan('epan')">✕</button></h3>
+        <h3>🎒 装备库
+            <button class="px" onclick="cPan('epan')">✕</button>
+        </h3>
         <div class="egrid" id="egrid"></div>
     </div>
     <!-- Stats panel -->
     <div class="pan" id="span2">
-        <h3>📊 宠物档案<button class="px" onclick="cPan('span2')">✕</button></h3>
+        <h3>📊 宠物档案
+            <button class="px" onclick="cPan('span2')">✕</button>
+        </h3>
         <div class="sgrid" id="sgrid"></div>
     </div>
     <!-- Skill panel -->
     <div class="pan" id="skpan">
-        <h3>⚡ 技能库<button class="px" onclick="cPan('skpan')">✕</button></h3>
-        <div class="skill-pts">💎 <span style="font-size:15px;font-weight:800;color:#6c5ce7" id="spd">0</span>
+        <h3>⚡ 技能库
+            <button class="px" onclick="cPan('skpan')">✕</button>
+        </h3>
+        <div class="skill-pts">💎 <span style="font-size:15px;font-weight:800;color:#6c5ce7"
+                                       id="spd">0</span>
             <span style="font-size:10px;color:#a29bfe;margin-left:2px">技能点（互动获取）</span></div>
         <div class="tier-badges">
             <span class="tb tall act" data-t="0" onclick="fTier(0)">全部</span>
@@ -165,9 +185,15 @@
     </div>
     <!-- Skill quick-slots -->
     <div id="skbar">
-        <div class="sks" id="sk0" onclick="useSlot(0)"><span id="sk0i">✦</span><span class="sklbl" id="sk0l">技能1</span></div>
-        <div class="sks" id="sk1" onclick="useSlot(1)"><span id="sk1i">✦</span><span class="sklbl" id="sk1l">技能2</span></div>
-        <div class="sks" id="sk2" onclick="useSlot(2)"><span id="sk2i">✦</span><span class="sklbl" id="sk2l">技能3</span></div>
+        <div class="sks" id="sk0" onclick="useSlot(0)"><span id="sk0i">✦</span><span class="sklbl"
+                                                                                     id="sk0l">技能1</span>
+        </div>
+        <div class="sks" id="sk1" onclick="useSlot(1)"><span id="sk1i">✦</span><span class="sklbl"
+                                                                                     id="sk1l">技能2</span>
+        </div>
+        <div class="sks" id="sk2" onclick="useSlot(2)"><span id="sk2i">✦</span><span class="sklbl"
+                                                                                     id="sk2l">技能3</span>
+        </div>
     </div>
     <div id="actbar">
         <div id="btnrow">
@@ -177,15 +203,50 @@
             <button class="btn r" onclick="act('poke')"><span class="bi">👆</span>戳一下</button>
             <button class="btn o" onclick="tPan('epan')"><span class="bi">⚔️</span>装备</button>
             <button class="btn" onclick="tPan('span2')"><span class="bi">📊</span>属性</button>
-            <button class="btn p" onclick="tPan('skpan');updSkUI()"><span class="bi">⚡</span>技能</button>
+            <button class="btn p" onclick="tPan('skpan');updSkUI()"><span class="bi">⚡</span>技能
+            </button>
         </div>
     </div>
-    <div id="lvov"><div id="lvc2">
-        <span class="le" id="lve">🎉</span>
-        <div class="lt" id="lvt">升级啦！</div>
-        <div class="ls" id="lvs">继续加油！</div>
-    </div></div>
+    <div id="lvov">
+        <div id="lvc2">
+            <span class="le" id="lve">🎉</span>
+            <div class="lt" id="lvt">升级啦！</div>
+            <div class="ls" id="lvs">继续加油！</div>
+        </div>
+    </div>
     <div id="toast"></div>
+    <!-- 测试按钮（长按宠物名3秒触发） -->
+    <div id="devpan-btn" onclick="tPan('devpan')">🧪 测试模式</div>
+
+    <!-- 测试面板 -->
+    <div class="pan" id="devpan">
+        <h3>🧪 开发测试<button class="px" onclick="cPan('devpan')">✕</button></h3>
+
+        <div style="margin-bottom:12px">
+            <div style="font-size:12px;font-weight:700;color:#636e72;margin-bottom:8px">👾 宠物形态预览</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <button class="dev-stage-btn" style="background:#fff3cd;color:#856404" onclick="devPreviewStage(0)">🥚 蛋宝宝</button>
+                <button class="dev-stage-btn" style="background:#d1fae5;color:#065f46" onclick="devPreviewStage(1)">🌱 软软宝</button>
+                <button class="dev-stage-btn" style="background:#dbeafe;color:#1e40af" onclick="devPreviewStage(2)">💙 钱宝</button>
+                <button class="dev-stage-btn" style="background:#e0e7ff;color:#3730a3" onclick="devPreviewStage(3)">⚡ 超钱宝</button>
+                <button class="dev-stage-btn" style="background:#fce7f3;color:#9d174d" onclick="devPreviewStage(4)">🌈 终极钱宝</button>
+                <button class="dev-stage-btn" style="background:#f3f4f6;color:#374151" onclick="devPreviewStage(-1)">↩ 恢复正常</button>
+            </div>
+        </div>
+
+        <div style="margin-bottom:12px">
+            <div style="font-size:12px;font-weight:700;color:#636e72;margin-bottom:8px">⚔️ 装备预览</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <button class="dev-stage-btn" style="background:#fef3c7;color:#92400e" onclick="devEquipAll()">👑 全部装备</button>
+                <button class="dev-stage-btn" style="background:#f3f4f6;color:#374151" onclick="devEquipClear()">❌ 清除装备</button>
+            </div>
+        </div>
+
+        <div>
+            <div style="font-size:12px;font-weight:700;color:#636e72;margin-bottom:8px">⚡ 技能特效预览</div>
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px" id="dev-skill-grid"></div>
+        </div>
+    </div>
 </div>
 <script>
     'use strict';
@@ -370,12 +431,16 @@
       ctx.fillStyle=ps;ctx.beginPath();ctx.ellipse(0,6*s,60*s,74*s,0,0,Math.PI*2);ctx.fill();
       // Swirl lines
       ctx.save();ctx.strokeStyle='#FFB347';ctx.lineWidth=1.8*s;ctx.lineCap='round';
-      [[-.25,-.15,.32,.28],[.10,-.30,-.22,.30],[.20,.10,.35,-.15]].forEach(([x1,y1,x2,y2])=>{
-        ctx.beginPath();
-        ctx.moveTo(x1*80*s,y1*80*s);
-        ctx.quadraticCurveTo((x1+x2)/2*80*s+(Math.random()-.5)*15*s,(y1+y2)/2*80*s,x2*80*s,y2*80*s);
-        ctx.stroke();
-      });
+      [
+  [-38*s,-48*s, -58*s,-22*s, -42*s,-58*s],  // 左上弧
+  [ 38*s,-48*s,  58*s,-22*s,  42*s,-58*s],  // 右上弧
+  [-18*s,-62*s,  18*s,-62*s,   0,  -70*s],  // 顶部弧
+].forEach(([x1,y1,x2,y2,cx,cy])=>{
+  ctx.beginPath();
+  ctx.moveTo(x1,y1);
+  ctx.quadraticCurveTo(cx,cy,x2,y2);
+  ctx.stroke();
+});
       ctx.restore();
       // Peeking eyes
       const ey=5*s+Math.sin(aT*.06)*2*s;
@@ -838,8 +903,9 @@
       {name:'🌈 终极钱宝',minLv:46,maxLv:99},
     ];
     function getStageIdx(){
-      for(let i=STAGES_META.length-1;i>=0;i--)if(pet.level>=STAGES_META[i].minLv)return i;return 0;
-    }
+  if(devStageOverride!==null)return devStageOverride;
+  for(let i=STAGES_META.length-1;i>=0;i--)if(pet.level>=STAGES_META[i].minLv)return i;return 0;
+}
 
     function tickPet(){
       aT++;
@@ -1197,20 +1263,44 @@
     //  PANEL HELPERS
     // ══════════════════════════════════════════════════════
     function tPan(id){
-      const el=document.getElementById(id);
-      const sh=el.style.display==='block';
-      document.querySelectorAll('.pan').forEach(p=>p.style.display='none');
-      el.style.display=sh?'none':'block';
-    }
+  const el=document.getElementById(id);
+  const sh=el.style.display==='block';
+  document.querySelectorAll('.pan').forEach(p=>p.style.display='none');
+  if(sh){ return; }
+  el.style.display='block';
+  // 每次打开都刷新，避免显示 init() 时的旧数据
+  if(id==='span2') buildStats();
+  if(id==='epan')  buildEquipPanel();
+  if(id==='skpan') updSkUI();
+  if(id==='devpan') renderDevPanel();
+}
     function cPan(id){document.getElementById(id).style.display='none';}
 
     function buildEquipPanel(){
       document.getElementById('egrid').innerHTML=ITEMS.map(item=>{
-        const ul=isUL(item),eq=pet.equippedItems.includes(item.id);
+        const eqList=Array.isArray(pet.equippedItems)?pet.equippedItems:[];
+        const ul=isUL(item),eq=eqList.includes(item.id);
         const cls=eq?'ei eq':ul?'ei on':'ei lk';
         const oc=ul?`eqItem('${item.id}')`:'';
-        return `<div class="${cls}" onclick="${oc}"><span class="ic">${item.ic}</span>
-          <div class="nm">${item.nm}</div><div class="ct">${eq?'✓已装备':ul?'点击装备':'消费解锁'}</div></div>`;
+
+        const [rType,rVal]=item.ul.split('_');
+        const nameMap={total:'总消费',food:'餐饮消费',health:'健康消费',
+          entertainment:'娱乐消费',shopping:'购物消费',transport:'交通消费',daily:'日常消费'};
+        const curAmt=((expenses[rType]||0)/100).toFixed(0);
+        const needAmt=parseInt(rVal);
+        const pct=Math.min(100,Math.round(curAmt/needAmt*100));
+        const reqLine=ul?'':`
+          <div style="font-size:9px;color:#b2bec3;margin-top:3px">${nameMap[rType]||rType} ≥ ¥${needAmt}</div>
+          <div style="background:#f0f0f0;border-radius:3px;height:4px;margin-top:3px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:${pct>=100?'#00b894':'#a29bfe'};border-radius:3px"></div>
+          </div>
+          <div style="font-size:9px;color:#b2bec3;margin-top:2px">当前 ¥${curAmt} / ${pct}%</div>`;
+        return `<div class="${cls}" onclick="${oc}" style="padding:10px 6px">
+          <span class="ic">${item.ic}</span>
+          <div class="nm">${item.nm}</div>
+          <div class="ct">${eq?'✓已装备':ul?'点击装备':'未解锁'}</div>
+          ${reqLine}
+        </div>`;
       }).join('');
     }
     function eqItem(id){
@@ -1225,7 +1315,7 @@
         {l:'总消费',v:'¥'+((expenses.total||0)/100).toFixed(0)},
         {l:'当前等级',v:'Lv.'+pet.level},
         {l:'互动次数',v:pet.interactions||0},
-        {l:'已装备',v:(pet.equippedItems||[]).length+'件'},
+        {l:'已装备',v:(Array.isArray(pet.equippedItems)?pet.equippedItems:[]).length+'件'},
         {l:'技能点',v:(pet.skillPoints||0)+'💎'},
         {l:'伙伴天数',v:(expenses.daysSinceFirst||1)+'天'},
       ];
@@ -1269,14 +1359,18 @@
         'linear-gradient(135deg,#ede9fe,#c4b5fd)','linear-gradient(135deg,#fce7f3,#fbcfe8)'];
       list.innerHTML=filtered.map(sk=>{
         const unl=(pet.unlockedSkills||[]).includes(sk.id);
-        const eqSlot=(pet.equippedSkills||[]).findIndex(s=>s===sk.id);
-        const canU=canUL(sk);
-        const clr=tierClrs[sk.tier];
-        const intPct=Math.min(100,((pet.interactions||0)/sk.req.interactions*100)).toFixed(0);
-        const spPct=Math.min(100,((expenses.total||0)/sk.req.spend*100)).toFixed(0);
-        const prog=Math.max(intPct,spPct);
-        const metI=(pet.interactions||0)>=sk.req.interactions;
-        const metS=(expenses.total||0)>=sk.req.spend;
+
+        // 替换原来的 canU/metI/metS/intPct/spPct/prog 这几行，改为：
+const eqSlot=(pet.equippedSkills||[]).findIndex(s=>s===sk.id);
+const clr=tierClrs[sk.tier];
+// ✅ 先算条件，canU 直接从条件派生（避免和进度条不一致）
+const metI=(pet.interactions||0)>=sk.req.interactions;
+const metS=(expenses.total||0)>=sk.req.spend;
+const canU=metI||metS;
+const intPct=Math.min(100,Math.round(((pet.interactions||0)/sk.req.interactions)*100));
+const spPct=Math.min(100,Math.round(((expenses.total||0)/sk.req.spend)*100));
+const prog=Math.max(intPct,spPct);
+
         const cond=(met,lbl)=>`<span style="font-size:9px;padding:2px 7px;border-radius:6px;font-weight:700;
           background:${met?clr+'22':'#f0f0f0'};color:${met?clr:'#b2bec3'};border:1px solid ${met?clr:'#e0e0e0'}">${met?'✓ ':''} ${lbl}</span>`;
         const bord=unl?(eqSlot>=0?`border:2px solid ${clr};box-shadow:0 0 0 3px ${clr}28`:`border:2px solid ${clr}66`):(canU?`border:2px dashed ${clr}99`:'border:2px solid #e8e8e8');
@@ -1313,7 +1407,58 @@
             </div></div></div>`;
       }).join('');
     }
+// ── DEV / TEST PANEL ──────────────────────────────────
+let devStageOverride = null;
 
+function devPreviewStage(idx){
+  devStageOverride = idx < 0 ? null : idx;
+  if(idx < 0){
+    speak('↩ 已恢复正常等级形态');
+  } else {
+    const names=['🥚 蛋宝宝','🌱 软软宝','💙 钱宝','⚡ 超钱宝','🌈 终极钱宝'];
+    speak('预览: '+names[idx]);
+  }
+}
+
+function devEquipAll(){
+  // 装备每个槽位的第一件可选道具（无需解锁条件）
+  const bySlot={};
+  ITEMS.forEach(item=>{if(!bySlot[item.sl])bySlot[item.sl]=item.id;});
+  pet.equippedItems=Object.values(bySlot);
+  speak('🎒 已装备全部示例道具');
+  buildEquipPanel();
+}
+function devEquipClear(){
+  pet.equippedItems=[];
+  speak('❌ 已清除全部装备');
+  buildEquipPanel();
+}
+
+function renderDevPanel(){
+  const grid=document.getElementById('dev-skill-grid');
+  if(!grid)return;
+  grid.innerHTML=SKILLS.map(sk=>`
+    <button onclick="playSkillEffect('${sk.effect}',${sk.dur*1000});speak('${sk.nm}')"
+      style="border:1px solid #e5e7eb;border-radius:10px;padding:8px 4px;
+      background:#f9fafb;cursor:pointer;font-size:11px;text-align:center">
+      <div style="font-size:22px">${sk.ic}</div>
+      <div style="font-size:9px;color:#374151;margin-top:3px;line-height:1.2">${sk.nm}</div>
+    </button>`).join('');
+}
+
+// 在标题上长按3秒触发测试模式
+let devPressTimer=null;
+document.addEventListener('DOMContentLoaded',()=>{
+  const pname=document.getElementById('pname');
+  if(!pname)return;
+  pname.addEventListener('touchstart',()=>{
+    devPressTimer=setTimeout(()=>{
+      document.getElementById('devpan-btn').style.display='block';
+      speak('🧪 测试模式已开启');
+    },3000);
+  });
+  pname.addEventListener('touchend',()=>clearTimeout(devPressTimer));
+});
     function unlockSkill(id){
       const sk=SKILLS.find(s=>s.id===id);if(!sk||(pet.unlockedSkills||[]).includes(id))return;
       if(!canUL(sk)){speak('条件尚未满足！');return;}
@@ -1581,6 +1726,9 @@
         pet.skillCooldowns=pet.skillCooldowns||{};
         // 规范化 mood 防止越界
         pet.mood=Math.min(4,Math.max(0,Number.isInteger(pet.mood)?pet.mood:2));
+        if(!Array.isArray(pet.equippedItems))  pet.equippedItems  = [];
+        if(!Array.isArray(pet.unlockedSkills)) pet.unlockedSkills = [];
+        if(!Array.isArray(pet.equippedSkills)) pet.equippedSkills = [null,null,null];
       }
       // 根据消费计算经验值
       expXP=Math.floor((expenses.total||0)/100);
