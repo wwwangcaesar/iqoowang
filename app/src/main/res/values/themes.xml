@@ -13,4 +13,25 @@
         <item name="android:statusBarColor">?attr/colorPrimaryVariant</item>
         <!-- Customize your theme here. -->
     </style>
+    <!-- 基础 App 主题 -->
+    <style name="Theme.ExpenseTracker" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#FF018786</item>
+        <item name="colorSecondary">#03DAC6</item>
+    </style>
+
+    <!-- 核心：快捷录入半透明主题 -->
+    <style name="Theme.TransparentQuickLog" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <!-- 开启半透明 -->
+        <item name="android:windowIsTranslucent">true</item>
+        <!-- 背景透明 -->
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <!-- 移除窗口阴影遮罩 -->
+        <item name="android:windowContentOverlay">@null</item>
+        <!-- 允许背景变暗 -->
+        <item name="android:backgroundDimEnabled">true</item>
+        <!-- 变暗透明度 (0.0 完全透明 - 1.0 完全全黑) -->
+        <item name="android:backgroundDimAmount">0.5</item>
+        <!-- 允许在其上方弹出软键盘 -->
+        <item name="android:windowSoftInputMode">stateVisible|adjustResize</item>
+    </style>
 </resources>

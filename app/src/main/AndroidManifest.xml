@@ -1,27 +1,78 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+     >
 
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-feature android:name="android.hardware.camera.any" />
-    <uses-feature android:name="android.hardware.camera.autofocus" />
+    <!-- 网络（东方财富行情接口） -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- 外部存储（AI模型文件，约900MB） -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
+    <!-- Android 13+ 精细化存储权限 -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
+    <!-- 震动反馈 -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- 后台任务（WorkManager：收盘保存快照） -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- iQOO 11s：保持屏幕常亮（行情监控模式） -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <application
-        android:allowBackup="true"
-        android:dataExtractionRules="@xml/data_extraction_rules"
-        android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_round"
-        android:supportsRtl="true"
-        android:theme="@style/Theme.MediaPipePoseDemo">
+        android:name=".StockMasterApp"
+        android:allowBackup="false"
+        android:hardwareAccelerated="true"
+        android:icon="@drawable/iicon"
+        android:label="操盘大师"
+        android:roundIcon="@drawable/iicon"
+        android:supportsRtl="false"
+        android:theme="@style/Theme.ExpenseTracker"
+        android:usesCleartextTraffic="true">
+        <!--
+            usesCleartextTraffic=true：
+            东方财富部分接口为 HTTP，需要允许明文流量
+            生产环境建议配置 network_security_config.xml 精细化控制
+        -->
+
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize">
+
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 后台日快照 Worker -->
+        <provider
+            android:name="androidx.work.impl.WorkManagerInitializer"
+            android:authorities="${applicationId}.workmanager-init"
+            android:exported="false"
+            tools:node="remove"
+            xmlns:tools="http://schemas.android.com/tools"/>
+
+        <receiver
+            android:name=".util.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
     </application>
 
 </manifest>

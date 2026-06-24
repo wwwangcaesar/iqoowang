@@ -1,46 +1,100 @@
-plugins {
-    alias(libs.plugins.androidApplication)
-}
+apply plugin: 'com.android.application'
+apply plugin: 'org.greenrobot.greendao'
 
 android {
-    namespace 'com.monsieurmahjong.iqoowang'
+    namespace "com.monsieurmahjong.iqoowang"
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.monsieurmahjong.iqoowang"
-        minSdk 24
+        applicationId "com.stockmaster"
+        minSdk 26
         targetSdk 34
         versionCode 1
-        versionName "1.0"
+        versionName "1.0.0"
 
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-    }
-
-    buildTypes {
-        release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+        // ── CMake：编译 llm_jni.cpp 生成 libstockmaster_jni.so ──
+        externalNativeBuild {
+            cmake {
+                cppFlags "-std=c++17 -frtti -fexceptions"
+                // 如果你的 MNN .so 支持 token callback，取消下面注释：
+                // cppFlags "-std=c++17 -frtti -fexceptions -DMNN_LLM_TOKEN_CALLBACK"
+                arguments "-DANDROID_STL=c++_shared",
+                        "-DANDROID_ARM_NEON=TRUE"
+            }
         }
     }
+// ── CMakeLists.txt 位置 ──
+    externalNativeBuild {
+        cmake {
+            path "src/main/cpp/CMakeLists.txt"
+            version "3.22.1"
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            minifyEnabled false
+            debuggable true
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+
+    sourceSets {
+        main {
+            assets.srcDirs = ['src/main/assets']
+            // jniLibs 目录：放 Release 解压出来的 .so
+            jniLibs.srcDirs = []
+        }
+    }
+
+    packagingOptions {
+        // 多个 .so 冲突时取第一个
+        exclude 'lib/arm64-v8a/libMNN.so'
+        exclude 'lib/arm64-v8a/libMNN_CL.so'
+        exclude 'lib/arm64-v8a/libMNN_Express.so'
+        exclude 'lib/arm64-v8a/libMNNLLM.so'
+        // c++_shared 只保留一份
+        exclude 'lib/arm64-v8a/libc++_shared.so'
+    }
+    // ── MNN Release包里的 .so 可能按 16KB页大小对齐（Android 15+要求）──
+    // 如果 iQOO 11s 升到 Android 15 内核，需要下面这行：
+//     android.defaults.buildfeatures.buildconfig = true
+}
+
+greendao {
+    schemaVersion 1
+    daoPackage 'com.stockmaster.db'
+    targetGenDir 'src/main/java'
 }
 
 dependencies {
-    // MediaPipe Pose 核心库
-    implementation 'com.google.mediapipe:tasks-vision:0.10.14'
-
-    // 相机X库（用于简化相机操作）
-    implementation 'androidx.camera:camera-core:1.3.2'
-    implementation 'androidx.camera:camera-camera2:1.3.2'
-    implementation 'androidx.camera:camera-lifecycle:1.3.2'
-    implementation 'androidx.camera:camera-view:1.3.2'
-
-    // 其他必要依赖
-    implementation 'androidx.core:core-ktx:1.12.0'
+    // GreenDAO 官方原版运行库
+    implementation 'org.greenrobot:greendao:3.3.0'
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.0'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+    implementation 'com.google.android.material:material:1.12.0'
+    implementation 'androidx.lifecycle:lifecycle-livedata-ktx:2.6.2'
+    // 你的业务依赖全部保留
+    implementation fileTree(dir: 'libs', include: ['*.aar', '*.jar'])
+// ── OkHttp（替换原来的 HttpURLConnection）──
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // OkHttp 日志拦截器（debug用，release可移除）
+    debugImplementation 'com.squareup.okhttp3:logging-interceptor:4.12.0'
+    implementation 'androidx.work:work-runtime:2.9.0'
     implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'com.google.android.material:material:1.11.0'
-    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.core:core:1.12.0'
+
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
 }
