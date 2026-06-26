@@ -1,10 +1,10 @@
 /**
- * llm_jni.cpp — 动态符号查找版本
+ * llm_jni.cpp v4 — 修复 dlopen 策略
  *
- * 不依赖 llm.hpp 头文件，通过 dlopen/dlsym 在运行时查找
- * MNN libllm.so 的实际导出符号。
- *
- * 这样可以适配 MNN 不同版本的符号名称变化。
+ * 关键修复：
+ * 1. 移除 libdl 依赖（NDK r23+ dlopen 已在 libc）
+ * 2. dlopen 先用 RTLD_NOW 主动加载，再用 RTLD_DEFAULT 搜索
+ * 3. 扩展 mangled 符号候选列表
  */
 
 #include <jni.h>
@@ -14,42 +14,44 @@
 #include <dlfcn.h>          // dlopen / dlsym
 #include <android/log.h>
 
-
 #define TAG "SM_JNI"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  TAG, __VA_ARGS__)
 
-// ── LLM 对象指针（void*，避免依赖头文件类型）──
-static void* gLlmHandle  = nullptr;   // libllm.so 句柄
-static void* gLlmObj     = nullptr;   // Llm 对象指针
-static JavaVM* gJvm      = nullptr;
+// ── 全局状态 ──
+static void*   gLlmHandle   = nullptr;
+static void*   gLlmObj      = nullptr;
+static JavaVM* gJvm         = nullptr;
 
-// ── 函数指针类型定义（MNN 3.x 接口）──
-// Llm* Llm::createLLM(const std::string& configPath)
-typedef void* (*FnCreateLLM)(const std::string&);
-// void Llm::load()
-typedef void  (*FnLoad)(void*);
-// std::string Llm::response(const std::string&, std::ostream*, const char*)
-typedef std::string (*FnResponse)(void*, const std::string&, std::ostream*, const char*);
-// void Llm::reset()
+// ── 调试信息（供 nativeGetDebugInfo 返回）──
+static std::string gDebugInfo;
+
+// ── 函数指针 ──
+// MNN 3.x: Llm* createLLM(const std::string& configPath)
+// 因为是成员函数，实际上是 Llm* Llm::createLLM(const std::string&)
+// C++ 静态成员函数，this 指针隐式
+typedef void* (*FnCreate)(const std::string&);
+typedef void  (*FnLoad)(void*);       // void Llm::load()  — 非static，第一参数是this
+typedef void  (*FnResponse)(void*, const std::string&, std::ostream*, const char*);
 typedef void  (*FnReset)(void*);
-// void Llm::~Llm()
-typedef void  (*FnDestroy)(void*);
 
-static FnCreateLLM fn_createLLM = nullptr;
-static FnLoad      fn_load      = nullptr;
-static FnResponse  fn_response  = nullptr;
-static FnReset     fn_reset     = nullptr;
+static FnCreate   fn_create   = nullptr;
+static FnLoad     fn_load     = nullptr;
+static FnResponse fn_response = nullptr;
+static FnReset    fn_reset    = nullptr;
 
-// ── 尝试多种可能的符号名称 ──
-static void* findSymbol(void* handle, const char** names, int count) {
-    for (int i = 0; i < count; i++) {
-        void* sym = dlsym(handle, names[i]);
-        if (sym) {
-            LOGI("找到符号: %s", names[i]);
-            return sym;
-        }
+// ── 符号查找 ──
+static void* trySymbol(void* handle, const char* name) {
+    void* sym = dlsym(handle, name);
+    LOGI("  dlsym(%s) = %p", name, sym);
+    return sym;
+}
+
+static void* findAny(void* handle, const char** names, int n) {
+    for (int i = 0; i < n; i++) {
+        void* s = trySymbol(handle, names[i]);
+        if (s) return s;
     }
     return nullptr;
 }
@@ -58,199 +60,194 @@ extern "C" {
 
 JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void*) {
     gJvm = vm;
-    LOGI("JNI_OnLoad OK");
+    LOGI("JNI_OnLoad v4");
     return JNI_VERSION_1_6;
 }
 
-// ════════════════════════════════════════
-// nativeInit
-// ════════════════════════════════════════
 JNIEXPORT jboolean JNICALL
 Java_com_monsieurmahjong_iqoowang_agent_LlmEngine_nativeInit(
-        JNIEnv* env, jobject, jstring jModelDir) {
-    if (gLlmObj) { LOGI("LLM已加载"); return JNI_TRUE; }
+        JNIEnv* env, jobject, jstring jDir) {
+    if (gLlmObj) return JNI_TRUE;
 
-    const char* dir = env->GetStringUTFChars(jModelDir, nullptr);
+    const char* dir = env->GetStringUTFChars(jDir, nullptr);
     std::string configPath = std::string(dir) + "/config.json";
-    env->ReleaseStringUTFChars(jModelDir, dir);
-    LOGI("加载模型: %s", configPath.c_str());
+    env->ReleaseStringUTFChars(jDir, dir);
+    LOGI("nativeInit config=%s", configPath.c_str());
+    gDebugInfo.clear();
 
-    // ── Step1: 打开 libllm.so ──
-    // 优先用已加载的（RTLD_DEFAULT 搜索所有已加载库）
-    gLlmHandle = RTLD_DEFAULT;
+    // ── Step 1: 打开 libllm.so ──
+    // 策略：先主动加载（RTLD_NOW | RTLD_GLOBAL），使符号全局可见
+    void* hLlm = dlopen("libllm.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!hLlm) {
+        LOGW("dlopen libllm.so 失败: %s，改用 RTLD_DEFAULT", dlerror());
+        hLlm = RTLD_DEFAULT;
+        gDebugInfo += "libllm=RTLD_DEFAULT|";
+    } else {
+        LOGI("dlopen libllm.so 成功: %p", hLlm);
+        gDebugInfo += "libllm=opened|";
+        gLlmHandle = hLlm;
+    }
 
-    // ── Step2: 查找 createLLM 符号 ──
-    // MNN 3.x 的 C++ mangled name（不同编译器可能不同）
-    const char* createSymbols[] = {
-        // MNN 3.x arm64 clang (NDK r25+)
+    // 同时尝试加载 MNN（确保依赖项已在内存中）
+    void* hMnn = dlopen("libMNN.so", RTLD_NOW | RTLD_GLOBAL);
+    if (hMnn) { LOGI("libMNN.so loaded: %p", hMnn); }
+    else       { LOGW("libMNN.so load fail: %s", dlerror()); }
+
+    // ── Step 2: 查找 createLLM ──
+    // MNN 3.6.0 arm64 的 mangled name（通过 nm -D 分析）
+    const char* createNames[] = {
+        // MNN 3.x 标准（libc++ NDK clang arm64）
         "_ZN3MNN11Transformer3Llm9createLLMERKNSt6__ndk112basic_stringIcNS2_11char_traitsIcEENS2_9allocatorIcEEEE",
-        // 带 std::string 变体
+        // MNN 3.x 备选（GNU libstdc++）
         "_ZN3MNN11Transformer3Llm9createLLMERKSs",
-        // 简化版（部分版本）
+        // MNN 早期 3.x
+        "_ZN3MNN3Llm9createLLMERKNSt6__ndk112basic_stringIcNS1_11char_traitsIcEENS1_9allocatorIcEEEE",
         "_ZN3MNN3Llm9createLLMERKSs",
-        // C 风格（如果有 extern "C"）
+        // C 风格（如果有 extern "C" wrapper）
         "MNN_LLM_createLLM",
+        "Llm_createLLM",
         "createLLM",
+        // MNN 3.6 可能的新命名
+        "_ZN3MNN11Transformer3Llm6createERKNSt6__ndk112basic_stringIcNS2_11char_traitsIcEENS2_9allocatorIcEEEE",
+        "_ZN3MNN11Transformer3Llm6createERKSs",
     };
-    fn_createLLM = (FnCreateLLM)findSymbol(gLlmHandle, createSymbols,
-                                            sizeof(createSymbols)/sizeof(createSymbols[0]));
-
-    if (!fn_createLLM) {
-        // 尝试显式打开 libllm.so
-        gLlmHandle = dlopen("libllm.so", RTLD_NOW | RTLD_GLOBAL);
-        if (!gLlmHandle) {
-            LOGE("dlopen libllm.so 失败: %s", dlerror());
-            // 再试一次 MNN.so
-            gLlmHandle = dlopen("libMNN.so", RTLD_NOW | RTLD_NOLOAD);
-        }
-        if (gLlmHandle) {
-            fn_createLLM = (FnCreateLLM)findSymbol(gLlmHandle, createSymbols,
-                                                    sizeof(createSymbols)/sizeof(createSymbols[0]));
-        }
+    fn_create = (FnCreate)findAny(hLlm, createNames, sizeof(createNames)/sizeof(createNames[0]));
+    if (!fn_create && hLlm != RTLD_DEFAULT) {
+        // 再在全局空间搜索
+        fn_create = (FnCreate)findAny(RTLD_DEFAULT, createNames, sizeof(createNames)/sizeof(createNames[0]));
     }
+    gDebugInfo += std::string("create=") + (fn_create?"✅":"❌") + "|";
+    LOGI("fn_create = %p", fn_create);
 
-    if (!fn_createLLM) {
-        // 列出 libllm.so 的所有导出符号帮助调试
-        LOGE("❌ 找不到 createLLM，列举可用符号:");
-        void* h = dlopen("libllm.so", RTLD_NOW | RTLD_NOLOAD);
-        if (!h) h = gLlmHandle;
-        // 无法直接枚举 dlsym，但可以输出 dlerror
-        LOGE("dlerror: %s", dlerror() ? dlerror() : "none");
-        return JNI_FALSE;
-    }
-
-    // ── Step3: 查找 load 方法 ──
-    const char* loadSymbols[] = {
+    // ── Step 3: 查找 load ──
+    const char* loadNames[] = {
         "_ZN3MNN11Transformer3Llm4loadEv",
         "_ZN3MNN3Llm4loadEv",
         "MNN_LLM_load",
     };
-    fn_load = (FnLoad)findSymbol(gLlmHandle, loadSymbols,
-                                  sizeof(loadSymbols)/sizeof(loadSymbols[0]));
+    fn_load = (FnLoad)findAny(hLlm, loadNames, sizeof(loadNames)/sizeof(loadNames[0]));
+    if (!fn_load) fn_load = (FnLoad)findAny(RTLD_DEFAULT, loadNames, sizeof(loadNames)/sizeof(loadNames[0]));
+    gDebugInfo += std::string("load=") + (fn_load?"✅":"❌") + "|";
 
-    // ── Step4: 查找 response 方法 ──
-    const char* responseSymbols[] = {
+    // ── Step 4: 查找 response ──
+    const char* respNames[] = {
         "_ZN3MNN11Transformer3Llm8responseERKNSt6__ndk112basic_stringIcNS2_11char_traitsIcEENS2_9allocatorIcEEEEPNS2_13basic_ostreamIcS4_EEPKc",
+        "_ZN3MNN11Transformer3Llm8responseERKSsPSt13basic_ostreamIcSt11char_traitsIcEEPKc",
         "_ZN3MNN3Llm8responseERKSsPSoPKc",
-        "_ZN3MNN11Transformer3Llm8responseERKSsPSoPKc",
         "MNN_LLM_response",
     };
-    fn_response = (FnResponse)findSymbol(gLlmHandle, responseSymbols,
-                                          sizeof(responseSymbols)/sizeof(responseSymbols[0]));
+    fn_response = (FnResponse)findAny(hLlm, respNames, sizeof(respNames)/sizeof(respNames[0]));
+    if (!fn_response) fn_response = (FnResponse)findAny(RTLD_DEFAULT, respNames, sizeof(respNames)/sizeof(respNames[0]));
+    gDebugInfo += std::string("resp=") + (fn_response?"✅":"❌") + "|";
 
-    // ── Step5: 查找 reset ──
-    const char* resetSymbols[] = {
+    // ── Step 5: 查找 reset ──
+    const char* resetNames[] = {
         "_ZN3MNN11Transformer3Llm5resetEv",
         "_ZN3MNN3Llm5resetEv",
         "MNN_LLM_reset",
     };
-    fn_reset = (FnReset)findSymbol(gLlmHandle, resetSymbols,
-                                    sizeof(resetSymbols)/sizeof(resetSymbols[0]));
+    fn_reset = (FnReset)findAny(hLlm, resetNames, sizeof(resetNames)/sizeof(resetNames[0]));
+    if (!fn_reset) fn_reset = (FnReset)findAny(RTLD_DEFAULT, resetNames, sizeof(resetNames)/sizeof(resetNames[0]));
+    gDebugInfo += std::string("reset=") + (fn_reset?"✅":"❌");
 
-    LOGI("符号查找结果: createLLM=%p load=%p response=%p reset=%p",
-         fn_createLLM, fn_load, fn_response, fn_reset);
+    LOGI("符号结果: %s", gDebugInfo.c_str());
 
-    if (!fn_createLLM) {
-        LOGE("❌ createLLM 符号缺失，无法初始化");
+    if (!fn_create) {
+        LOGE("❌ createLLM 找不到，无法初始化");
+        // 用 nm 方式枚举（打印几个已知符号验证库是否正确）
+        const char* testSyms[] = { "malloc", "free", "_Znwm", "pthread_create" };
+        for (auto s : testSyms) {
+            void* p = dlsym(hLlm, s);
+            LOGI("  test sym %s = %p", s, p);
+        }
         return JNI_FALSE;
     }
 
-    // ── Step6: 创建 LLM 对象 ──
+    // ── Step 6: 创建 LLM 对象 ──
     try {
-        gLlmObj = fn_createLLM(configPath);
-        if (!gLlmObj) { LOGE("❌ createLLM 返回 null"); return JNI_FALSE; }
-        LOGI("createLLM 成功: %p", gLlmObj);
+        LOGI("调用 createLLM(%s)", configPath.c_str());
+        gLlmObj = fn_create(configPath);
+        if (!gLlmObj) { LOGE("createLLM 返回 null"); return JNI_FALSE; }
+        LOGI("createLLM 返回: %p", gLlmObj);
 
         if (fn_load) {
+            LOGI("调用 load()...");
             fn_load(gLlmObj);
             LOGI("✅ load() 完成");
-        } else {
-            LOGW("⚠️ load 符号未找到，跳过（可能已在createLLM内自动load）");
         }
+        gDebugInfo += "|obj=✅";
         return JNI_TRUE;
+    } catch (const std::exception& e) {
+        LOGE("createLLM 异常: %s", e.what());
+        gLlmObj = nullptr;
+        return JNI_FALSE;
     } catch (...) {
-        LOGE("❌ createLLM/load 抛出异常");
+        LOGE("createLLM 未知异常");
         gLlmObj = nullptr;
         return JNI_FALSE;
     }
 }
 
-// ════════════════════════════════════════
-// nativeChatStream — 流式推理
-// ════════════════════════════════════════
 JNIEXPORT void JNICALL
 Java_com_monsieurmahjong_iqoowang_agent_LlmEngine_nativeChatStream(
-        JNIEnv* env, jobject, jstring jPrompt, jobject callback) {
-    if (!gLlmObj) { LOGE("LLM未初始化"); return; }
+        JNIEnv* env, jobject, jstring jPrompt, jobject cb) {
+    if (!gLlmObj) { LOGE("not init"); return; }
 
-    jclass  cbClass    = env->GetObjectClass(callback);
-    jmethodID onToken  = env->GetMethodID(cbClass, "onToken",  "(Ljava/lang/String;)V");
-    jmethodID onFinish = env->GetMethodID(cbClass, "onFinish", "(Ljava/lang/String;)V");
+    jclass    cls      = env->GetObjectClass(cb);
+    jmethodID onToken  = env->GetMethodID(cls, "onToken",  "(Ljava/lang/String;)V");
+    jmethodID onFinish = env->GetMethodID(cls, "onFinish", "(Ljava/lang/String;)V");
 
     const char* p = env->GetStringUTFChars(jPrompt, nullptr);
     std::string prompt(p);
     env->ReleaseStringUTFChars(jPrompt, p);
 
-    jobject globalCb = env->NewGlobalRef(callback);
-    std::string fullText;
+    jobject gcb = env->NewGlobalRef(cb);
+    std::string full;
 
     if (fn_response) {
         try {
-            // 劫持 cout 获取输出
             std::ostringstream oss;
-            auto* oldBuf = std::cout.rdbuf(oss.rdbuf());
+            auto* old = std::cout.rdbuf(oss.rdbuf());
             fn_response(gLlmObj, prompt, &std::cout, "");
-            std::cout.rdbuf(oldBuf);
-            fullText = oss.str();
+            std::cout.rdbuf(old);
+            full = oss.str();
 
-            // 模拟流式（按标点分批回调）
-            std::string chunk;
-            for (size_t i = 0; i < fullText.size(); i++) {
-                chunk += fullText[i];
-                bool flush = (chunk.size() >= 6) ||
-                             fullText[i] == '\n';
-                if (flush && !chunk.empty()) {
-                    jstring jt = env->NewStringUTF(chunk.c_str());
-                    env->CallVoidMethod(globalCb, onToken, jt);
-                    env->DeleteLocalRef(jt);
-                    chunk.clear();
-                }
-            }
-            if (!chunk.empty()) {
+            // 模拟流式（每6字符回调一次）
+            for (size_t i = 0; i < full.size(); ) {
+                size_t end = std::min(i + 6, full.size());
+                // 确保不截断 UTF-8 多字节字符
+                while (end < full.size() && (full[end] & 0xC0) == 0x80) end++;
+                std::string chunk = full.substr(i, end - i);
                 jstring jt = env->NewStringUTF(chunk.c_str());
-                env->CallVoidMethod(globalCb, onToken, jt);
+                env->CallVoidMethod(gcb, onToken, jt);
                 env->DeleteLocalRef(jt);
+                i = end;
             }
         } catch (...) {
-            fullText = "[推理异常]";
-            LOGE("response() 抛出异常");
+            full = "[推理异常]";
+            LOGE("response 异常");
         }
     } else {
-        fullText = "[response符号未找到，模型已加载但无法推理]";
-        LOGE("fn_response 为 null");
+        full = "[response符号未找到]";
     }
 
-    jstring jFull = env->NewStringUTF(fullText.c_str());
-    env->CallVoidMethod(globalCb, onFinish, jFull);
-    env->DeleteLocalRef(jFull);
-    env->DeleteGlobalRef(globalCb);
+    jstring jf = env->NewStringUTF(full.c_str());
+    env->CallVoidMethod(gcb, onFinish, jf);
+    env->DeleteLocalRef(jf);
+    env->DeleteGlobalRef(gcb);
 }
 
-// ════════════════════════════════════════
-// nativeChat — 同步推理
-// ════════════════════════════════════════
 JNIEXPORT void JNICALL
 Java_com_monsieurmahjong_iqoowang_agent_LlmEngine_nativeChat(
-        JNIEnv* env, jobject, jstring jPrompt, jobject callback) {
+        JNIEnv* env, jobject, jstring jPrompt, jobject cb) {
     if (!gLlmObj) return;
-    jclass  cbClass    = env->GetObjectClass(callback);
-    jmethodID onFinish = env->GetMethodID(cbClass, "onFinish", "(Ljava/lang/String;)V");
-
+    jclass    cls      = env->GetObjectClass(cb);
+    jmethodID onFinish = env->GetMethodID(cls, "onFinish", "(Ljava/lang/String;)V");
     const char* p = env->GetStringUTFChars(jPrompt, nullptr);
     std::string prompt(p);
     env->ReleaseStringUTFChars(jPrompt, p);
 
-    std::string result = "[未知]";
+    std::string result = "[未推理]";
     if (fn_response) {
         try {
             std::ostringstream oss;
@@ -258,59 +255,34 @@ Java_com_monsieurmahjong_iqoowang_agent_LlmEngine_nativeChat(
             result = oss.str();
         } catch (...) { result = "[推理异常]"; }
     }
-
-    jobject globalCb = env->NewGlobalRef(callback);
+    jobject gcb = env->NewGlobalRef(cb);
     jstring jr = env->NewStringUTF(result.c_str());
-    env->CallVoidMethod(globalCb, onFinish, jr);
+    env->CallVoidMethod(gcb, onFinish, jr);
     env->DeleteLocalRef(jr);
-    env->DeleteGlobalRef(globalCb);
+    env->DeleteGlobalRef(gcb);
 }
 
 JNIEXPORT void JNICALL
 Java_com_monsieurmahjong_iqoowang_agent_LlmEngine_nativeReset(JNIEnv*, jobject) {
     if (gLlmObj && fn_reset) {
-        try { fn_reset(gLlmObj); LOGI("reset OK"); }
-        catch (...) { LOGE("reset 异常"); }
+        try { fn_reset(gLlmObj); } catch (...) {}
     }
 }
 
 JNIEXPORT jboolean JNICALL
 Java_com_monsieurmahjong_iqoowang_agent_LlmEngine_nativeIsReady(JNIEnv*, jobject) {
-    return (gLlmObj != nullptr) ? JNI_TRUE : JNI_FALSE;
+    return gLlmObj != nullptr ? JNI_TRUE : JNI_FALSE;
 }
 
 JNIEXPORT void JNICALL
 Java_com_monsieurmahjong_iqoowang_agent_LlmEngine_nativeDestroy(JNIEnv*, jobject) {
-    // 通过 delete 操作符销毁（需要析构符号，暂时置 null 让系统回收）
     gLlmObj = nullptr;
-    if (gLlmHandle && gLlmHandle != RTLD_DEFAULT) {
-        dlclose(gLlmHandle);
-        gLlmHandle = nullptr;
-    }
-    LOGI("LLM destroyed");
+    if (gLlmHandle) { dlclose(gLlmHandle); gLlmHandle = nullptr; }
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_monsieurmahjong_iqoowang_agent_LlmEngine_nativeGetDebugInfo(JNIEnv* env, jobject) {
+    return env->NewStringUTF(gDebugInfo.c_str());
 }
 
 } // extern "C"
-
-// ════════════════════════════════════════
-// nativeGetDebugInfo — 返回符号查找结果
-// ════════════════════════════════════════
-extern "C"
-JNIEXPORT jstring JNICALL
-Java_com_monsieurmahjong_iqoowang_agent_LlmEngine_nativeGetDebugInfo(JNIEnv* env, jobject) {
-    std::ostringstream info;
-    info << "createLLM=" << (fn_createLLM?"✅":"❌")
-         << " load="     << (fn_load?"✅":"❌")
-         << " response=" << (fn_response?"✅":"❌")
-         << " reset="    << (fn_reset?"✅":"❌")
-         << " llmObj="   << (gLlmObj?"✅":"❌");
-
-    // 尝试查找符号以获取更多信息
-    if (!fn_createLLM) {
-        void* h = dlopen("libllm.so", RTLD_NOW | RTLD_NOLOAD);
-        info << " | libllm_handle=" << (h ? "found" : "null");
-        if (!h) info << " dlerr=" << (dlerror() ? dlerror() : "none");
-    }
-
-    return env->NewStringUTF(info.str().c_str());
-}

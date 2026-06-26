@@ -2722,8 +2722,21 @@ function updateAssetDisplay(){
   if(wr&&STATE.decisions>0)wr.textContent=(STATE.wins/STATE.decisions*100).toFixed(0)+'%';
 }
 
-window.loadStockKline=function(code,name){
-  switchTab('home');setTimeout(()=>loadStockDetail(code,name),120);
+// AI模型加载完成回调（由Java轮询触发）
+window.onAIModelReady = function(statusJson) {
+  try {
+    const ag = JSON.parse(statusJson);
+    addThinkLine('good', '[AI ] ✅ Qwen2.5-1.5B-INT4 加载完成！');
+    addThinkLine('good', '[AI ] 本地推理就绪，约 20-40 tok/s');
+    // 更新AI大脑页面状态
+    const levelNames = ['','初级分析师','量化研究员','策略交易员','风控专家','资深操盘手','宗师级操盘手'];
+    const el = document.getElementById('agentLevelText');
+    if (el) el.textContent = `Level ${ag.level} · ${levelNames[ag.level]||''} · Qwen2.5已就绪`;
+  } catch(e) {}
+};
+
+window.onAIModelTimeout = function() {
+  addThinkLine('warn', '[AI ] 模型加载超时（>5分钟），继续使用专家规则模式');
 };
 
 // ═══════════════════════════════════════════════════════════
@@ -2860,9 +2873,10 @@ window.onAiAnalysis = function(text) {
 // 思考流：显示AI路径和加载信息
 // ═══════════════════════════════════════════════════════════
 function showAIStatusInThinkStream(ag) {
-  if (!ag) return;
-  const path = ag.modelPath || '未知';
-  const shortPath = path.length > 38 ? '...' + path.slice(-35) : path;
+  if (!ag) { addThinkLine('warn','[AI ] getAgentStatus返回空'); return; }
+
+  // 始终显示原始状态
+  addThinkLine('info', `[AI ] jni=${ag.jniLoaded} llm=${ag.llmReady} engine=${ag.modelName}`);
 
   if (ag.llmReady) {
     addThinkLine('good', '[AI ] ✅ Qwen2.5-1.5B-INT4 加载成功');
@@ -2873,24 +2887,21 @@ function showAIStatusInThinkStream(ag) {
   addThinkLine('warn', '[AI ] ⚠️ 本地大模型未加载');
 
   if (ag.jniLoaded === false) {
-    addThinkLine('bad',  '[SO ] ❌ .so文件加载失败');
-    if (ag.soError && ag.soError !== '无错误') {
-      // 截取最关键的部分显示
-      const err = ag.soError.slice(0, 100);
-      addThinkLine('bad', '[ERR] ' + err);
-    }
+    addThinkLine('bad', '[SO ] ❌ .so加载失败');
+    if (ag.soError && ag.soError !== '无错误')
+      addThinkLine('bad', '[ERR] ' + ag.soError.slice(0, 100));
   } else {
-    // .so已加载，但nativeInit失败 → 显示符号查找结果
-    addThinkLine('warn', '[SO ] .so已加载，符号查找结果:');
+    // jniLoaded=true 但 llmReady=false
     if (ag.soError && ag.soError !== '无错误') {
-      // soError里包含 createLLM=❌/✅ 等信息
-      const parts = ag.soError.split('|');
-      parts.forEach(p => {
-        if (p.trim()) addThinkLine('info', '[DBG] ' + p.trim().slice(0, 60));
+      ag.soError.split('|').forEach(p => {
+        if (p.trim()) addThinkLine('info', '[DBG] ' + p.trim().slice(0, 70));
       });
+    } else {
+      addThinkLine('warn', '[DBG] soError为空 — nativeInit可能在isReady检查前返回');
+      addThinkLine('info', '[DBG] 请查看Logcat: SM_JNI 和 LlmEngine 标签');
     }
-    addThinkLine('info', '[AI ] 使用专家规则模式（选股/对话功能正常）');
   }
+  addThinkLine('info', '[AI ] 专家规则模式运行中');
 }
 loadState();
 updateAssetDisplay();
@@ -2919,6 +2930,8 @@ setTimeout(()=>{
     }
     Android.warmupAI();
     startRealTimeRefresh();
+    // 启动AI状态轮询（模型在后台加载，完成后自动更新思考流）
+    Android.startAIStatusPolling();
     updateDetailPanel({code:'000001',name:'上证指数',
       price:0,preClose:0,open:0,high:0,low:0,changePct:0,change:0});
   }else{

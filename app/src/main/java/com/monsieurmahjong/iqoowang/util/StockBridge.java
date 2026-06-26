@@ -178,8 +178,15 @@ public class StockBridge {
                             String signalType, int aiScore,
                             double cash, double totalAsset) {
         try {
-            return mDb.insertTrade(code, name, direction, price, quantity,
+            long id = mDb.insertTrade(code, name, direction, price, quantity,
                     signalType, aiScore, cash, totalAsset);
+            // 持久化现金余额供 DailySnapshotWorker 读取
+            mContext.getSharedPreferences("sm_prefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putString("cash", String.valueOf(cash))
+                    .putString("total_asset", String.valueOf(totalAsset))
+                    .apply();
+            return id;
         } catch (Exception e) {
             Log.e(TAG, "recordTrade error", e);
             return -1;
@@ -302,7 +309,6 @@ public class StockBridge {
     /**
      * 获取AI Agent状态
      * JS调用：Android.getAgentStatus()
-     * 返回：{"level":2,"exp":250,"modelName":"Qwen2.5-1.5B","ready":true}
      */
     @JavascriptInterface
     public String getAgentStatus() {
@@ -310,7 +316,46 @@ public class StockBridge {
     }
 
     /**
-     * 预热AI模型（App启动时调用，避免首次推理慢）
+     * 启动AI状态轮询（模型加载是异步的，JS需要轮询才能知道何时完成）
+     * JS调用：Android.startAIStatusPolling()
+     * 当模型加载完成时回调：window.onAIModelReady(statusJson)
+     */
+    @JavascriptInterface
+    public void startAIStatusPolling() {
+        final android.os.Handler h = new android.os.Handler(android.os.Looper.getMainLooper());
+        final int[] attempts = {0};
+        final Runnable[] poll = {null};
+        poll[0] = () -> {
+            attempts[0]++;
+            String statusJson = mAgent.getStatusJson();
+            try {
+                org.json.JSONObject status = new org.json.JSONObject(statusJson);
+                boolean llmReady = status.optBoolean("llmReady", false);
+                Log.d(TAG, "AI状态轮询 #" + attempts[0] + " llmReady=" + llmReady);
+
+                if (llmReady) {
+                    // 模型加载完成，通知JS
+                    String escaped = statusJson.replace("'", "\\'");
+                    evalJs("window.onAIModelReady && window.onAIModelReady('" + escaped + "')");
+                    Log.i(TAG, "✅ AI模型就绪，停止轮询");
+                } else if (attempts[0] < 60) {
+                    // 未就绪，5秒后再查
+                    h.postDelayed(poll[0], 5000);
+                } else {
+                    // 5分钟后放弃
+                    Log.w(TAG, "AI加载超时（5分钟），停止轮询");
+                    evalJs("window.onAIModelTimeout && window.onAIModelTimeout()");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "AI轮询解析错误", e);
+            }
+        };
+        // 延迟3秒开始轮询（给模型加载时间）
+        h.postDelayed(poll[0], 3000);
+    }
+
+    /**
+     * 预热AI模型
      * JS调用：Android.warmupAI()
      */
     @JavascriptInterface
