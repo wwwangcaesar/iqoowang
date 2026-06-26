@@ -54,23 +54,26 @@ android {
         main {
             assets.srcDirs = ['src/main/assets']
             // jniLibs 目录：放 Release 解压出来的 .so
-            jniLibs.srcDirs = []
+            jniLibs.srcDirs = ['src/main/jniLibs']
         }
     }
 
     packagingOptions {
-        // 多个 .so 冲突时取第一个
-        exclude 'lib/arm64-v8a/libMNN.so'
-        exclude 'lib/arm64-v8a/libMNN_CL.so'
-        exclude 'lib/arm64-v8a/libMNN_Express.so'
-        exclude 'lib/arm64-v8a/libMNNLLM.so'
-        // c++_shared 只保留一份
-        exclude 'lib/arm64-v8a/libc++_shared.so'
+        // libc++_shared: jniLibs里的版本优先（来自MNN官方zip，与libllm.so匹配）
+        pickFirst 'lib/arm64-v8a/libc++_shared.so'
+        pickFirst 'lib/arm64-v8a/libMNN.so'
+        pickFirst 'lib/arm64-v8a/libMNN_CL.so'
+        pickFirst 'lib/arm64-v8a/libMNN_Express.so'
+        pickFirst 'lib/arm64-v8a/libMNN_Vulkan.so'
+        pickFirst 'lib/arm64-v8a/libmnncore.so'
+        pickFirst 'lib/arm64-v8a/libllm.so'
     }
+
     // ── MNN Release包里的 .so 可能按 16KB页大小对齐（Android 15+要求）──
     // 如果 iQOO 11s 升到 Android 15 内核，需要下面这行：
-//     android.defaults.buildfeatures.buildconfig = true
+    // android.defaults.buildfeatures.buildconfig = true
 }
+
 
 greendao {
     schemaVersion 1

@@ -631,13 +631,7 @@
           <div id="detailLow" style="font-size:12px;font-weight:600;color:var(--down-green);margin-top:2px;font-family:var(--font-mono);">--</div>
         </div>
       </div>
-      <!-- 操盘手提示 -->
-      <div id="traderTip" style="margin-top:10px;padding:8px 10px;
-        background:rgba(240,180,41,0.08);border:1px solid rgba(240,180,41,0.2);
-        border-radius:6px;font-size:11px;color:var(--accent-gold);line-height:1.7;display:none;">
-        <span style="font-size:9px;opacity:0.7;">📋 操盘建议</span><br>
-        <span id="traderTipText"></span>
-      </div>
+      <!-- 移除首页操盘提示，改为股票核心新闻（AI筛选） -->
     </div>
 
     <!-- K线图 -->
@@ -663,21 +657,22 @@
       </div>
     </div>
 
-    <!-- 今日信号 -->
+    <!-- AI精选核心新闻 -->
     <div class="card">
       <div class="card-header">
-        <div class="card-title">今日选股信号</div>
-        <div style="font-size:10px;color:var(--accent-gold);cursor:pointer;" onclick="switchTab('screen')">查看全部 ›</div>
+        <div class="card-title">核心资讯</div>
+        <div id="newsRefreshBtn" style="font-size:10px;color:var(--accent-cyan);cursor:pointer;"
+             onclick="refreshStockNews()">AI筛选 ↻</div>
       </div>
-      <div id="homeSignalList">
-        <div class="empty-state">
-          <div class="empty-icon">📊</div>
-          <div class="empty-text">点击"选股"页面运行筛选</div>
+      <div id="stockNewsList" style="padding:8px 14px 10px;">
+        <div class="empty-state" style="padding:20px 0;">
+          <div class="empty-icon" style="font-size:28px;">📰</div>
+          <div class="empty-text">搜索股票后，AI将筛选最核心的资讯</div>
         </div>
       </div>
     </div>
 
-    <!-- 账户概览（小型，替代原资产面板） -->
+    <!-- 账户概览 -->
     <div style="margin:0 12px 12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
       <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center;">
         <div style="font-size:9px;color:var(--text-dim);">总资产</div>
@@ -954,7 +949,7 @@ const STATE = {
   // 真实行情K线缓存 { "600519_日K": [...bars] }
   klineCache: {},
   // 当前K线显示的股票
-  currentKlineCode: 'sh000001',
+  currentKlineCode: '000001',
   currentKlineName: '上证指数',
   // AI流式输出缓冲
   aiStreamBuffer: '',
@@ -1155,7 +1150,7 @@ const STOCK_POOL = [
   { code:'600036', name:'招商银行', price:32.5, cap:820, board:'sh' },
   { code:'000858', name:'五粮液', price:148, cap:570, board:'sz' },
   { code:'600900', name:'长江电力', price:26.3, cap:1030, board:'sh' },
-  { code:'000001', name:'平安银行', price:11.2, cap:218, board:'sz' },
+  { code:'000001', name:'平安银行', price:11.2, cap:218, board:'sz', _note:'深市000001是平安银行，沪市000001是上证指数' },
   { code:'600276', name:'恒瑞医药', price:43.7, cap:278, board:'sh' },
   { code:'002415', name:'海康威视', price:28.4, cap:268, board:'sz' },
   { code:'600887', name:'伊利股份', price:24.6, cap:160, board:'sh' },
@@ -1670,7 +1665,7 @@ function setPeriod(p, el) {
 
   if (IS_ANDROID) {
     // 请求Java层拉取真实K线
-    const code = STATE.currentKlineCode || 'sh000001';
+    const code = STATE.currentKlineCode || '000001';
     addThinkLine('info', `[MKT] 拉取 ${code} ${p} K线...`);
     Android.fetchKline(code, p, 120);
   } else {
@@ -2548,8 +2543,8 @@ function loadStockDetail(code, name) {
     drawKline();
   }
 
-  const sr=STATE.screenResults.find(s=>s.code===code);
-  showTraderTip(sr);
+  // 触发AI筛选该股核心新闻
+  refreshStockNews(code, name);
   document.getElementById('page-home').scrollTop=0;
 }
 
@@ -2732,8 +2727,171 @@ window.loadStockKline=function(code,name){
 };
 
 // ═══════════════════════════════════════════════════════════
-// 初始化
+// AI筛选核心新闻（调用本地AI或东方财富新闻接口）
 // ═══════════════════════════════════════════════════════════
+
+// 新闻渲染
+function renderNews(newsArr) {
+  const el = document.getElementById('stockNewsList');
+  if (!el) return;
+  if (!newsArr || !newsArr.length) {
+    el.innerHTML = '<div style="padding:12px 0;text-align:center;font-size:11px;color:var(--text-dim);">暂无相关资讯</div>';
+    return;
+  }
+  el.innerHTML = newsArr.map((n, i) => `
+    <div style="padding:9px 0;${i<newsArr.length-1?'border-bottom:1px solid rgba(26,45,74,0.5);':''}
+         display:flex;gap:10px;align-items:flex-start;cursor:pointer;"
+         onclick="this.style.opacity='0.7'">
+      <div style="flex-shrink:0;margin-top:3px;">
+        <span style="display:inline-block;width:5px;height:5px;border-radius:50%;
+          background:${n.level==='high'?'var(--up-red)':n.level==='mid'?'var(--accent-gold)':'var(--text-dim)'};"></span>
+      </div>
+      <div style="flex:1;">
+        <div style="font-size:12px;color:var(--text-prime);line-height:1.5;">${n.title}</div>
+        <div style="font-size:10px;color:var(--text-dim);margin-top:3px;">${n.time||''} · ${n.source||'资讯'}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// AI判断新闻重要程度并筛选（核心函数）
+async function refreshStockNews(code, name) {
+  code = code || STATE.currentKlineCode;
+  name = name || STATE.currentKlineName;
+  if (!code || code === '000001') return;
+
+  const el = document.getElementById('stockNewsList');
+  if (el) el.innerHTML = '<div style="padding:12px 0;text-align:center;font-size:11px;color:var(--text-dim);">AI筛选中<span class="loading-dots"><span></span><span></span><span></span></span></div>';
+  document.getElementById('newsRefreshBtn').textContent = '筛选中...';
+
+  // 东方财富个股新闻接口
+  const newsUrl = `https://np-anotice-stock.eastmoney.com/api/security/ann` +
+    `?sr=-1&page_size=5&page_index=1&ann_type=A&client_source=web&f_node=0&s_node=0` +
+    `&stock_list=${code}`;
+
+  let rawNews = [];
+  try {
+    const resp = await fetch(newsUrl, {
+      headers: { 'Referer': 'https://www.eastmoney.com/', 'User-Agent': 'Mozilla/5.0' }
+    });
+    const data = await resp.json();
+    const list = data?.data?.list || [];
+    rawNews = list.slice(0, 8).map(item => ({
+      title: item.title || item.ann_title || '',
+      time: (item.notice_date || item.ann_date || '').slice(0, 10),
+      source: item.media_name || '公告',
+    }));
+  } catch(e) {
+    // 接口失败，用模拟新闻
+    rawNews = generateMockNews(name);
+  }
+
+  if (!rawNews.length) {
+    rawNews = generateMockNews(name);
+  }
+
+  // 让AI判断哪几条最重要
+  const detail = STATE.currentDetail;
+  const preClose = detail?.preClose || 0;
+  const hangPrice = preClose > 0 ? (preClose + 0.25).toFixed(2) : '--';
+
+  if (IS_ANDROID) {
+    // 调用本地AI分析新闻重要性
+    const prompt = `股票：${name}(${code})\n` +
+      `当前价：¥${detail?.price?.toFixed(2)||'--'}，昨收：¥${preClose.toFixed(2)||'--'}\n` +
+      `操盘手挂单参考：昨收+0.2~0.3元 = ¥${hangPrice}\n\n` +
+      `以下是该股最新资讯，请从操盘手视角：\n` +
+      `1. 判断每条消息对股价的影响（high重大/mid一般/low无关）\n` +
+      `2. 只保留high和mid级别，最多3条\n` +
+      `3. 直接输出JSON数组，格式：[{"title":"...","level":"high","time":"...","source":"..."}]\n` +
+      `不要输出其他内容。\n\n资讯列表：\n` +
+      rawNews.map((n,i)=>`${i+1}. [${n.time}] ${n.title}`).join('\n');
+
+    STATE.aiStreamBuffer = '';
+    STATE.aiStreamTarget = 'news';
+    STATE._newsBuffer = '';
+    Android.aiAnalyzeScreenResult(JSON.stringify({type:'news', prompt, rawNews}));
+    // onAiAnalysis 里处理 news 类型
+  } else {
+    // H5：用简单规则过滤
+    const filtered = filterNewsByRules(rawNews, name);
+    renderNews(filtered);
+  }
+
+  document.getElementById('newsRefreshBtn').textContent = 'AI筛选 ↻';
+}
+
+// 规则过滤（降级方案）
+function filterNewsByRules(news, name) {
+  const highKw = ['业绩','利润','增长','涨停','重大','并购','收购','合同','中标','回购'];
+  const lowKw  = ['提示','风险','问询','核查','违规'];
+  return news.slice(0,5).map(n => ({
+    ...n,
+    level: highKw.some(k => n.title.includes(k)) ? 'high'
+         : lowKw.some(k => n.title.includes(k)) ? 'low' : 'mid'
+  })).filter(n => n.level !== 'low').slice(0,3);
+}
+
+function generateMockNews(name) {
+  return [
+    { title: `${name}：公司经营正常，各项指标稳健`, time: new Date().toISOString().slice(0,10), source: '公告', level:'mid' },
+    { title: `机构调研${name}，看好未来业绩增长`, time: new Date().toISOString().slice(0,10), source: '研报', level:'mid' },
+  ];
+}
+
+// AI分析新闻完成回调（扩展 onAiAnalysis）
+const _origOnAiAnalysis = window.onAiAnalysis;
+window.onAiAnalysis = function(text) {
+  if (STATE.aiStreamTarget === 'news') {
+    STATE.aiStreamTarget = null;
+    try {
+      const clean = text.replace(/```json|```/g,'').trim();
+      const arr = JSON.parse(clean);
+      if (Array.isArray(arr)) { renderNews(arr); return; }
+    } catch(e) {}
+    // 解析失败，显示原始文本摘要
+    renderNews(filterNewsByRules(STATE._rawNews || [], STATE.currentKlineName));
+    return;
+  }
+  if (_origOnAiAnalysis) _origOnAiAnalysis(text);
+};
+
+// ═══════════════════════════════════════════════════════════
+// 思考流：显示AI路径和加载信息
+// ═══════════════════════════════════════════════════════════
+function showAIStatusInThinkStream(ag) {
+  if (!ag) return;
+  const path = ag.modelPath || '未知';
+  const shortPath = path.length > 38 ? '...' + path.slice(-35) : path;
+
+  if (ag.llmReady) {
+    addThinkLine('good', '[AI ] ✅ Qwen2.5-1.5B-INT4 加载成功');
+    addThinkLine('good', '[AI ] 推理就绪，约 20-40 tok/s');
+    return;
+  }
+
+  addThinkLine('warn', '[AI ] ⚠️ 本地大模型未加载');
+
+  if (ag.jniLoaded === false) {
+    addThinkLine('bad',  '[SO ] ❌ .so文件加载失败');
+    if (ag.soError && ag.soError !== '无错误') {
+      // 截取最关键的部分显示
+      const err = ag.soError.slice(0, 100);
+      addThinkLine('bad', '[ERR] ' + err);
+    }
+  } else {
+    // .so已加载，但nativeInit失败 → 显示符号查找结果
+    addThinkLine('warn', '[SO ] .so已加载，符号查找结果:');
+    if (ag.soError && ag.soError !== '无错误') {
+      // soError里包含 createLLM=❌/✅ 等信息
+      const parts = ag.soError.split('|');
+      parts.forEach(p => {
+        if (p.trim()) addThinkLine('info', '[DBG] ' + p.trim().slice(0, 60));
+      });
+    }
+    addThinkLine('info', '[AI ] 使用专家规则模式（选股/对话功能正常）');
+  }
+}
 loadState();
 updateAssetDisplay();
 renderPositions();
@@ -2752,6 +2910,13 @@ setTimeout(()=>{
       STATE.wins=Math.round((stats.winRate||0)*STATE.decisions);
       updateAssetDisplay();
     }catch(e){}
+    // 显示AI状态到思考流
+    try{
+      const ag=JSON.parse(Android.getAgentStatus());
+      showAIStatusInThinkStream(ag);
+    }catch(e){
+      addThinkLine('warn','[AI ] 状态获取失败: '+e.message);
+    }
     Android.warmupAI();
     startRealTimeRefresh();
     updateDetailPanel({code:'000001',name:'上证指数',

@@ -2,6 +2,8 @@
 
 ## 你遇到的问题
 
+// com_monsieurmahjong_iqoowang_agent包名的问题，需要替换这个到.cpp 文件中
+
 MNN **从未发布过 AAR 包**，GitHub Release 里只有 `.so` + 头文件的 zip 压缩包。
 这是正确的，官方 MnnLlmChat App 也是这么集成的。
 
