@@ -262,6 +262,10 @@ public class LlmEngine {
         try { nativeDestroy(); } catch (Throwable ignored) {}
     }
 
+    public String getDebugInfo() {
+        try { return nativeGetDebugInfo(); } catch (Throwable t) { return "获取失败: " + t.getMessage(); }
+    }
+
     // Native 方法声明
     private native boolean nativeInit(String modelDir);
     private native void    nativeChat(String prompt, Callback callback);

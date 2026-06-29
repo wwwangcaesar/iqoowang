@@ -36,6 +36,8 @@ typedef void        (*FnResp2)(void*, const std::string&, std::ostream*, const c
 typedef std::string (*FnResp3)(void*, const std::string&);
 // 签名4: void response(string)
 typedef void        (*FnResp4)(void*, const std::string&);
+// 签名5: void response(string, ostream*, char*, int)
+typedef void        (*FnResp5)(void*, const std::string&, std::ostream*, const char*, int);
 
 typedef void  (*FnReset)(void*);
 
@@ -138,13 +140,19 @@ Java_com_monsieurmahjong_iqoowang_agent_LlmEngine_nativeInit(
     // 组6: 带 std:: (GNU)
     const char* r11 = "_ZN3MNN11Transformer3Llm8responseERKSsPSt13basic_ostreamIcSt11char_traitsIcEEPKc";
     const char* r12 = "_ZN3MNN11Transformer3Llm8responseERKSt6__ndk112basic_stringIcS1_11char_traitsIcES1_9allocatorIcEEPSt13basic_ostreamIcSt11char_traitsIcEEPKc";
+    // 组7: MNN 3.x 最新版（带结尾的 int，如 max_new_tokens/stream_flags）
+    const char* r13 = "_ZN3MNN11Transformer3Llm8responseERKNSt6__ndk112basic_stringIcNS2_11char_traitsIcEENS2_9allocatorIcEEEEPNS2_13basic_ostreamIcS5_EEPKci";
 
-    // 尝试带 ostream 参数的（签名1/2）
-    const char* respWithOs[] = {r1, r2, r5, r6, r10, r11, r12};
+    // 尝试带 ostream 参数的（签名1/2/5）
+    const char* respWithOs[] = {r13, r1, r2, r5, r6, r10, r11, r12};
     for (const char* name : respWithOs) {
         void* s = trySymbol(hLlm, name);
         if (!s) s = trySymbol(RTLD_DEFAULT, name);
-        if (s) { fn_resp_ptr = s; fn_resp_sig = 1; break; }
+        if (s) { 
+            fn_resp_ptr = s; 
+            fn_resp_sig = (name == r13) ? 5 : 1; 
+            break; 
+        }
     }
 
     // 尝试不带 ostream 参数的（签名3/4）
@@ -232,7 +240,11 @@ static std::string callResponse(const std::string& prompt) {
         if (fn_resp_sig == 1) {
             // string response(this, string, ostream*, char*)
             auto fn = (FnResp1)fn_resp_ptr;
-            return fn(gLlmObj, prompt, &oss, "");
+            std::string ret = fn(gLlmObj, prompt, &oss, "");
+            if (ret.empty()) {
+                ret = oss.str();
+            }
+            return ret;
         } else if (fn_resp_sig == 2) {
             auto fn = (FnResp2)fn_resp_ptr;
             auto* old = std::cout.rdbuf(oss.rdbuf());
@@ -247,6 +259,10 @@ static std::string callResponse(const std::string& prompt) {
             auto* old = std::cout.rdbuf(oss.rdbuf());
             fn(gLlmObj, prompt);
             std::cout.rdbuf(old);
+            return oss.str();
+        } else if (fn_resp_sig == 5) {
+            auto fn = (FnResp5)fn_resp_ptr;
+            fn(gLlmObj, prompt, &oss, nullptr, -1);
             return oss.str();
         }
     } catch (const std::exception& e) {

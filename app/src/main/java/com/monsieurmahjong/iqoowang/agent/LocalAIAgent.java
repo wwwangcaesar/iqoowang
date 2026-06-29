@@ -45,6 +45,7 @@ public class LocalAIAgent {
     private int mLevel = 1;
     private int mExp   = 0;
     private boolean mEngineReady = false;
+    private String mInitDebugLog = ""; // 收集初始化诊断日志
 
     private static LocalAIAgent sInstance;
 
@@ -74,6 +75,7 @@ public class LocalAIAgent {
     // ──────────────────────────────────────────
 
     private void initEngine() {
+        mInitDebugLog = "【初始化诊断日志】\n";
         String[] candidates = {
                 new File(mContext.getExternalFilesDir(null), MODEL_DIR).getAbsolutePath(),
                 "/sdcard/Android/data/com.stockmaster/files/" + MODEL_DIR,
@@ -83,15 +85,23 @@ public class LocalAIAgent {
         File modelDir = null;
         for (String path : candidates) {
             File f = new File(path);
-            if (!f.exists()) { Log.i(TAG, "不存在: " + path); continue; }
+            if (!f.exists()) { 
+                mInitDebugLog += "目录不存在: " + path + "\n";
+                Log.i(TAG, "不存在: " + path); 
+                continue; 
+            }
             String[] files = f.list();
+            mInitDebugLog += "发现目录: " + path + " (" + (files!=null?files.length:0) + "项)\n";
             Log.i(TAG, "发现目录: " + path + " (" + (files!=null?files.length:0) + "项)");
-            if (files != null) for (String fn : files)
+            if (files != null) for (String fn : files) {
+                mInitDebugLog += "  - " + fn + " (" + new File(f,fn).length()/1024 + "KB)\n";
                 Log.i(TAG, "  " + fn + " (" + new File(f,fn).length()/1024 + "KB)");
-            if (new File(f, "config.json").exists()) { modelDir = f; break; }
+            }
+            if (new File(f, "config.json").exists() || new File(f, "llm.mnn").exists()) { modelDir = f; break; }
         }
 
         if (modelDir == null) {
+            mInitDebugLog += "❌ 未找到含config.json或llm.mnn的模型，放弃加载。\n";
             Log.e(TAG, "❌ 未找到含config.json的模型目录");
             mEngineReady = false; return;
         }
@@ -102,11 +112,13 @@ public class LocalAIAgent {
         boolean hasWeight       = new File(modelDir, "llm.mnn.weight").exists();
         boolean hasLlmConfig    = new File(modelDir, "llm_config.json").exists();
 
+        mInitDebugLog += "检查模型文件: mtok=" + hasNewTokenizer + " txt=" + hasOldTokenizer + " weight=" + hasWeight + "\n";
         Log.i(TAG, "格式: tokenizer.mtok=" + hasNewTokenizer
                 + " tokenizer.txt=" + hasOldTokenizer + " weight=" + hasWeight);
 
         if (!hasNewTokenizer && hasOldTokenizer) {
             Log.w(TAG, "旧版格式，自动修复 config.json");
+            mInitDebugLog += "检测到旧版格式，自动生成 config.json...\n";
             try {
                 String cfg = "{\n" +
                         "  \"llm_model\": \"llm.mnn\",\n" +
@@ -120,16 +132,24 @@ public class LocalAIAgent {
                         "  \"quant_block\": 0\n}";
                 java.io.FileWriter fw = new java.io.FileWriter(new File(modelDir, "config.json"));
                 fw.write(cfg); fw.close();
+                mInitDebugLog += "✅ config.json 自动补全成功\n";
                 Log.i(TAG, "✅ config.json 已更新（旧版兼容）");
             } catch (Exception e) {
+                mInitDebugLog += "❌ config.json 写入失败: " + e.getMessage() + "\n";
                 Log.e(TAG, "config.json写入失败: " + e.getMessage());
             }
         }
 
         Log.i(TAG, "加载模型: " + modelDir.getAbsolutePath());
+        mInitDebugLog += "正在调用底层JNI加载模型 (这可能需要几秒钟)...\n";
         try {
             boolean ok = mEngine.init(modelDir.getAbsolutePath());
             mEngineReady = ok;
+            if (ok) {
+                mInitDebugLog += "✅ MNN模型底层加载成功！\n";
+            } else {
+                mInitDebugLog += "❌ MNN模型底层加载失败。详情信息：\n" + LlmEngine.getLoadError() + "\n";
+            }
             Log.i(TAG, ok ? "✅ 模型加载成功" : "❌ 失败");
 
             // 加载完成后通知 WebView 更新状态
@@ -140,9 +160,17 @@ public class LocalAIAgent {
             }, 500);
 
         } catch (Throwable t) {
+            mInitDebugLog += "❌ 加载异常: " + t.getMessage() + "\n";
             Log.e(TAG, "❌ 异常: " + t.getMessage(), t);
             mEngineReady = false;
         }
+    }
+    
+    private String consumeDebugLog() {
+        if (mInitDebugLog == null || mInitDebugLog.isEmpty()) return "";
+        String log = mInitDebugLog;
+        mInitDebugLog = ""; // 消费一次后清空，避免每次聊天都弹出一长串日志
+        return log + "\n-----\n本地模型不可用，已自动降级至专家规则系统：\n";
     }
 
     /** App启动时预热，消除冷启动延迟 */
@@ -199,7 +227,7 @@ public class LocalAIAgent {
                     runStream(prompt, cb);
                 } else {
                     // 降级：专家规则流式输出
-                    String result = mExpert.generate(prompt);
+                    String result = consumeDebugLog() + mExpert.generate(prompt);
                     streamToCallback(result, cb);
                 }
             } catch (Exception e) {
@@ -226,7 +254,7 @@ public class LocalAIAgent {
                 if (mEngine.isReady()) {
                     runStream(prompt, cb);
                 } else {
-                    String fallback = mExpert.answerQuestion(message);
+                    String fallback = consumeDebugLog() + mExpert.answerQuestion(message);
                     streamToCallback(fallback, cb);
                 }
             } catch (Exception e) {
@@ -260,11 +288,15 @@ public class LocalAIAgent {
                 if (result.startsWith("[response") || result.startsWith("[推理")
                         || result.startsWith("[签名") || result.isEmpty()) {
                     Log.w(TAG, "Qwen推理失败: " + result + "，降级到专家规则");
+                    // 提取更详细的底层签名信息
+                    String sigInfo = "";
+                    try { sigInfo = mEngine.isReady() ? mEngine.getDebugInfo() : ""; } catch (Exception e) {}
+                    
                     // 从 prompt 里提取用户问题
                     String question = prompt.length() > 200
                             ? prompt.substring(prompt.length() - 200) : prompt;
-                    String fallback = mExpert.answerQuestion(question)
-                            + "\n（本地AI推理暂时不可用，使用专家规则回答）";
+                    String fallback = "【模型虽然加载，但推理无返回】\n底层符号状态：" + sigInfo + "\n返回值长度：" + result.length() + "\n\n--- 专家系统已接管 ---\n"
+                            + mExpert.answerQuestion(question);
                     // 重新流式输出
                     mExecutor.execute(() -> {
                         mInferring.set(true);
