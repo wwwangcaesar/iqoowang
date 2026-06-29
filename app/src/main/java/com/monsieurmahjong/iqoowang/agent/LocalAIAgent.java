@@ -248,7 +248,6 @@ public class LocalAIAgent {
             @Override
             public void onToken(String token) {
                 full.append(token);
-                // 切回主线程推送token
                 mMainHandler.post(() -> cb.onToken(token));
             }
 
@@ -256,6 +255,24 @@ public class LocalAIAgent {
             public void onFinish(String fullText) {
                 mInferring.set(false);
                 String result = fullText.isEmpty() ? full.toString() : fullText;
+
+                // 检测推理失败的标记字符串，降级到专家规则
+                if (result.startsWith("[response") || result.startsWith("[推理")
+                        || result.startsWith("[签名") || result.isEmpty()) {
+                    Log.w(TAG, "Qwen推理失败: " + result + "，降级到专家规则");
+                    // 从 prompt 里提取用户问题
+                    String question = prompt.length() > 200
+                            ? prompt.substring(prompt.length() - 200) : prompt;
+                    String fallback = mExpert.answerQuestion(question)
+                            + "\n（本地AI推理暂时不可用，使用专家规则回答）";
+                    // 重新流式输出
+                    mExecutor.execute(() -> {
+                        mInferring.set(true);
+                        streamToCallback(fallback, cb);
+                    });
+                    return;
+                }
+
                 gainExp(5);
                 mMainHandler.post(() -> cb.onComplete(result));
             }
