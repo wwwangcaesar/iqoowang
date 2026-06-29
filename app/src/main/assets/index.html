@@ -1,0 +1,625 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>童趣音乐盒</title>
+    <style>
+        :root {
+            --primary-color: #FF6B6B;
+            --secondary-color: #FFD93D;
+            --bg-color: #F0F4F8;
+            --text-color: #2D3436;
+            --shadow-light: #ffffff;
+            --shadow-dark: #c8d0e0;
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+        }
+        body {
+            font-family: 'Comic Sans MS', 'YouYuan', 'Microsoft YaHei', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+        }
+        /* --- 视图容器 --- */
+        .view {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transition: transform 0.5s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            display: flex;
+            flex-direction: column;
+        }
+        .view.hidden-left { transform: translateX(-100%); }
+        .view.hidden-right { transform: translateX(100%); }
+        /* --- 1. 歌曲选择页面 --- */
+        #list-view {
+            padding: 20px;
+            background: var(--bg-color);
+            z-index: 1;
+        }
+        .header {
+            text-align: center;
+            margin: 20px 0 30px;
+        }
+        .header h1 {
+            font-size: 28px;
+            color: var(--primary-color);
+            text-shadow: 2px 2px 0 var(--shadow-light);
+        }
+        .song-list {
+            flex: 1;
+            overflow-y: auto;
+            padding-bottom: 100px;
+        }
+        .song-item {
+            background: var(--bg-color);
+            border-radius: 20px;
+            padding: 15px 20px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            box-shadow: 6px 6px 12px var(--shadow-dark), -6px -6px 12px var(--shadow-light);
+            transition: transform 0.2s;
+            cursor: pointer;
+        }
+        .song-item:active {
+            transform: scale(0.97);
+            box-shadow: inset 4px 4px 8px var(--shadow-dark), inset -4px -4px 8px var(--shadow-light);
+        }
+        .song-item.active {
+            background: linear-gradient(145deg, #e6e9ef, #ffffff);
+            box-shadow: inset 4px 4px 8px var(--shadow-dark), inset -4px -4px 8px var(--shadow-light);
+        }
+        .song-num {
+            font-size: 20px;
+            font-weight: bold;
+            color: var(--secondary-color);
+            margin-right: 15px;
+            width: 30px;
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.1);
+        }
+        .song-info { flex: 1; }
+        .song-info .title { font-size: 18px; font-weight: bold; margin-bottom: 5px; }
+        .song-info .artist { font-size: 12px; color: #888; }
+        /* --- 2. 播放页面 (唱片机) --- */
+        #player-view {
+            background: linear-gradient(160deg, #ffecd2 0%, #fcb69f 100%);
+            z-index: 2;
+            align-items: center;
+            justify-content: space-between;
+            padding: 40px 0;
+        }
+        .back-btn {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.3);
+            border: none;
+            font-size: 24px;
+            color: #fff;
+            cursor: pointer;
+            box-shadow: 4px 4px 8px rgba(0,0,0,0.1);
+        }
+        .now-playing-text {
+            text-align: center;
+            margin-top: 20px;
+        }
+        .now-playing-text h2 { font-size: 24px; color: #fff; text-shadow: 1px 1px 3px rgba(0,0,0,0.1); }
+        .now-playing-text p { font-size: 14px; color: rgba(255,255,255,0.8); }
+        /* 黑胶唱片 */
+        .vinyl-container {
+            position: relative;
+            width: 280px;
+            height: 280px;
+            margin-top: 20px;
+        }
+        .vinyl {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: radial-gradient(circle at center, #222 30%, #111 31%, #222 32%, #111 33%, #222 34%, #000 60%);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3), inset 0 0 20px rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            animation: spin 4s linear infinite;
+            animation-play-state: paused;
+        }
+        .vinyl.playing { animation-play-state: running; }
+        .vinyl-label {
+            width: 90px;
+            height: 90px;
+            border-radius: 50%;
+            background: var(--primary-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border: 4px solid #fff;
+        }
+        .vinyl-label svg { width: 40px; height: 40px; fill: #fff; }
+        /* 唱针 */
+        .tonearm {
+            position: absolute;
+            top: -30px;
+            right: -10px;
+            width: 140px;
+            height: 15px;
+            background: linear-gradient(to bottom, #ddd, #999);
+            border-radius: 10px;
+            transform-origin: right center;
+            transform: rotate(-30deg);
+            transition: transform 0.8s ease;
+            z-index: 10;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.2);
+        }
+        .tonearm.playing { transform: rotate(-10deg); }
+        .tonearm-pivot {
+            position: absolute;
+            top: -15px;
+            right: -15px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 30% 30%, #555, #111);
+            z-index: 11;
+        }
+        /* 播放控制 */
+        .controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 30px;
+            margin-bottom: 20px;
+        }
+        .ctrl-btn {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.2);
+            border: none;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            color: #fff;
+            cursor: pointer;
+            box-shadow: 4px 4px 8px rgba(0,0,0,0.1);
+            transition: transform 0.1s;
+        }
+        .ctrl-btn:active { transform: scale(0.9); }
+        .ctrl-btn.play-btn {
+            width: 80px;
+            height: 80px;
+            background: var(--primary-color);
+            box-shadow: 0 10px 20px rgba(255, 107, 107, 0.4);
+        }
+        .ctrl-btn svg { width: 30px; height: 30px; fill: #fff; }
+        /* 进度条 */
+        .progress-area {
+            width: 80%;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 3px;
+            cursor: pointer;
+            overflow: hidden;
+        }
+        .progress-filled {
+            height: 100%;
+            background: var(--primary-color);
+            width: 0%;
+            border-radius: 3px;
+            transition: width 0.1s linear;
+        }
+        .time-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #fff;
+        }
+        .expand-btn {
+            background: none;
+            border: none;
+            color: #fff;
+            font-size: 14px;
+            margin-top: 15px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+        }
+        /* --- 3. 沉浸式动画页面 --- */
+        #immersive-view {
+            background: linear-gradient(to bottom, #87CEEB 0%, #E0F7FA 60%, #81C784 100%);
+            z-index: 3;
+            padding: 20px;
+            flex-direction: column;
+        }
+        .immersive-header {
+            align-self: flex-start;
+            background: rgba(255,255,255,0.7);
+            padding: 10px 20px;
+            border-radius: 20px;
+            margin-bottom: 20px;
+        }
+        .immersive-header h3 { color: var(--text-color); font-size: 18px; }
+        .animal-stage {
+            flex: 1;
+            position: relative;
+            width: 100%;
+            overflow: hidden;
+        }
+        /* 动物基础类 */
+        .animal {
+            position: absolute;
+            bottom: 50px;
+            width: 100px;
+            height: 120px;
+            transform-origin: bottom center;
+        }
+        /* 动物位置与动画 */
+        .animal.pos-1 { left: 10%; animation: dance-bounce 1s infinite ease-in-out; animation-delay: 0s; }
+        .animal.pos-2 { left: 40%; animation: dance-spin 1.2s infinite ease-in-out; animation-delay: 0.2s; transform: scale(0.8); }
+        .animal.pos-3 { left: 70%; animation: dance-jump 1.5s infinite ease-in-out; animation-delay: 0.5s; transform: scale(1.2); }
+        @keyframes dance-bounce {
+            0%, 100% { transform: translateY(0) scale(1); }
+            50% { transform: translateY(-40px) scale(1.1); }
+        }
+        @keyframes dance-spin {
+            0%, 100% { transform: translateY(0) rotate(0deg) scale(0.8); }
+            50% { transform: translateY(-20px) rotate(180deg) scale(0.9); }
+        }
+        @keyframes dance-jump {
+            0%, 100% { transform: translateY(0) rotate(-5deg) scale(1.2); }
+            20% { transform: translateY(-60px) rotate(5deg) scale(1.2); }
+            40% { transform: translateY(0) rotate(-5deg) scale(1.2); }
+            60% { transform: translateY(-30px) rotate(5deg) scale(1.2); }
+        }
+        /* 太阳动画 */
+        .sun {
+            position: absolute;
+            top: 30px;
+            right: 30px;
+            width: 80px;
+            height: 80px;
+            background: #FFD93D;
+            border-radius: 50%;
+            box-shadow: 0 0 40px #FFD93D;
+            animation: pulse 2s infinite alternate;
+        }
+        @keyframes pulse { from { transform: scale(1); opacity: 0.8; } to { transform: scale(1.1); opacity: 1; } }
+        /* 云朵动画 */
+        .cloud {
+            position: absolute;
+            background: rgba(255,255,255,0.8);
+            border-radius: 50px;
+            width: 100px;
+            height: 40px;
+            animation: float 8s infinite linear;
+        }
+        .cloud:before { content: ''; position: absolute; background: inherit; width: 50px; height: 50px; border-radius: 50%; top: -20px; left: 15px; }
+        .cloud:after { content: ''; position: absolute; background: inherit; width: 40px; height: 40px; border-radius: 50%; top: -15px; right: 15px; }
+        .cloud.c1 { top: 10%; left: -120px; animation-duration: 12s; }
+        .cloud.c2 { top: 25%; left: -120px; animation-duration: 8s; animation-delay: 4s; }
+        @keyframes float { from { transform: translateX(0); } to { transform: translateX(calc(100vw + 150px)); } }
+        /* 底部控制条 */
+        .immersive-controls {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            background: rgba(255,255,255,0.6);
+            padding: 15px;
+            border-radius: 30px;
+            backdrop-filter: blur(5px);
+            margin-bottom: 10px;
+        }
+        /* 隐藏的 Audio 元素 */
+        audio { display: none; }
+    </style>
+</head>
+<body>
+<!-- 视图1：歌曲选择页 -->
+<div id="list-view" class="view">
+    <div class="header">
+        <h1>🎵 童趣音乐盒</h1>
+    </div>
+    <div class="song-list" id="songListContainer">
+        <!-- JS 动态生成 -->
+    </div>
+</div>
+<!-- 视图2：主播放页（唱片机） -->
+<div id="player-view" class="view hidden-right">
+    <button class="back-btn" onclick="switchView('list')">‹</button>
+    <div class="now-playing-text">
+        <h2 id="nowPlayingTitle">歌曲名</h2>
+        <p id="nowPlayingArtist">歌手</p>
+    </div>
+    <div class="vinyl-container">
+        <div class="tonearm-pivot"></div>
+        <div class="tonearm" id="tonearm"></div>
+        <div class="vinyl" id="vinyl">
+            <div class="vinyl-label">
+                <svg viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+            </div>
+        </div>
+    </div>
+    <div class="progress-area">
+        <div class="progress-bar" id="progressBar" onclick="seek(event)">
+            <div class="progress-filled" id="progressFilled"></div>
+        </div>
+        <div class="time-info">
+            <span id="currentTime">0:00</span>
+            <span id="durationTime">0:00</span>
+        </div>
+    </div>
+    <div class="controls">
+        <button class="ctrl-btn" onclick="prevSong()">
+            <svg viewBox="0 0 24 24"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+        </button>
+        <button class="ctrl-btn play-btn" id="playBtn" onclick="togglePlay()">
+            <svg id="playIcon" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button class="ctrl-btn" onclick="nextSong()">
+            <svg viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+        </button>
+    </div>
+    <button class="expand-btn" onclick="switchView('immersive')">
+        沉浸式动画
+        <svg style="width:16px;height:16px;fill:white;" viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+    </button>
+</div>
+<!-- 视图3：沉浸式动画页 -->
+<div id="immersive-view" class="view hidden-right">
+    <div class="sun"></div>
+    <div class="cloud c1"></div>
+    <div class="cloud c2"></div>
+    <div class="immersive-header">
+        <h3 id="immersiveTitle">正在播放：儿歌</h3>
+    </div>
+    <div class="animal-stage" id="animalStage">
+        <!-- JS 随机生成动物 -->
+    </div>
+    <div class="immersive-controls">
+        <button class="ctrl-btn" onclick="switchView('player')" style="background:transparent; box-shadow:none; width:40px; height:40px;">
+            <svg style="fill:#555;" viewBox="0 0 24 24"><path d="M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z"/></svg>
+        </button>
+        <button class="ctrl-btn play-btn" style="width:60px;height:60px;" onclick="togglePlay()">
+            <svg id="playIcon2" viewBox="0 0 24 24" style="fill:white;"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button class="ctrl-btn" onclick="nextSong()" style="background:transparent; box-shadow:none; width:40px; height:40px;">
+            <svg style="fill:#555;" viewBox="0 0 24 24"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+        </button>
+    </div>
+</div>
+<audio id="audioPlayer"></audio>
+<script>
+    // --- 数据与状态管理 ---
+    let playlist = [];
+    let currentSongIndex = -1;
+    let isPlaying = false;
+    const audio = document.getElementById('audioPlayer');
+    const playIcon = document.getElementById('playIcon');
+    const playIcon2 = document.getElementById('playIcon2');
+    const vinyl = document.getElementById('vinyl');
+    const tonearm = document.getElementById('tonearm');
+    // --- Android 桥接模拟 (实际运行在Android WebView中自动生效) ---
+    function getAndroidSongs() {
+        if (window.AndroidMusic && window.AndroidMusic.getSongs) {
+            // 实际Android环境: 调用原生方法获取本地JSON字符串并解析
+            return JSON.parse(window.AndroidMusic.getSongs());
+        } else {
+            // 浏览器测试Mock数据
+            return [
+                { id: 1, title: "小燕子", artist: "经典儿歌", path: "file:///storage/emulated/0/Music/1.mp3" },
+                { id: 2, title: "两只老虎", artist: "童谣", path: "file:///storage/emulated/0/Music/2.mp3" },
+                { id: 3, title: "拔萝卜", artist: "儿童合唱", path: "file:///storage/emulated/0/Music/3.mp3" }
+            ];
+        }
+    }
+    // --- 初始化 ---
+    function initPlayer() {
+        playlist = getAndroidSongs();
+        renderList();
+    }
+    function renderList() {
+        const container = document.getElementById('songListContainer');
+        container.innerHTML = '';
+        playlist.forEach((song, index) => {
+            const item = document.createElement('div');
+            item.className = `song-item ${index === currentSongIndex ? 'active' : ''}`;
+            item.innerHTML = `
+                <div class="song-num">${index + 1}</div>
+                <div class="song-info">
+                    <div class="title">${song.title}</div>
+                    <div class="artist">${song.artist}</div>
+                </div>
+            `;
+            item.onclick = () => playSong(index);
+            container.appendChild(item);
+        });
+    }
+    // --- 视图切换 ---
+    function switchView(target) {
+        const listView = document.getElementById('list-view');
+        const playerView = document.getElementById('player-view');
+        const immersiveView = document.getElementById('immersive-view');
+        if (target === 'list') {
+            listView.classList.remove('hidden-left');
+            playerView.classList.add('hidden-right');
+            immersiveView.classList.add('hidden-right');
+        } else if (target === 'player') {
+            listView.classList.add('hidden-left');
+            playerView.classList.remove('hidden-right');
+            immersiveView.classList.add('hidden-right');
+        } else if (target === 'immersive') {
+            listView.classList.add('hidden-left');
+            playerView.classList.add('hidden-right');
+            immersiveView.classList.remove('hidden-right');
+            generateRandomAnimals(); // 进入沉浸式时生成动物
+        }
+    }
+    // --- 播放逻辑 ---
+    function playSong(index) {
+        currentSongIndex = index;
+        const song = playlist[index];
+        // 实际环境中，直接使用本地路径
+        audio.src = song.path;
+        audio.play().catch(e => console.log("自动播放受限:", e));
+        isPlaying = true;
+        updateUI();
+        renderList(); // 更新列表高亮
+        document.getElementById('nowPlayingTitle').innerText = song.title;
+        document.getElementById('nowPlayingArtist').innerText = song.artist;
+        document.getElementById('immersiveTitle').innerText = `正在播放：${song.title}`;
+        switchView('player');
+    }
+    function togglePlay() {
+        if (currentSongIndex === -1) return;
+        if (isPlaying) {
+            audio.pause();
+        } else {
+            audio.play();
+        }
+        isPlaying = !isPlaying;
+        updateUI();
+    }
+    function nextSong() {
+        if (currentSongIndex === -1) return;
+        playSong((currentSongIndex + 1) % playlist.length);
+    }
+    function prevSong() {
+        if (currentSongIndex === -1) return;
+        playSong((currentSongIndex - 1 + playlist.length) % playlist.length);
+    }
+    function updateUI() {
+        const playPath = '<path d="M8 5v14l11-7z"/>';
+        const pausePath = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+        playIcon.innerHTML = isPlaying ? pausePath : playPath;
+        playIcon2.innerHTML = isPlaying ? pausePath : playPath;
+        vinyl.classList.toggle('playing', isPlaying);
+        tonearm.classList.toggle('playing', isPlaying);
+    }
+    // --- 进度条与时间 ---
+    audio.addEventListener('timeupdate', () => {
+        const percent = (audio.currentTime / audio.duration) * 100 || 0;
+        document.getElementById('progressFilled').style.width = `${percent}%`;
+        document.getElementById('currentTime').innerText = formatTime(audio.currentTime);
+        document.getElementById('durationTime').innerText = formatTime(audio.duration);
+    });
+    audio.addEventListener('ended', nextSong);
+    function seek(e) {
+        const bar = document.getElementById('progressBar');
+        const percent = (e.clientX - bar.getBoundingClientRect().left) / bar.offsetWidth;
+        audio.currentTime = percent * audio.duration;
+    }
+    function formatTime(sec) {
+        if (isNaN(sec)) return '0:00';
+        const m = Math.floor(sec / 60);
+        const s = Math.floor(sec % 60);
+        return `${m}:${s < 10 ? '0' + s : s}`;
+    }
+    // --- 沉浸式动物生成器 ---
+    const animalSVGs = {
+        rabbit: `<svg viewBox="0 0 100 120" xmlns="http://www.w3.org/2000/svg">
+            <ellipse cx="50" cy="110" rx="30" ry="10" fill="rgba(0,0,0,0.1)"/>
+            <rect x="30" y="80" width="15" height="30" rx="5" fill="#fff" stroke="#ddd"/>
+            <rect x="55" y="80" width="15" height="30" rx="5" fill="#fff" stroke="#ddd"/>
+            <circle cx="50" cy="60" r="35" fill="#fff" stroke="#ddd"/>
+            <ellipse cx="35" cy="25" rx="8" ry="25" fill="#fff" stroke="#ddd"/>
+            <ellipse cx="65" cy="25" rx="8" ry="25" fill="#fff" stroke="#ddd"/>
+            <ellipse cx="35" cy="25" rx="3" ry="15" fill="#FFB6C1"/>
+            <ellipse cx="65" cy="25" rx="3" ry="15" fill="#FFB6C1"/>
+            <circle cx="38" cy="55" r="4" fill="#333"/>
+            <circle cx="62" cy="55" r="4" fill="#333"/>
+            <circle cx="50" cy="65" r="3" fill="#FFB6C1"/>
+            <path d="M45 72 Q50 76 55 72" stroke="#333" stroke-width="2" fill="none"/>
+        </svg>`,
+        bear: `<svg viewBox="0 0 100 120" xmlns="http://www.w3.org/2000/svg">
+            <ellipse cx="50" cy="110" rx="30" ry="10" fill="rgba(0,0,0,0.1)"/>
+            <rect x="30" y="80" width="15" height="30" rx="5" fill="#8B4513"/>
+            <rect x="55" y="80" width="15" height="30" rx="5" fill="#8B4513"/>
+            <circle cx="50" cy="60" r="35" fill="#A0522D"/>
+            <circle cx="25" cy="30" r="12" fill="#8B4513"/>
+            <circle cx="75" cy="30" r="12" fill="#8B4513"/>
+            <circle cx="25" cy="30" r="6" fill="#D2B48C"/>
+            <circle cx="75" cy="30" r="6" fill="#D2B48C"/>
+            <circle cx="38" cy="55" r="4" fill="#333"/>
+            <circle cx="62" cy="55" r="4" fill="#333"/>
+            <ellipse cx="50" cy="65" rx="7" ry="5" fill="#D2B48C"/>
+            <path d="M45 72 Q50 76 55 72" stroke="#333" stroke-width="2" fill="none"/>
+        </svg>`,
+        cat: `<svg viewBox="0 0 100 120" xmlns="http://www.w3.org/2000/svg">
+            <ellipse cx="50" cy="110" rx="30" ry="10" fill="rgba(0,0,0,0.1)"/>
+            <rect x="30" y="80" width="15" height="30" rx="5" fill="#FFA500"/>
+            <rect x="55" y="80" width="15" height="30" rx="5" fill="#FFA500"/>
+            <circle cx="50" cy="60" r="35" fill="#FFD700"/>
+            <polygon points="25,35 35,10 45,35" fill="#FFD700"/>
+            <polygon points="55,35 65,10 75,35" fill="#FFD700"/>
+            <polygon points="28,32 35,18 42,32" fill="#FFB6C1"/>
+            <polygon points="58,32 65,18 72,32" fill="#FFB6C1"/>
+            <circle cx="38" cy="55" r="4" fill="#00BFFF"/>
+            <circle cx="62" cy="55" r="4" fill="#00BFFF"/>
+            <polygon points="48,65 52,65 50,70" fill="#FF69B4"/>
+            <path d="M45 72 Q50 76 55 72" stroke="#333" stroke-width="2" fill="none"/>
+            <line x1="30" y1="65" x2="10" y2="60" stroke="#333"/>
+            <line x1="30" y1="68" x2="10" y2="70" stroke="#333"/>
+            <line x1="70" y1="65" x2="90" y2="60" stroke="#333"/>
+            <line x1="70" y1="68" x2="90" y2="70" stroke="#333"/>
+        </svg>`
+    };
+    function generateRandomAnimals() {
+        const stage = document.getElementById('animalStage');
+        stage.innerHTML = ''; // 清空旧动物
+        const keys = Object.keys(animalSVGs);
+        const positions = ['pos-1', 'pos-2', 'pos-3'];
+        // 随机打乱位置顺序，确保每次展示不同排列
+        positions.sort(() => Math.random() - 0.5);
+        for (let i = 0; i < 3; i++) {
+            const randomAnimal = keys[Math.floor(Math.random() * keys.length)];            const animalEl = document.createElement('div');
+            animalEl.className = `animal ${positions[i]}`;
+            animalEl.innerHTML = animalSVGs[randomAnimal];
+            stage.appendChild(animalEl);
+        }
+    }
+
+    // --- 音频加载错误处理（适配Android本地文件播放） ---
+    audio.addEventListener('error', (e) => {
+        console.error('音频播放错误:', e);
+        // Android环境下提示原生层文件读取问题
+        if (window.AndroidMusic && window.AndroidMusic.showToast) {
+            window.AndroidMusic.showToast('无法播放该音频文件，请检查文件路径或权限');
+        } else {
+            alert('无法播放该音频文件，请检查文件路径！');
+        }
+    });
+
+    // --- 页面加载完成后初始化播放器 ---
+    window.addEventListener('DOMContentLoaded', () => {
+        initPlayer();
+        // 解决Android WebView自动播放限制（需原生层配合授予权限）
+        document.addEventListener('click', () => {
+            if (currentSongIndex !== -1 && !isPlaying) {
+                audio.play().catch(e => console.log('手动触发播放:', e));
+            }
+        }, { once: true });
+    });
+</script>
+</body>
+</html>
