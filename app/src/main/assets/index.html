@@ -692,6 +692,26 @@
 
   <!-- ══ 选股页 ══ -->
   <div class="page" id="page-screen">
+    
+    <!-- 盘后数据下载 -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">盘后数据下载</div>
+        <div style="font-size:10px;color:var(--text-dim);" id="downloadStatusText">未下载</div>
+      </div>
+      <div style="padding:10px 14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <div style="font-size:11px;color:var(--text-sub);" id="downloadEstimateInfo">准备下载真实市场数据</div>
+          <button onclick="estimateDownload()" style="padding:4px 8px; border-radius:4px; background:var(--bg-deep); border:1px solid var(--border); color:var(--text-prime); font-size:11px; cursor:pointer;">估算大小</button>
+        </div>
+        <div style="height:6px; background:var(--bg-deep); border-radius:3px; overflow:hidden; margin-bottom:8px; display:none;" id="downloadProgressContainer">
+          <div id="downloadProgressBar" style="height:100%; background:linear-gradient(90deg, var(--accent-cyan), var(--accent-blue)); width:0%; transition:width 0.2s;"></div>
+        </div>
+        <div style="font-size:10px; color:var(--text-dim); text-align:center; margin-bottom:10px; display:none;" id="downloadPhaseText"></div>
+        <button id="downloadBtn" onclick="startDownload()" style="width:100%; padding:10px; background:linear-gradient(135deg, var(--accent-cyan), var(--accent-blue)); border:none; border-radius:8px; color:white; font-size:13px; font-weight:700; cursor:pointer; box-shadow:0 4px 12px rgba(0,229,255,0.25);">⬇ 下载历史数据</button>
+      </div>
+    </div>
+
     <div class="card">
       <div class="card-header">
         <div class="card-title">通达信选股公式</div>
@@ -1351,6 +1371,22 @@ const SCREEN_PARAMS = {};
 function runScreener() {
   const btn = document.getElementById('scanBtn');
   const btnText = document.getElementById('scanBtnText');
+  
+  if (IS_ANDROID) {
+    const statusStr = Android.getDownloadStatus();
+    try {
+      const status = JSON.parse(statusStr);
+      if (status.stockCount === 0 || status.barCount === 0) {
+        showToast('请先下载盘后数据');
+        return;
+      }
+      if (status.downloading) {
+        showToast('数据正在下载中，请稍后');
+        return;
+      }
+    } catch(e) {}
+  }
+
   btnText.innerHTML = '<span class="loading-dots"><span></span><span></span><span></span></span> 扫描中...';
   btn.disabled = true;
 
@@ -1368,32 +1404,8 @@ function runScreener() {
   });
 
   if (IS_ANDROID) {
-    // ── Android模式：从Java层拉取真实市场数据 ──
-    window._scanPool = [];
-    window._scanReceived = 0;
-    window._scanExpected = 0;
-
-    if (SCREEN_PARAMS.boardFilter !== 'sz') {
-      window._scanExpected++;
-      Android.fetchStockList('sh', 1);
-    }
-    if (SCREEN_PARAMS.boardFilter !== 'sh') {
-      window._scanExpected++;
-      Android.fetchStockList('sz', 1);
-    }
-    // 超时保护：8秒后若未收到数据，降级到模拟池
-    window._scanTimeout = setTimeout(() => {
-      if (window._scanPool.length === 0) {
-        addThinkLine('warn', '[MKT] 行情接口超时，使用本地模拟数据');
-        runScreenerOnPool(STOCK_POOL.map(s => ({
-          ...s, changePct: (Math.random()-0.47)*5,
-          high: s.price*1.02, low: s.price*0.98, open: s.price*0.99,
-          preClose: s.price*0.99, cap: s.cap,
-        })));
-      }
-    }, 8000);
-
-    addThinkLine('sys', '[MKT] 正在拉取沪深主板实时行情...');
+    addThinkLine('sys', '[MKT] 正在调用本地真实数据进行选股...');
+    Android.runRealScreener(JSON.stringify(SCREEN_PARAMS));
   } else {
     // ── H5模式：使用模拟数据池 ──
     setTimeout(() => {
@@ -2925,6 +2937,121 @@ function showAIStatusInThinkStream(ag) {
   }
   addThinkLine('info', '[AI ] 专家规则模式运行中');
 }
+// ═══════════════════════════════════════════════════════════
+// 数据下载与选股集成
+// ═══════════════════════════════════════════════════════════
+function estimateDownload() {
+  if (!IS_ANDROID) { showToast('仅App端支持'); return; }
+  const params = {
+    minPrice: +document.getElementById('minPrice').value || 3,
+    maxPrice: +document.getElementById('maxPrice').value || 50,
+    minCap:   +document.getElementById('minCap').value   || 20,
+    maxCap:   +document.getElementById('maxCap').value   || 320,
+    exCY:  document.getElementById('tagCY').classList.contains('active'),
+    exKC:  document.getElementById('tagKC').classList.contains('active'),
+    exST:  document.getElementById('tagST').classList.contains('active')
+  };
+  const resStr = Android.estimateDownloadSize(JSON.stringify(params));
+  try {
+    const res = JSON.parse(resStr);
+    if (res.sizeStr) {
+      document.getElementById('downloadEstimateInfo').innerHTML = 
+        `候选 <span style="color:var(--accent-gold)">${res.stockCount}</span>支, 网络 ${res.sizeStr}`;
+    }
+  } catch(e) {}
+}
+
+function startDownload() {
+  if (!IS_ANDROID) { showToast('仅App端支持'); return; }
+  const params = {
+    minPrice: +document.getElementById('minPrice').value || 3,
+    maxPrice: +document.getElementById('maxPrice').value || 50,
+    minCap:   +document.getElementById('minCap').value   || 20,
+    maxCap:   +document.getElementById('maxCap').value   || 320,
+    exCY:  document.getElementById('tagCY').classList.contains('active'),
+    exKC:  document.getElementById('tagKC').classList.contains('active'),
+    exST:  document.getElementById('tagST').classList.contains('active'),
+    boardFilter: document.getElementById('boardFilter').value
+  };
+  
+  document.getElementById('downloadBtn').disabled = true;
+  document.getElementById('downloadBtn').style.opacity = '0.5';
+  document.getElementById('downloadProgressContainer').style.display = 'block';
+  document.getElementById('downloadPhaseText').style.display = 'block';
+  document.getElementById('downloadProgressBar').style.width = '0%';
+  
+  addThinkLine('sys', '[MKT] 开始下载历史行情数据...');
+  Android.startMarketDataDownload(JSON.stringify(params));
+}
+
+window.onDownloadProgress = function(current, total, phase) {
+  document.getElementById('downloadProgressBar').style.width = current + '%';
+  document.getElementById('downloadPhaseText').textContent = phase;
+};
+
+window.onDownloadComplete = function(stockCount, barCount) {
+  showToast('数据下载完成');
+  document.getElementById('downloadPhaseText').textContent = '下载完成';
+  document.getElementById('downloadBtn').disabled = false;
+  document.getElementById('downloadBtn').style.opacity = '1';
+  document.getElementById('downloadBtn').innerHTML = '⬇ 重新下载最新数据';
+  document.getElementById('downloadStatusText').textContent = '已就绪 (' + stockCount + '支)';
+  
+  setTimeout(() => {
+    document.getElementById('downloadProgressContainer').style.display = 'none';
+    document.getElementById('downloadPhaseText').style.display = 'none';
+  }, 3000);
+  addThinkLine('good', `[MKT] 下载完成，共 ${stockCount} 支，${barCount} 条K线`);
+};
+
+window.onDownloadError = function(msg) {
+  showToast('下载出错: ' + msg);
+  document.getElementById('downloadBtn').disabled = false;
+  document.getElementById('downloadBtn').style.opacity = '1';
+  document.getElementById('downloadPhaseText').textContent = '下载失败';
+};
+
+window.onScreenerResult = function(jsonStr) {
+  try {
+    const results = JSON.parse(jsonStr);
+    STATE.screenResults = results;
+    renderResults(results);
+    updateHomeSignals(results);
+    
+    document.getElementById('screenResultSection').style.display = 'block';
+    document.getElementById('resultCount').textContent = results.length;
+    document.getElementById('screenTime').textContent =
+        new Date().toLocaleTimeString('zh-CN', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+        
+    document.getElementById('scanBtnText').textContent = '⚡ 运行选股';
+    document.getElementById('scanBtn').disabled = false;
+    
+    addThinkLine('good', `[SCR] 真实数据筛选完成：${results.length} 支通过公式`);
+    triggerAIAnalysis(results);
+  } catch(e) {
+    window.onScreenerError('解析结果失败');
+  }
+};
+
+window.onScreenerError = function(msg) {
+  showToast('选股失败: ' + msg);
+  document.getElementById('scanBtnText').textContent = '⚡ 运行选股';
+  document.getElementById('scanBtn').disabled = false;
+  addThinkLine('bad', '[SCR] 选股出错: ' + msg);
+};
+
+function initDownloadStatus() {
+  if (IS_ANDROID) {
+    try {
+      const status = JSON.parse(Android.getDownloadStatus());
+      if (status.stockCount > 0 && status.barCount > 0) {
+        document.getElementById('downloadStatusText').textContent = '已就绪 (' + status.stockCount + '支)';
+        document.getElementById('downloadBtn').innerHTML = '⬇ 重新下载最新数据';
+      }
+    } catch(e){}
+  }
+}
+
 loadState();
 updateAssetDisplay();
 renderPositions();
@@ -2954,6 +3081,7 @@ setTimeout(()=>{
     startRealTimeRefresh();
     // 启动AI状态轮询（模型在后台加载，完成后自动更新思考流）
     Android.startAIStatusPolling();
+    initDownloadStatus();
     updateDetailPanel({code:'000001',name:'上证指数',
       price:0,preClose:0,open:0,high:0,low:0,changePct:0,change:0});
   }else{
@@ -2962,7 +3090,7 @@ setTimeout(()=>{
       price:3312.5,preClose:3298.1,open:3300.2,
       high:3318.7,low:3295.4,changePct:0.44,change:14.4});
   }
-  setTimeout(()=>addThinkLine('info','[INF] 就绪，搜索股票或运行选股'),800);
+  setTimeout(()=>addThinkLine('info','[INF] 就绪，请先下载盘后数据再选股'),800);
 },150);
 
 window.addEventListener('resize',()=>{drawKline();});

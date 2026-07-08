@@ -36,6 +36,10 @@ public class StockMasterApp extends Application {
         DatabaseManager.init(this);
         Log.i(TAG, "DatabaseManager initialized");
 
+        // 初始化行情数据管理器
+        com.monsieurmahjong.iqoowang.util.MarketDataManager.init(this);
+        Log.i(TAG, "MarketDataManager initialized");
+
         // 注册每日收盘快照 WorkManager（15:05 后触发）
         scheduleDailySnapshot();
 

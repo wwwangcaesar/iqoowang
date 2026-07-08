@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -22,10 +23,11 @@ import okhttp3.Request;
 import okhttp3.Response;
 
 /**
- * 东方财富行情接口 — OkHttp版
+ * 股票行情接口 — 腾讯财经API版
  *
- * 使用东方财富公开接口（无需Key）
- * 全部异步，回调切回主线程
+ * 使用腾讯财经公开接口（无需Key），替代已被封锁的东方财富push2接口。
+ * 数据源：web.ifzq.gtimg.cn（K线）+ qt.gtimg.cn（实时行情）
+ * 全部异步，回调切回主线程。
  */
 public class EastMoneyApi {
 
@@ -33,21 +35,9 @@ public class EastMoneyApi {
 
     // ── OkHttp 单例客户端 ──
     private static final OkHttpClient HTTP = new OkHttpClient.Builder()
-            .connectTimeout(8, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
-            .writeTimeout(5, TimeUnit.SECONDS)
-            .addInterceptor(chain -> {
-                // 统一加请求头，避免被东方财富拦截
-                Request req = chain.request().newBuilder()
-                        .header("User-Agent",
-                                "Mozilla/5.0 (Linux; Android 13; V2324A) " +
-                                        "AppleWebKit/537.36 (KHTML, like Gecko) " +
-                                        "Chrome/120.0.0.0 Mobile Safari/537.36")
-                        .header("Referer", "https://www.eastmoney.com/")
-                        .header("Accept", "application/json, text/plain, */*")
-                        .build();
-                return chain.proceed(req);
-            })
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
             .build();
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
@@ -59,39 +49,23 @@ public class EastMoneyApi {
     }
 
     // ──────────────────────────────────────────
-    // URL 模板
+    // URL 模板（腾讯财经）
     // ──────────────────────────────────────────
 
-    // K线（复权）：klt=101日K 102周K 103月K 1/5/15/30/60分钟
-    private static final String URL_KLINE =
-            "https://push2his.eastmoney.com/api/qt/stock/kline/get" +
-                    "?cb=&fields1=f1,f2,f3,f4,f5,f6" +
-                    "&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61" +
-                    "&klt=%d&fqt=1&secid=%s.%s&beg=0&end=20500101&lmt=%d" +
-                    "&ut=fa5fd1943c7b386f172d6893dbfba10b";
+    // 日/周/月K线（前复权 qfq）
+    // 参数: 市场+代码, 周期(day/week/month), 条数
+    private static final String URL_KLINE_DAY =
+            "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%s%s,%s,,,%d,qfq";
 
-    // 单股快照
-    private static final String URL_QUOTE =
-            "https://push2.eastmoney.com/api/qt/stock/get" +
-                    "?ut=fa5fd1943c7b386f172d6893dbfba10b&invt=2&fltt=2" +
-                    "&fields=f43,f44,f45,f46,f47,f48,f57,f58,f107,f169,f170,f9" +
-                    "&secid=%s.%s";
+    // 分钟K线: m1/m5/m15/m30/m60
+    private static final String URL_KLINE_MIN =
+            "https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=%s%s,%s,,%d";
 
-    // 批量行情（持仓刷新）
-    private static final String URL_BATCH =
-            "https://push2.eastmoney.com/api/qt/ulist.np/get" +
-                    "?fltt=2&invt=2&fields=f2,f3,f4,f12,f14,f5" +
-                    "&secids=%s&ut=fa5fd1943c7b386f172d6893dbfba10b";
+    // 实时行情（批量，每次最多约80个代码）
+    private static final String URL_QUOTE_BASE = "https://qt.gtimg.cn/q=";
 
-    // 股票列表（选股扫描）
-    // fs: m:1+t:2,m:1+t:23 = 沪市主板；m:0+t:6,m:0+t:80 = 深市主板
-    private static final String URL_LIST =
-            "https://push2.eastmoney.com/api/qt/clist/get" +
-                    "?pn=%d&pz=50&po=1&np=1&ut=bd1d9428105693ce9dcd&fltt=2&invt=2&fid=f3" +
-                    "&fs=%s&fields=f12,f14,f2,f3,f15,f16,f17,f18,f20,f9";
-
-    private static final String FS_SH = "m:1+t:2,m:1+t:23";
-    private static final String FS_SZ = "m:0+t:6,m:0+t:80";
+    // 股票列表每页大小
+    private static final int LIST_PAGE_SIZE = 80;
 
     // ──────────────────────────────────────────
     // 数据模型
@@ -102,8 +76,8 @@ public class EastMoneyApi {
         public double price, open, high, low, preClose, change, changePct, pe;
         public long volume;
         public double turnover;
-        // 复用pe字段存储流通市值（亿），避免增加字段
-        public double cap; // 亿
+        // 流通市值（亿）
+        public double cap;
     }
 
     public static class KlineBar {
@@ -134,13 +108,17 @@ public class EastMoneyApi {
     }
 
     // ──────────────────────────────────────────
-    // K线数据
+    // K线数据（腾讯财经）
     // ──────────────────────────────────────────
 
     public void fetchKline(String code, String period, int limit, KlineCallback cb) {
-        int klt = periodToKlt(period);
-        String mkt = getMarket(code);
-        String url = String.format(URL_KLINE, klt, mkt, code, limit);
+        String mkt = getTencentMarket(code);
+        String tPeriod = toTencentPeriod(period);
+        boolean isMinute = tPeriod.startsWith("m");
+
+        String url = isMinute
+                ? String.format(Locale.US, URL_KLINE_MIN, mkt, code, tPeriod, limit)
+                : String.format(Locale.US, URL_KLINE_DAY, mkt, code, tPeriod, limit);
 
         enqueue(url, new Callback() {
             @Override
@@ -158,29 +136,58 @@ public class EastMoneyApi {
                     }
                     String body = r.body().string();
                     JSONObject root = new JSONObject(body);
-                    JSONObject data = root.getJSONObject("data");
-                    String name = data.optString("name", code);
-                    JSONArray klines = data.getJSONArray("klines");
 
-                    List<KlineBar> bars = new ArrayList<>();
-                    for (int i = 0; i < klines.length(); i++) {
-                        // 字段顺序：日期,开,收,高,低,成交量,成交额,振幅,涨跌幅,涨跌额,换手率
-                        String[] p = klines.getString(i).split(",");
-                        if (p.length < 11) continue;
-                        KlineBar bar = new KlineBar();
-                        bar.date      = p[0];
-                        bar.open      = d(p[1]);
-                        bar.close     = d(p[2]);
-                        bar.high      = d(p[3]);
-                        bar.low       = d(p[4]);
-                        bar.volume    = l(p[5]);
-                        bar.amount    = d(p[6]);
-                        bar.amplitude = d(p[7]);
-                        bar.changePct = d(p[8]);
-                        bar.changeAmt = d(p[9]);
-                        bar.turnRate  = d(p[10]);
-                        bars.add(bar);
+                    int retCode = root.optInt("code", 0);
+                    if (retCode != 0) {
+                        String msg = root.optString("msg", "API error " + retCode);
+                        MAIN.post(() -> cb.onError(msg));
+                        return;
                     }
+
+                    JSONObject data = root.optJSONObject("data");
+                    if (data == null) {
+                        MAIN.post(() -> cb.onError("No data"));
+                        return;
+                    }
+
+                    String stockKey = mkt + code;
+                    JSONObject stockData = data.optJSONObject(stockKey);
+                    if (stockData == null) {
+                        MAIN.post(() -> cb.onError("No data for " + code));
+                        return;
+                    }
+
+                    // 从qt段获取股票名称
+                    String name = code;
+                    JSONObject qt = stockData.optJSONObject("qt");
+                    if (qt != null) {
+                        JSONArray qtArr = qt.optJSONArray(stockKey);
+                        if (qtArr != null && qtArr.length() > 1) {
+                            name = qtArr.optString(1, code);
+                        }
+                    }
+
+                    // 前收盘价（用于计算首根K线涨跌幅）
+                    double preClose = d(stockData.optString("prec", "0"));
+
+                    // 查找K线数组：优先用请求的周期名，再尝试常见key
+                    JSONArray klines = stockData.optJSONArray(tPeriod);
+                    if (klines == null || klines.length() == 0) {
+                        String[] fallbackKeys = {"day", "week", "month",
+                                "qfqday", "qfqweek", "qfqmonth"};
+                        for (String k : fallbackKeys) {
+                            klines = stockData.optJSONArray(k);
+                            if (klines != null && klines.length() > 0) break;
+                        }
+                    }
+
+                    if (klines == null || klines.length() == 0) {
+                        MAIN.post(() -> cb.onError("No kline data"));
+                        return;
+                    }
+
+                    List<KlineBar> bars = parseTencentKlines(klines, preClose, isMinute);
+
                     final String n = name;
                     MAIN.post(() -> cb.onSuccess(bars, n));
                 } catch (Exception e) {
@@ -192,33 +199,29 @@ public class EastMoneyApi {
     }
 
     // ──────────────────────────────────────────
-    // 单股行情快照
+    // 单股行情快照（腾讯实时行情）
     // ──────────────────────────────────────────
 
     public void fetchQuote(String code, QuoteCallback cb) {
-        String url = String.format(URL_QUOTE, getMarket(code), code);
+        String mkt = getTencentMarket(code);
+        String url = URL_QUOTE_BASE + mkt + code;
+
         enqueue(url, new Callback() {
-            @Override public void onFailure(Call call, IOException e) {
+            @Override
+            public void onFailure(Call call, IOException e) {
                 MAIN.post(() -> cb.onError(e.getMessage()));
             }
-            @Override public void onResponse(Call call, Response resp) throws IOException {
+
+            @Override
+            public void onResponse(Call call, Response resp) throws IOException {
                 try (Response r = resp) {
-                    JSONObject data = new JSONObject(r.body().string()).getJSONObject("data");
-                    QuoteData q = new QuoteData();
-                    q.code      = code;
-                    q.market    = getMarket(code).equals("1") ? "sh" : "sz";
-                    q.name      = data.optString("f58");
-                    // 东方财富价格乘以100存储
-                    q.price     = data.optDouble("f43", 0) / 100.0;
-                    q.open      = data.optDouble("f46", 0) / 100.0;
-                    q.high      = data.optDouble("f44", 0) / 100.0;
-                    q.low       = data.optDouble("f45", 0) / 100.0;
-                    q.changePct = data.optDouble("f170", 0) / 100.0;
-                    q.change    = data.optDouble("f169", 0) / 100.0;
-                    q.volume    = data.optLong("f47", 0);
-                    q.turnover  = data.optDouble("f48", 0);
-                    q.pe        = data.optDouble("f9", 0) / 100.0;
-                    MAIN.post(() -> cb.onSuccess(q));
+                    String body = r.body().string();
+                    QuoteData q = parseQuoteLine(body);
+                    if (q != null) {
+                        MAIN.post(() -> cb.onSuccess(q));
+                    } else {
+                        MAIN.post(() -> cb.onError("Quote parse failed for " + code));
+                    }
                 } catch (Exception e) {
                     MAIN.post(() -> cb.onError(e.getMessage()));
                 }
@@ -235,28 +238,28 @@ public class EastMoneyApi {
         StringBuilder sb = new StringBuilder();
         for (String c : codes) {
             if (sb.length() > 0) sb.append(',');
-            sb.append(getMarket(c)).append('.').append(c);
+            sb.append(getTencentMarket(c)).append(c);
         }
-        String url = String.format(URL_BATCH, sb.toString());
+        String url = URL_QUOTE_BASE + sb;
+
         enqueue(url, new Callback() {
-            @Override public void onFailure(Call call, IOException e) {
+            @Override
+            public void onFailure(Call call, IOException e) {
                 MAIN.post(() -> cb.onError(e.getMessage()));
             }
-            @Override public void onResponse(Call call, Response resp) throws IOException {
+
+            @Override
+            public void onResponse(Call call, Response resp) throws IOException {
                 try (Response r = resp) {
-                    JSONArray diff = new JSONObject(r.body().string())
-                            .getJSONObject("data").getJSONArray("diff");
+                    String body = r.body().string();
                     Map<String, QuoteData> result = new HashMap<>();
-                    for (int i = 0; i < diff.length(); i++) {
-                        JSONObject item = diff.getJSONObject(i);
-                        QuoteData q = new QuoteData();
-                        q.code      = item.optString("f12");
-                        q.name      = item.optString("f14");
-                        q.price     = item.optDouble("f2", 0) / 100.0;
-                        q.changePct = item.optDouble("f3", 0) / 100.0;
-                        q.change    = item.optDouble("f4", 0) / 100.0;
-                        q.volume    = item.optLong("f5", 0);
-                        result.put(q.code, q);
+                    // 每行格式: v_szXXXXXX="字段1~字段2~...";
+                    String[] lines = body.split(";\\s*");
+                    for (String line : lines) {
+                        QuoteData q = parseQuoteLine(line);
+                        if (q != null && q.code != null && !q.code.isEmpty()) {
+                            result.put(q.code, q);
+                        }
                     }
                     MAIN.post(() -> cb.onSuccess(result));
                 } catch (Exception e) {
@@ -271,44 +274,42 @@ public class EastMoneyApi {
     // ──────────────────────────────────────────
 
     public void fetchStockList(String market, int page, StockListCallback cb) {
-        String fs  = "sh".equals(market) ? FS_SH : FS_SZ;
-        String url = String.format(URL_LIST, page,
-                fs.replace(",", "%2C").replace("+", "%2B"));
+        List<String> allCodes = generateCodes(market);
+        int start = page * LIST_PAGE_SIZE;
+        if (start >= allCodes.size()) {
+            MAIN.post(() -> cb.onSuccess(new ArrayList<>()));
+            return;
+        }
+        int end = Math.min(start + LIST_PAGE_SIZE, allCodes.size());
+        List<String> batch = allCodes.subList(start, end);
+
+        String mkt = "sh".equals(market) ? "sh" : "sz";
+        StringBuilder sb = new StringBuilder();
+        for (String c : batch) {
+            if (sb.length() > 0) sb.append(',');
+            sb.append(mkt).append(c);
+        }
+        String url = URL_QUOTE_BASE + sb;
 
         enqueue(url, new Callback() {
-            @Override public void onFailure(Call call, IOException e) {
+            @Override
+            public void onFailure(Call call, IOException e) {
                 Log.e(TAG, "fetchStockList fail", e);
                 MAIN.post(() -> cb.onError(e.getMessage()));
             }
-            @Override public void onResponse(Call call, Response resp) throws IOException {
-                try (Response r = resp) {
-                    JSONObject root = new JSONObject(r.body().string());
-                    JSONObject dataObj = root.optJSONObject("data");
-                    if (dataObj == null) {
-                        MAIN.post(() -> cb.onError("data null"));
-                        return;
-                    }
-                    JSONArray diff = dataObj.optJSONArray("diff");
-                    if (diff == null) { MAIN.post(() -> cb.onSuccess(new ArrayList<>())); return; }
 
+            @Override
+            public void onResponse(Call call, Response resp) throws IOException {
+                try (Response r = resp) {
+                    String body = r.body().string();
                     List<QuoteData> stocks = new ArrayList<>();
-                    for (int i = 0; i < diff.length(); i++) {
-                        JSONObject item = diff.getJSONObject(i);
-                        QuoteData q = new QuoteData();
-                        q.code      = item.optString("f12");
-                        q.name      = item.optString("f14");
-                        q.price     = item.optDouble("f2",  0) / 100.0;
-                        q.changePct = item.optDouble("f3",  0) / 100.0;
-                        q.high      = item.optDouble("f15", 0) / 100.0;
-                        q.low       = item.optDouble("f16", 0) / 100.0;
-                        q.open      = item.optDouble("f17", 0) / 100.0;
-                        q.preClose  = item.optDouble("f18", 0) / 100.0;
-                        // f20 = 流通市值（元），转亿
-                        q.cap       = item.optDouble("f20", 0) / 1e8;
-                        q.market    = market;
-                        // 过滤无效数据
-                        if (q.code.isEmpty() || q.price <= 0) continue;
-                        stocks.add(q);
+                    String[] lines = body.split(";\\s*");
+                    for (String line : lines) {
+                        QuoteData q = parseQuoteLine(line);
+                        if (q != null && q.price > 0) {
+                            q.market = market;
+                            stocks.add(q);
+                        }
                     }
                     MAIN.post(() -> cb.onSuccess(stocks));
                 } catch (Exception e) {
@@ -320,7 +321,112 @@ public class EastMoneyApi {
     }
 
     // ──────────────────────────────────────────
-    // 工具
+    // 解析工具
+    // ──────────────────────────────────────────
+
+    /**
+     * 解析腾讯K线数组
+     * 日/周/月格式: [日期, 开盘, 收盘, 最高, 最低, 成交量]
+     * 分钟格式:     [时间戳, 开盘, 收盘, 最高, 最低, 成交量, {}, 换手率]
+     */
+    private List<KlineBar> parseTencentKlines(JSONArray klines, double preClose, boolean isMinute) {
+        List<KlineBar> bars = new ArrayList<>();
+        double prevClose = preClose;
+
+        for (int i = 0; i < klines.length(); i++) {
+            JSONArray row = klines.optJSONArray(i);
+            if (row == null || row.length() < 6) continue;
+
+            KlineBar bar = new KlineBar();
+            String rawDate = row.optString(0, "");
+            bar.date = isMinute ? formatMinuteDate(rawDate) : rawDate;
+            bar.open = d(row.optString(1, "0"));
+            bar.close = d(row.optString(2, "0"));
+            bar.high = d(row.optString(3, "0"));
+            bar.low = d(row.optString(4, "0"));
+            bar.volume = (long) d(row.optString(5, "0"));
+            bar.amount = 0;
+
+            // 计算涨跌幅、涨跌额、振幅
+            if (prevClose > 0 && bar.close > 0) {
+                bar.changePct = (bar.close - prevClose) / prevClose * 100;
+                bar.changeAmt = bar.close - prevClose;
+                bar.amplitude = (bar.high - bar.low) / prevClose * 100;
+            }
+
+            // 分钟K线第8个字段是换手率
+            if (isMinute && row.length() >= 8) {
+                bar.turnRate = d(row.optString(7, "0"));
+            }
+
+            if (bar.close > 0) prevClose = bar.close;
+            bars.add(bar);
+        }
+        return bars;
+    }
+
+    /**
+     * 解析 qt.gtimg.cn 单行行情
+     * 格式: v_sz000001="51~平安银行~000001~10.50~10.29~10.25~1061049~...";
+     *
+     * 字段索引（以~分隔）:
+     *  1=名称, 2=代码, 3=现价, 4=昨收, 5=开盘,
+     *  6=成交量(手), 31=涨跌额, 32=涨跌幅(%),
+     *  33=最高, 34=最低, 37=成交额(万),
+     *  38=换手率(%), 39=市盈率,
+     *  44=总市值(亿), 45=流通市值(亿)
+     */
+    private QuoteData parseQuoteLine(String line) {
+        if (line == null || line.isEmpty()) return null;
+        int q1 = line.indexOf('"');
+        int q2 = line.lastIndexOf('"');
+        if (q1 < 0 || q2 <= q1) return null;
+        String content = line.substring(q1 + 1, q2);
+        if (content.isEmpty()) return null;
+
+        String[] f = content.split("~", -1);
+        if (f.length < 35) return null;
+
+        QuoteData q = new QuoteData();
+        q.code      = f[2];
+        q.name      = f[1];
+        q.market    = q.code.startsWith("6") ? "sh" : "sz";
+        q.price     = d(f[3]);
+        q.preClose  = d(f[4]);
+        q.open      = d(f[5]);
+        q.volume    = l(f[6]);
+        q.change    = d(f[31]);
+        q.changePct = d(f[32]);
+        q.high      = d(f[33]);
+        q.low       = d(f[34]);
+        if (f.length > 37) q.turnover = d(f[37]);
+        if (f.length > 39) q.pe       = d(f[39]);
+        if (f.length > 45) q.cap      = d(f[45]); // 流通市值(亿)
+        else if (f.length > 44) q.cap  = d(f[44]); // 总市值(亿)
+
+        return q;
+    }
+
+    /**
+     * 生成指定市场的全部可能股票代码
+     * sh: 600000-605999（沪市主板）, 688000-689999（科创板）
+     * sz: 000001-004999（深市主板）, 300000-301999（创业板）
+     */
+    private static List<String> generateCodes(String market) {
+        List<String> codes = new ArrayList<>();
+        if ("sh".equals(market)) {
+            for (int i = 600000; i <= 605999; i++) codes.add(String.valueOf(i));
+            for (int i = 688000; i <= 689999; i++) codes.add(String.valueOf(i));
+        } else {
+            for (int i = 1; i <= 4999; i++)
+                codes.add(String.format(Locale.US, "%06d", i));
+            for (int i = 300000; i <= 301999; i++) codes.add(String.valueOf(i));
+        }
+        return codes;
+    }
+
+    // ──────────────────────────────────────────
+    // 工具方法
     // ──────────────────────────────────────────
 
     private void enqueue(String url, Callback cb) {
@@ -328,22 +434,43 @@ public class EastMoneyApi {
         HTTP.newCall(req).enqueue(cb);
     }
 
+    /**
+     * 腾讯市场前缀: "sh"=上海, "sz"=深圳
+     */
+    public static String getTencentMarket(String code) {
+        if (code == null || code.isEmpty()) return "sz";
+        return code.startsWith("6") || code.startsWith("5") ? "sh" : "sz";
+    }
+
+    /**
+     * 保持向后兼容: "1"=上海, "0"=深圳
+     */
     public static String getMarket(String code) {
         if (code == null || code.isEmpty()) return "0";
         return code.startsWith("6") || code.startsWith("5") ? "1" : "0";
     }
 
-    private int periodToKlt(String period) {
+    private String toTencentPeriod(String period) {
         switch (period) {
-            case "1分":  return 1;
-            case "5分":  return 5;
-            case "15分": return 15;
-            case "30分": return 30;
-            case "60分": return 60;
-            case "周K":  return 102;
-            case "月K":  return 103;
-            default:     return 101; // 日K
+            case "1分":  return "m1";
+            case "5分":  return "m5";
+            case "15分": return "m15";
+            case "30分": return "m30";
+            case "60分": return "m60";
+            case "周K":  return "week";
+            case "月K":  return "month";
+            default:     return "day"; // 日K
         }
+    }
+
+    /** 分钟时间戳格式化: "202607060935" → "2026-07-06 09:35" */
+    private String formatMinuteDate(String compact) {
+        if (compact != null && compact.length() >= 12) {
+            return compact.substring(0, 4) + "-" + compact.substring(4, 6) + "-" +
+                    compact.substring(6, 8) + " " + compact.substring(8, 10) + ":" +
+                    compact.substring(10, 12);
+        }
+        return compact;
     }
 
     private double d(String s) {

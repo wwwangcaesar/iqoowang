@@ -158,7 +158,8 @@ public class StockBridge {
             }
             @Override
             public void onError(String msg) {
-                evalJs("window.onStockListError && window.onStockListError('" + msg + "')");
+                String esc = msg.replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r");
+                evalJs("window.onStockListError && window.onStockListError('" + esc + "')");
             }
         });
     }
@@ -361,6 +362,101 @@ public class StockBridge {
     @JavascriptInterface
     public void warmupAI() {
         mAgent.warmup();
+    }
+
+    // ══════════════════════════════════════════════
+    // 行情数据下载与选股接口
+    // ══════════════════════════════════════════════
+
+    @JavascriptInterface
+    public String estimateDownloadSize(String paramsJson) {
+        try {
+            JSONObject p = new JSONObject(paramsJson);
+            return MarketDataManager.get().estimateDownloadSize(
+                    p.optDouble("minPrice", 3.0),
+                    p.optDouble("maxPrice", 50.0),
+                    p.optDouble("minCap", 20.0),
+                    p.optDouble("maxCap", 320.0),
+                    p.optBoolean("exCY", true),
+                    p.optBoolean("exKC", true),
+                    p.optBoolean("exST", true)
+            );
+        } catch (Exception e) {
+            return "{}";
+        }
+    }
+
+    @JavascriptInterface
+    public void startMarketDataDownload(String paramsJson) {
+        try {
+            JSONObject p = new JSONObject(paramsJson);
+            MarketDataManager.get().startDownload(
+                    p.optDouble("minPrice", 3.0),
+                    p.optDouble("maxPrice", 50.0),
+                    p.optDouble("minCap", 20.0),
+                    p.optDouble("maxCap", 320.0),
+                    p.optBoolean("exCY", true),
+                    p.optBoolean("exKC", true),
+                    p.optBoolean("exST", true),
+                    p.optString("boardFilter", "all"),
+                    new MarketDataManager.DownloadCallback() {
+                        @Override
+                        public void onProgress(int current, int total, String phase) {
+                            String esc = phase.replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r");
+                            evalJs("window.onDownloadProgress && window.onDownloadProgress(" + current + "," + total + ",'" + esc + "')");
+                        }
+                        @Override
+                        public void onComplete(int stockCount, int barCount) {
+                            evalJs("window.onDownloadComplete && window.onDownloadComplete(" + stockCount + "," + barCount + ")");
+                        }
+                        @Override
+                        public void onError(String msg) {
+                            String esc = msg.replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r");
+                            evalJs("window.onDownloadError && window.onDownloadError('" + esc + "')");
+                        }
+                    }
+            );
+        } catch (Exception e) {
+            evalJs("window.onDownloadError && window.onDownloadError('参数错误')");
+        }
+    }
+
+    @JavascriptInterface
+    public void runRealScreener(String paramsJson) {
+        try {
+            JSONObject p = new JSONObject(paramsJson);
+            MarketDataManager.get().runRealScreener(
+                    p.optDouble("minPrice", 3.0),
+                    p.optDouble("maxPrice", 50.0),
+                    p.optDouble("minCap", 20.0),
+                    p.optDouble("maxCap", 320.0),
+                    p.optDouble("volMulti", 2.0),
+                    p.optBoolean("exCY", true),
+                    p.optBoolean("exKC", true),
+                    p.optBoolean("exST", true),
+                    p.optBoolean("exLT", true),
+                    p.optString("boardFilter", "all"),
+                    new MarketDataManager.ScreenCallback() {
+                        @Override
+                        public void onResult(String resultJson) {
+                            String esc = resultJson.replace("\\", "\\\\").replace("'", "\\'");
+                            evalJs("window.onScreenerResult && window.onScreenerResult('" + esc + "')");
+                        }
+                        @Override
+                        public void onError(String msg) {
+                            String esc = msg.replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r");
+                            evalJs("window.onScreenerError && window.onScreenerError('" + esc + "')");
+                        }
+                    }
+            );
+        } catch (Exception e) {
+            evalJs("window.onScreenerError && window.onScreenerError('参数错误')");
+        }
+    }
+
+    @JavascriptInterface
+    public String getDownloadStatus() {
+        return MarketDataManager.get().getDownloadStatus();
     }
 
     // ══════════════════════════════════════════════
