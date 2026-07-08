@@ -62,6 +62,16 @@
             </LinearLayout>
 
             <ImageView
+                android:id="@+id/iv_search"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_marginEnd="18dp"
+                android:src="@drawable/ic_search"
+                app:layout_constraintBottom_toBottomOf="@id/iv_avatar"
+                app:layout_constraintEnd_toStartOf="@id/iv_calendar"
+                app:layout_constraintTop_toTopOf="@id/iv_avatar"/>
+
+            <ImageView
                 android:id="@+id/iv_calendar"
                 android:layout_width="24dp"
                 android:layout_height="24dp"

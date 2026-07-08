@@ -79,6 +79,9 @@
             android:exported="true"
             android:launchMode="singleTask"
             android:theme="@style/Theme.TransparentLog"></activity>
+        <activity
+            android:name=".search.SearchActivity"
+            android:exported="false" />
 
         <activity
             android:name=".NfcTriggerActivity"

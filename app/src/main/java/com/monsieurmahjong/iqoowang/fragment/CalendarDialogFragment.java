@@ -400,7 +400,7 @@ public class CalendarDialogFragment extends DialogFragment {
             boolean isWeekend  = (i % 7 == 5 || i % 7 == 6); // 第6、7列 = 周六、周日
             Long expenseCents  = isValidDay ? dailyExpenseMap.get(dateKey) : null;
 
-            View cell = buildDayCell(dayNumber, isValidDay, isToday, isWeekend, expenseCents);
+            View cell = buildDayCell(dayNumber, isValidDay, isToday, isWeekend, expenseCents, dateKey);
 
             GridLayout.LayoutParams gp = new GridLayout.LayoutParams();
             gp.width  = 0;
@@ -424,7 +424,7 @@ public class CalendarDialogFragment extends DialogFragment {
      */
     private View buildDayCell(int dayNumber, boolean isValidDay,
                               boolean isToday, boolean isWeekend,
-                              Long expenseCents) {
+                              Long expenseCents, String dateKey) {
 
         LinearLayout cell = new LinearLayout(requireContext());
         cell.setOrientation(LinearLayout.VERTICAL);
@@ -487,7 +487,35 @@ public class CalendarDialogFragment extends DialogFragment {
         tvAmount.setLayoutParams(amtP);
         cell.addView(tvAmount);
 
+        // 点击日期格子跳转到 HistoryGalleryActivity、展示对应天的消费记录
+        if (isValidDay) {
+            cell.setClickable(true);
+            cell.setFocusable(true);
+            cell.setOnClickListener(v -> navigateToGalleryForDate(dateKey));
+        }
+
         return cell;
+    }
+
+    /** 跳转到 HistoryGalleryActivity 并定位到指定日期（yyyy-MM-dd） */
+    private void navigateToGalleryForDate(String dateStr) {
+        if (dateStr == null || dateStr.isEmpty() || getContext() == null) return;
+        try {
+            String[] parts = dateStr.split("-");
+            int y = Integer.parseInt(parts[0]);
+            int m = Integer.parseInt(parts[1]);
+            int d = Integer.parseInt(parts[2]);
+
+            android.content.Intent intent = new android.content.Intent(
+                    requireContext(), com.monsieurmahjong.iqoowang.HistoryGalleryActivity.class);
+            intent.putExtra("jump_year", y);
+            intent.putExtra("jump_month", m);
+            intent.putExtra("jump_day", d);
+            startActivity(intent);
+            dismiss();
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
     }
 
     // ── 工具方法 ─────────────────────────────────────────

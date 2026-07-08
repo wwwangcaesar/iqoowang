@@ -27,10 +27,16 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+
+import android.widget.ScrollView;
+import androidx.appcompat.app.AlertDialog;
 
 public class StatisticsFragment extends Fragment {
 
@@ -67,7 +73,8 @@ public class StatisticsFragment extends Fragment {
         tvSmartTip = view.findViewById(R.id.tv_smart_tip);
         tvDailyAvg = view.findViewById(R.id.tv_daily_avg);
         tvActiveDays = view.findViewById(R.id.tv_active_days);
-
+        ImageView tvCalendarMonth = view.findViewById(R.id.iv_calendar);
+        tvCalendarMonth.setOnClickListener(v -> openCalendarDialog());
         db = AppDatabase.getDatabase(requireContext());
 
         setupChartInteractions();
@@ -302,12 +309,12 @@ public class StatisticsFragment extends Fragment {
                 tvActiveDays.setText(currentExpenses.size() + " 笔记录");
                 tvSmartTip.setText(smartTipText);
 
-                renderCategoryBreakdown(sortedCategories, finalCurrentTotalCents);
+                renderCategoryBreakdown(sortedCategories, finalCurrentTotalCents, currentExpenses);
             });
         }).start();
     }
 
-    private void renderCategoryBreakdown(List<Map.Entry<String, Long>> sortedCategories, long totalCents) {
+    private void renderCategoryBreakdown(List<Map.Entry<String, Long>> sortedCategories, long totalCents, List<Expense> periodExpenses) {
         containerCategoryList.removeAllViews();
         List<PercentagePieChartView.PieEntry> pieEntries = new ArrayList<>();
 
@@ -320,10 +327,17 @@ public class StatisticsFragment extends Fragment {
         long top3Total = 0;
         int listLimit = Math.min(sortedCategories.size(), 4);
 
+        // 记录前三大分类名称，供“其他”行点击时做反向筛选
+        Set<String> top3CategoryKeys = new HashSet<>();
+        for (int k = 0; k < Math.min(sortedCategories.size(), 3); k++) {
+            top3CategoryKeys.add(sortedCategories.get(k).getKey());
+        }
+
         for (int i = 0; i < listLimit; i++) {
             Map.Entry<String, Long> entry = sortedCategories.get(i);
             long amountCents = entry.getValue();
             float percentage = (float) amountCents / totalCents;
+            boolean isOthersRow = (i == 3);
 
             String hexColor = CHART_HEX_COLORS[Math.min(i, 3)];
             if (i < 3) {
@@ -387,12 +401,152 @@ public class StatisticsFragment extends Fragment {
             rightGroup.addView(tvAmt);
             row.addView(rightGroup);
 
+            row.setClickable(true);
+            row.setFocusable(true);
+            android.util.TypedValue outValue = new android.util.TypedValue();
+            requireContext().getTheme().resolveAttribute(android.R.attr.selectableItemBackground, outValue, true);
+            row.setBackgroundResource(outValue.resourceId);
+            row.setOnClickListener(v -> {
+                List<Expense> filtered = filterExpensesByCategory(periodExpenses, entry.getKey(), isOthersRow, top3CategoryKeys);
+                showCategoryDetailDialog(entry.getKey(), filtered, amountCents);
+            });
+
             containerCategoryList.addView(row);
         }
 
         percentagePieChart.setEntries(pieEntries);
     }
 
+    /**
+     * 按分类（或“其他”聚合分类）从当前周期消费明细中筛选出对应记录
+     */
+    private List<Expense> filterExpensesByCategory(List<Expense> source, String categoryKey, boolean isOthersRow, Set<String> top3CategoryKeys) {
+        List<Expense> result = new ArrayList<>();
+        if (source == null) return result;
+        for (Expense e : source) {
+            String cat = e.getCategoryName() != null ? e.getCategoryName() : "其他";
+            if (isOthersRow) {
+                if (!top3CategoryKeys.contains(cat)) result.add(e);
+            } else {
+                if (cat.equals(categoryKey)) result.add(e);
+            }
+        }
+        Collections.sort(result, (a, b) -> Long.compare(b.getTimestamp(), a.getTimestamp()));
+        return result;
+    }
+
+    /**
+     * 分类消费明细弹窗：展示该分类（或“其他”聚合）在当前统计周期内的所有记录
+     * 每条记录展示：时间 + 备注（选填） + 金额
+     */
+    private void showCategoryDetailDialog(String categoryName, List<Expense> expenses, long totalCents) {
+        if (getContext() == null) return;
+
+        LinearLayout root = new LinearLayout(requireContext());
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setPadding(dp2px(24), dp2px(20), dp2px(24), dp2px(4));
+
+        TextView tvTitle = new TextView(requireContext());
+        tvTitle.setText(categoryName + " 消费明细");
+        tvTitle.setTextSize(18);
+        tvTitle.setTextColor(Color.parseColor("#111C2D"));
+        tvTitle.setTypeface(null, android.graphics.Typeface.BOLD);
+        root.addView(tvTitle);
+
+        TextView tvSubtitle = new TextView(requireContext());
+        tvSubtitle.setText(String.format(Locale.getDefault(), "共 %d 笔 · 合计 ¥ %.2f", expenses.size(), totalCents / 100.0));
+        tvSubtitle.setTextColor(Color.parseColor("#707974"));
+        tvSubtitle.setTextSize(13);
+        LinearLayout.LayoutParams subP = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        subP.topMargin = dp2px(4);
+        subP.bottomMargin = dp2px(12);
+        tvSubtitle.setLayoutParams(subP);
+        root.addView(tvSubtitle);
+
+        ScrollView scrollView = new ScrollView(requireContext());
+        LinearLayout listContainer = new LinearLayout(requireContext());
+        listContainer.setOrientation(LinearLayout.VERTICAL);
+
+        if (expenses.isEmpty()) {
+            TextView tvEmpty = new TextView(requireContext());
+            tvEmpty.setText("暂无相关消费记录");
+            tvEmpty.setTextColor(Color.parseColor("#707974"));
+            tvEmpty.setGravity(Gravity.CENTER);
+            tvEmpty.setPadding(0, dp2px(24), 0, dp2px(24));
+            listContainer.addView(tvEmpty);
+        } else {
+            SimpleDateFormat sdf = new SimpleDateFormat("MM月dd日 HH:mm", Locale.getDefault());
+            for (Expense e : expenses) {
+                LinearLayout row = new LinearLayout(requireContext());
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                row.setGravity(Gravity.CENTER_VERTICAL);
+                row.setPadding(0, dp2px(10), 0, dp2px(10));
+
+                LinearLayout left = new LinearLayout(requireContext());
+                left.setOrientation(LinearLayout.VERTICAL);
+                left.setLayoutParams(new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+                TextView tvTime = new TextView(requireContext());
+                tvTime.setText(sdf.format(new Date(e.getTimestamp())));
+                tvTime.setTextColor(Color.parseColor("#111C2D"));
+                tvTime.setTextSize(14);
+                left.addView(tvTime);
+
+                String remark = e.getRemark();
+                if (remark != null && !remark.trim().isEmpty()) {
+                    TextView tvRemark = new TextView(requireContext());
+                    tvRemark.setText(remark);
+                    tvRemark.setTextColor(Color.parseColor("#707974"));
+                    tvRemark.setTextSize(12);
+                    tvRemark.setPadding(0, dp2px(2), 0, 0);
+                    left.addView(tvRemark);
+                }
+
+                row.addView(left);
+
+                TextView tvAmount = new TextView(requireContext());
+                tvAmount.setText(String.format(Locale.getDefault(), "¥ %.2f", e.getAmount() / 100.0));
+                tvAmount.setTextColor(Color.parseColor("#003527"));
+                tvAmount.setTextSize(15);
+                tvAmount.setTypeface(null, android.graphics.Typeface.BOLD);
+                row.addView(tvAmount);
+
+                listContainer.addView(row);
+
+                View divider = new View(requireContext());
+                divider.setLayoutParams(new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp2px(1)));
+                divider.setBackgroundColor(Color.parseColor("#F0F3FF"));
+                listContainer.addView(divider);
+            }
+        }
+
+        scrollView.addView(listContainer);
+        LinearLayout.LayoutParams scrollParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp2px(360));
+        scrollView.setLayoutParams(scrollParams);
+        root.addView(scrollView);
+
+        new AlertDialog.Builder(requireContext())
+                .setView(root)
+                .setPositiveButton("关闭", null)
+                .show();
+    }
+    private void openCalendarDialog() {
+        // 异步查询本月支出，再弹出日历
+        new Thread(() -> {
+            // 修正后（使用新增方法，只查当月）
+            String monthKey = new SimpleDateFormat("yyyy-MM", Locale.getDefault())
+                    .format(Calendar.getInstance().getTime());
+            List<Expense> monthExpenses = db.expenseDao().getAllExpensesByMonthSync(monthKey);
+            if (getActivity() == null) return;
+            getActivity().runOnUiThread(() -> {
+                CalendarDialogFragment dialog =
+                        CalendarDialogFragment.newInstance(new ArrayList<>(monthExpenses));
+                dialog.show(getChildFragmentManager(), "CalendarDialog");
+            });
+        }).start();
+    }
     private android.graphics.drawable.LayerDrawable createProgressBarDrawable(String hexActiveColor, float percentage) {
         GradientDrawable track = new GradientDrawable();
         track.setShape(GradientDrawable.RECTANGLE);

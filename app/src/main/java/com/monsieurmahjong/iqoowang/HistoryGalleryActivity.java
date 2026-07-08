@@ -41,8 +41,17 @@ public class HistoryGalleryActivity extends AppCompatActivity {
 
     private List<GalleryItem> displayList = new ArrayList<>();
 
-    private int selectedYear = 2026;
-    private int selectedMonth = 5;
+    private int selectedYear;
+    private int selectedMonth;
+
+    // 真实“当前时间”基准，用于自动定位到当前年/月/日
+    private final Calendar realNowCal = Calendar.getInstance();
+    private final int REAL_CURRENT_YEAR = realNowCal.get(Calendar.YEAR);
+    private final int REAL_CURRENT_MONTH = realNowCal.get(Calendar.MONTH) + 1;
+    private final int REAL_CURRENT_DAY = realNowCal.get(Calendar.DAY_OF_MONTH);
+
+    // 从日历弹窗等入口直接跳转过来时，需要定位并自动打开的目标日期
+    private int pendingJumpDay = -1;
 
     // 缓存不同层级的滑动浏览位置
     private Map<ViewLevel, Parcelable> scrollStateMap = new HashMap<>();
@@ -123,7 +132,23 @@ public class HistoryGalleryActivity extends AppCompatActivity {
             }
         });
 
-        loadYearData();
+        selectedYear = REAL_CURRENT_YEAR;
+        selectedMonth = REAL_CURRENT_MONTH;
+
+        int jumpYear = getIntent().getIntExtra("jump_year", -1);
+        int jumpMonth = getIntent().getIntExtra("jump_month", -1);
+        int jumpDay = getIntent().getIntExtra("jump_day", -1);
+
+        if (jumpYear > 0 && jumpMonth > 0 && jumpDay > 0) {
+            // 来自日历弹窗的直接跳转：定位到对应年/月的周视图，并自动打开当天详情
+            selectedYear = jumpYear;
+            selectedMonth = jumpMonth;
+            pendingJumpDay = jumpDay;
+            loadWeekData(selectedYear, selectedMonth);
+        } else {
+            // 默认进入：自动定位到当前年份（年视图列表默认以当前年份在顶部，已满足需求）
+            loadYearData();
+        }
     }
 
     private void saveCurrentScrollState() {
@@ -200,11 +225,16 @@ public class HistoryGalleryActivity extends AppCompatActivity {
             List<GalleryItem> temp = new ArrayList<>();
             temp.add(new GalleryItem(GalleryItem.TYPE_HEADER, year + "年 · 季度周度账目拆解"));
 
+            int autoScrollIndex = -1;
+
             Calendar cal = Calendar.getInstance();
             cal.setFirstDayOfWeek(Calendar.MONDAY);
 
             for (int m = 1; m <= 12; m++) {
                 temp.add(new GalleryItem(GalleryItem.TYPE_HEADER, year + "年 " + m + "月"));
+                if (year == REAL_CURRENT_YEAR && m == REAL_CURRENT_MONTH) {
+                    autoScrollIndex = temp.size() - 1;
+                }
 
                 cal.clear();
                 cal.set(Calendar.YEAR, year);
@@ -253,10 +283,16 @@ public class HistoryGalleryActivity extends AppCompatActivity {
                 }
             }
 
+            final int finalAutoScrollIndex = autoScrollIndex;
             runOnUiThread(() -> {
                 displayList.addAll(temp);
                 adapter.notifyDataSetChanged();
-                restoreScrollState();
+                // 若是首次进入该层级（无缓存滑动位置）且当前浏览的是真实当前年份，自动定位到当前月份
+                if (!scrollStateMap.containsKey(currentLevel) && finalAutoScrollIndex >= 0) {
+                    rvGallery.scrollToPosition(finalAutoScrollIndex);
+                } else {
+                    restoreScrollState();
+                }
             });
         }).start();
     }
@@ -269,6 +305,9 @@ public class HistoryGalleryActivity extends AppCompatActivity {
         currentLevel = ViewLevel.WEEK;
         displayList.clear();
         adapter.notifyDataSetChanged();
+
+        final int jumpDayRequested = pendingJumpDay;
+        pendingJumpDay = -1;
 
         new Thread(() -> {
             List<GalleryItem> temp = new ArrayList<>();
@@ -325,15 +364,44 @@ public class HistoryGalleryActivity extends AppCompatActivity {
             }
 
             // 线性拼装扁平列表：周标识Header + 属于该周的7个天卡片
+            int autoScrollIndex = -1;
+            int jumpIndex = -1;
             for (Map.Entry<Integer, List<GalleryItem>> entry : weekToDaysGroup.entrySet()) {
                 temp.add(new GalleryItem(GalleryItem.TYPE_HEADER, year + "年" + month + "月 · 第" + entry.getKey() + "周"));
-                temp.addAll(entry.getValue());
+                for (GalleryItem gi : entry.getValue()) {
+                    temp.add(gi);
+                    int idx = temp.size() - 1;
+                    if (year == REAL_CURRENT_YEAR && month == REAL_CURRENT_MONTH
+                            && gi.itemLabel != null && gi.itemLabel.equals(REAL_CURRENT_DAY + "日")) {
+                        autoScrollIndex = idx;
+                    }
+                    if (jumpDayRequested > 0 && gi.itemLabel != null && gi.itemLabel.equals(jumpDayRequested + "日")) {
+                        jumpIndex = idx;
+                    }
+                }
             }
+
+            final int finalAutoScrollIndex = autoScrollIndex;
+            final GalleryItem jumpTargetItem = jumpIndex >= 0 ? temp.get(jumpIndex) : null;
+            final int finalJumpIndex = jumpIndex;
 
             runOnUiThread(() -> {
                 displayList.addAll(temp);
                 adapter.notifyDataSetChanged();
-                restoreScrollState();
+
+                if (jumpTargetItem != null) {
+                    // 来自日历弹窗的目标日期：定位并自动打开当天消费详情
+                    rvGallery.scrollToPosition(finalJumpIndex);
+                    Intent intent = new Intent(HistoryGalleryActivity.this, DayDetailActivity.class);
+                    intent.putExtra("date", jumpTargetItem.dateStr);
+                    intent.putExtra("amount", jumpTargetItem.amount);
+                    startActivity(intent);
+                } else if (!scrollStateMap.containsKey(currentLevel) && finalAutoScrollIndex >= 0) {
+                    // 首次进入该层级且当前浏览的是真实当前月份，自动定位到当前日
+                    rvGallery.scrollToPosition(finalAutoScrollIndex);
+                } else {
+                    restoreScrollState();
+                }
             });
         }).start();
     }

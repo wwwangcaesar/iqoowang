@@ -113,6 +113,20 @@ public class CircularProgressView extends View {
         invalidate();
     }
 
+    // 动态设置进度弧颜色（用于超预算等警示状态）
+    public void setProgressColor(int color) {
+        this.progressColor = color;
+        progressPaint.setColor(color);
+        invalidate();
+    }
+
+    // 动态设置轨道颜色
+    public void setTrackColor(int color) {
+        this.trackColor = color;
+        trackPaint.setColor(color);
+        invalidate();
+    }
+
     // dp 转 px
     private int dp2px(int dp) {
         return (int) (dp * getResources().getDisplayMetrics().density + 0.5f);

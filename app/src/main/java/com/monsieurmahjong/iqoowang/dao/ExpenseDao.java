@@ -84,4 +84,22 @@ public interface ExpenseDao {
     @Query("SELECT categoryName as categoryName, COALESCE(SUM(amount),0) as total FROM expense_table GROUP BY categoryName ORDER BY total DESC")
     List<CategoryTotal> getCategoryTotalsSync();
 
+    // ════════════════════════════════════════════════════
+    //  全局搜索专用查询（聚合搜索：关键字 + 分类 + 日期区间 + 金额区间）
+    //  注：所有筛选条件均为可空，为 null 时该条件不生效
+    // ════════════════════════════════════════════════════
+    @Query("SELECT * FROM expense_table WHERE " +
+            "(:keyword IS NULL OR categoryName LIKE '%' || :keyword || '%' OR remark LIKE '%' || :keyword || '%') " +
+            "AND (:category IS NULL OR categoryName = :category) " +
+            "AND (:startTime IS NULL OR timestamp >= :startTime) " +
+            "AND (:endTime IS NULL OR timestamp <= :endTime) " +
+            "AND (:minAmount IS NULL OR amount >= :minAmount) " +
+            "AND (:maxAmount IS NULL OR amount <= :maxAmount) " +
+            "ORDER BY timestamp DESC")
+    List<Expense> searchExpensesSync(String keyword, String category, Long startTime, Long endTime, Long minAmount, Long maxAmount);
+
+    // 全局搜索分类筛选项：取库内已出现过的全部分类名
+    @Query("SELECT DISTINCT categoryName FROM expense_table WHERE categoryName IS NOT NULL ORDER BY categoryName ASC")
+    List<String> getAllCategoryNamesSync();
+
 }

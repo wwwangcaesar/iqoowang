@@ -1,5 +1,6 @@
 package com.monsieurmahjong.iqoowang.fragment;
 
+import android.animation.ValueAnimator;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
@@ -17,12 +18,15 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 import androidx.constraintlayout.widget.ConstraintLayout;
 
+import androidx.core.content.ContextCompat;
+
 import com.google.android.material.card.MaterialCardView;
 import com.monsieurmahjong.iqoowang.HistoryGalleryActivity;
 import com.monsieurmahjong.iqoowang.R;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
 import com.monsieurmahjong.iqoowang.pet.PetActivity;
+import com.monsieurmahjong.iqoowang.search.SearchActivity;
 import com.monsieurmahjong.iqoowang.utils.AnimationUtils;
 import com.monsieurmahjong.iqoowang.view.CircularProgressView;
 import com.monsieurmahjong.iqoowang.view.LinearProgressView;
@@ -30,9 +34,12 @@ import com.monsieurmahjong.iqoowang.view.LinearProgressView;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 public class HistoryFragment extends Fragment {
 
@@ -45,6 +52,10 @@ public class HistoryFragment extends Fragment {
     private TextView tvTodaySpending;
     private LinearProgressView linearProgress;
     private LinearLayout transactionListContainer;
+    private TextView tvSmartTip;
+
+    private MaterialCardView cardBudget;
+    private ValueAnimator budgetWarningAnimator;
 
     private AppDatabase db;
     private static final String PREFS_NAME = "SereneLedgerConfig";
@@ -64,7 +75,7 @@ public class HistoryFragment extends Fragment {
 
         // 依靠严密的 DOM 视树向下寻解并动态锚定没有给定明确 ID 的 tvMonthBudgetTotal
         try {
-            MaterialCardView cardBudget = view.findViewById(R.id.card_budget);
+            cardBudget = view.findViewById(R.id.card_budget);
             LinearLayout rootLayout = (LinearLayout) cardBudget.getChildAt(0);
             ConstraintLayout innerConstraint = (ConstraintLayout) rootLayout.getChildAt(0);
             LinearLayout textContainer = (LinearLayout) innerConstraint.getChildAt(0);
@@ -77,12 +88,16 @@ public class HistoryFragment extends Fragment {
         tvTodaySpending = (TextView) todaySpendingLayout.getChildAt(1);
         linearProgress = view.findViewById(R.id.linearProgress);
         transactionListContainer = view.findViewById(R.id.transaction_list);
+        tvSmartTip = view.findViewById(R.id.tv_smart_tip);
 
         db = AppDatabase.getDatabase(requireContext());
         ImageView tvCalendarMonth = view.findViewById(R.id.iv_calendar);
-        tvCalendarMonth.setOnClickListener(v -> openCalendarDialog());
         ImageView iv_avatar = view.findViewById(R.id.iv_avatar);
         iv_avatar.setOnClickListener(v -> openActvity());
+        ImageView ivSearch = view.findViewById(R.id.iv_search);
+        if (ivSearch != null) {
+            ivSearch.setOnClickListener(v -> startActivity(new Intent(requireContext(), SearchActivity.class)));
+        }
         return view;
     }
 
@@ -153,6 +168,9 @@ public class HistoryFragment extends Fragment {
             if (tvMonthLeft != null) {
                 AnimationUtils.animateAmount(tvMonthLeft, remainingCents);
             }
+
+            // 本月已超预算：环形进度条变红 + 卡片呼吸灯光效提醒；未超预算则恢复默认样式
+            applyBudgetWarning(dynamicMonthBudget > 0 && totalMonthSpentCents > dynamicMonthBudget);
         });
 
         // ==========================================
@@ -266,6 +284,152 @@ public class HistoryFragment extends Fragment {
                 transactionListContainer.addView(cardView);
             }
         });
+
+        // ==========================================
+        // 管线四：明智消费提示（规则/统计对比引擎，不依赖端侧AI，避免备注脏数据干扰）
+        // ==========================================
+        refreshSmartTip();
+    }
+
+    /**
+     * 异步计算“明智消费提示”文案，替代原先写死的静态文案。
+     * 完全基于金额/分类/时间等结构化字段做规则对比，不解析备注文本，
+     * 避免因备注内容不规范导致误判。只读查询，不修改任何历史数据。
+     */
+    private void refreshSmartTip() {
+        if (!isAdded() || getContext() == null || tvSmartTip == null) return;
+        new Thread(() -> {
+            String tip = computeSmartTip();
+            if (getActivity() == null) return;
+            getActivity().runOnUiThread(() -> {
+                if (tvSmartTip != null) tvSmartTip.setText(tip);
+            });
+        }).start();
+    }
+
+    private String computeSmartTip() {
+        Calendar cal = Calendar.getInstance();
+        int todayDay = cal.get(Calendar.DAY_OF_MONTH);
+        int daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH);
+
+        cal.set(Calendar.DAY_OF_MONTH, 1);
+        cal.set(Calendar.HOUR_OF_DAY, 0);
+        cal.set(Calendar.MINUTE, 0);
+        cal.set(Calendar.SECOND, 0);
+        cal.set(Calendar.MILLISECOND, 0);
+        long startOfMonth = cal.getTimeInMillis();
+
+        cal.add(Calendar.MONTH, 1);
+        long endOfMonth = cal.getTimeInMillis() - 1;
+
+        cal.setTimeInMillis(startOfMonth);
+        cal.add(Calendar.MILLISECOND, -1);
+        long prevMonthEnd = cal.getTimeInMillis();
+        cal.set(Calendar.DAY_OF_MONTH, 1);
+        long prevMonthStart = cal.getTimeInMillis();
+
+        List<Expense> currentMonthExpenses = db.expenseDao().getExpensesInRangeSync(startOfMonth, endOfMonth);
+        List<Expense> prevMonthExpenses = db.expenseDao().getExpensesInRangeSync(prevMonthStart, prevMonthEnd);
+        if (currentMonthExpenses == null) currentMonthExpenses = new ArrayList<>();
+        if (prevMonthExpenses == null) prevMonthExpenses = new ArrayList<>();
+
+        // 数据量太少，任何对比都没有统计意义
+        if (currentMonthExpenses.size() < 3) {
+            return "本月记账刚刚开始，多记几笔之后就能看到更准确的消费分析啦～";
+        }
+
+        long totalMonthCents = 0;
+        Map<String, Long> categoryTotals = new HashMap<>();
+        String todayStr = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
+        long todayCents = 0;
+        long weekendCents = 0;
+
+        Calendar ec = Calendar.getInstance();
+        for (Expense e : currentMonthExpenses) {
+            long amount = e.getAmount();
+            totalMonthCents += amount;
+
+            String cat = e.getCategoryName() != null ? e.getCategoryName() : "其他";
+            categoryTotals.put(cat, categoryTotals.getOrDefault(cat, 0L) + amount);
+
+            if (todayStr.equals(e.getDate_str())) {
+                todayCents += amount;
+            }
+
+            ec.setTimeInMillis(e.getTimestamp());
+            int dow = ec.get(Calendar.DAY_OF_WEEK);
+            if (dow == Calendar.SATURDAY || dow == Calendar.SUNDAY) {
+                weekendCents += amount;
+            }
+        }
+
+        Map<String, Long> prevCategoryTotals = new HashMap<>();
+        for (Expense e : prevMonthExpenses) {
+            String cat = e.getCategoryName() != null ? e.getCategoryName() : "其他";
+            prevCategoryTotals.put(cat, prevCategoryTotals.getOrDefault(cat, 0L) + e.getAmount());
+        }
+
+        android.content.SharedPreferences sp = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        long monthlyBudget = sp.getLong(KEY_MONTHLY_BUDGET, 500000L);
+
+        // 规则1：本月已超预算
+        if (monthlyBudget > 0 && totalMonthCents > monthlyBudget) {
+            long overCents = totalMonthCents - monthlyBudget;
+            int remainDays = Math.max(daysInMonth - todayDay, 0);
+            return String.format(Locale.getDefault(), "本月已超出预算 ¥%.2f，接下来 %d 天建议控制一下非必要支出。", overCents / 100.0, remainDays);
+        }
+
+        // 规则2/3：消费节奏 vs 时间进度对比（提前预警 / 表扬结余）
+        if (monthlyBudget > 0 && todayDay > 0) {
+            double timeRatio = (double) todayDay / daysInMonth;
+            double spendRatio = (double) totalMonthCents / monthlyBudget;
+            if (spendRatio - timeRatio > 0.15) {
+                long projectedCents = (long) (totalMonthCents / timeRatio);
+                return String.format(Locale.getDefault(), "按当前节奏，本月预计总支出约 ¥%.0f，可能会超出预算，建议适当控制。", projectedCents / 100.0);
+            } else if (timeRatio - spendRatio > 0.15 && totalMonthCents > 0) {
+                long remainCents = monthlyBudget - totalMonthCents;
+                return String.format(Locale.getDefault(), "本月消费节奏低于预算进度，预计能结余 ¥%.0f 左右，继续保持！", remainCents / 100.0);
+            }
+        }
+
+        // 规则4：主要分类环比变化明显（增幅或降幅 ≥ 20%）
+        List<Map.Entry<String, Long>> sortedCategories = new ArrayList<>(categoryTotals.entrySet());
+        Collections.sort(sortedCategories, (a, b) -> Long.compare(b.getValue(), a.getValue()));
+        if (!sortedCategories.isEmpty()) {
+            String topCategory = sortedCategories.get(0).getKey();
+            long topAmount = sortedCategories.get(0).getValue();
+            long prevAmount = prevCategoryTotals.getOrDefault(topCategory, 0L);
+            if (prevAmount > 0) {
+                long diff = topAmount - prevAmount;
+                int pct = (int) Math.abs((diff * 100) / prevAmount);
+                if (pct >= 20) {
+                    if (diff > 0) {
+                        return String.format(Locale.getDefault(), "「%s」支出比上月增加了 %d%%，是本月涨幅最明显的分类。", topCategory, pct);
+                    } else {
+                        return String.format(Locale.getDefault(), "「%s」支出比上月降低了 %d%%，继续保持！", topCategory, pct);
+                    }
+                }
+            }
+        }
+
+        // 规则5：今日消费明显高于本月日均
+        if (todayDay > 0) {
+            long dailyAvgCents = totalMonthCents / todayDay;
+            if (dailyAvgCents > 0 && todayCents > dailyAvgCents * 2) {
+                return String.format(Locale.getDefault(), "今天已消费 ¥%.2f，明显高于本月日均 ¥%.2f，留意一下是否有临时大额支出。", todayCents / 100.0, dailyAvgCents / 100.0);
+            }
+        }
+
+        // 规则6：周末消费占比偏高
+        if (totalMonthCents > 0) {
+            double weekendShare = (double) weekendCents / totalMonthCents;
+            if (weekendShare > 0.45) {
+                return "本月接近一半的支出集中在周末，安排聚餐、娱乐时可以适当留意一下预算。";
+            }
+        }
+
+        // 兜底文案
+        return "本月消费记录规律，继续保持良好的记账习惯！";
     }
 
     private void renderEmptyView() {
@@ -293,21 +457,65 @@ public class HistoryFragment extends Fragment {
             iv.setImageResource(R.mipmap.ic_other);
         }
     }
-    private void openCalendarDialog() {
-        // 异步查询本月支出，再弹出日历
-        new Thread(() -> {
-            // 修正后（使用新增方法，只查当月）
-            String monthKey = new SimpleDateFormat("yyyy-MM", Locale.getDefault())
-                    .format(Calendar.getInstance().getTime());
-            List<Expense> monthExpenses = db.expenseDao().getAllExpensesByMonthSync(monthKey);
-            if (getActivity() == null) return;
-            getActivity().runOnUiThread(() -> {
-                CalendarDialogFragment dialog =
-                        CalendarDialogFragment.newInstance(new ArrayList<>(monthExpenses));
-                dialog.show(getChildFragmentManager(), "CalendarDialog");
-            });
-        }).start();
+    /**
+     * 本月超预算警示效果：环形进度条变红，外层预算卡片呼吸灯光效闪烁提醒
+     * 只影响 UI 表现，不会修改任何已记录的数据
+     */
+    private void applyBudgetWarning(boolean isOverBudget) {
+        if (!isAdded() || getContext() == null) return;
+        if (isOverBudget) {
+            if (circularProgress != null) {
+                circularProgress.setProgressColor(Color.parseColor("#BA1A1A"));
+            }
+            if (tvCircularText != null) {
+                tvCircularText.setTextColor(Color.parseColor("#BA1A1A"));
+            }
+            startBudgetBreathingWarning();
+        } else {
+            if (circularProgress != null) {
+                circularProgress.setProgressColor(ContextCompat.getColor(requireContext(), R.color.primary_container));
+            }
+            if (tvCircularText != null) {
+                tvCircularText.setTextColor(ContextCompat.getColor(requireContext(), R.color.primary));
+            }
+            stopBudgetBreathingWarning();
+        }
     }
+
+    private void startBudgetBreathingWarning() {
+        if (cardBudget == null) return;
+        if (budgetWarningAnimator != null && budgetWarningAnimator.isRunning()) return;
+
+        cardBudget.setStrokeWidth(dp2px(2));
+        budgetWarningAnimator = ValueAnimator.ofInt(40, 220);
+        budgetWarningAnimator.setDuration(900);
+        budgetWarningAnimator.setRepeatMode(ValueAnimator.REVERSE);
+        budgetWarningAnimator.setRepeatCount(ValueAnimator.INFINITE);
+        budgetWarningAnimator.addUpdateListener(animation -> {
+            if (cardBudget == null) return;
+            int alpha = (int) animation.getAnimatedValue();
+            cardBudget.setStrokeColor(Color.argb(alpha, 0xBA, 0x1A, 0x1A));
+        });
+        budgetWarningAnimator.start();
+    }
+
+    private void stopBudgetBreathingWarning() {
+        if (budgetWarningAnimator != null) {
+            budgetWarningAnimator.cancel();
+            budgetWarningAnimator = null;
+        }
+        if (cardBudget != null) {
+            cardBudget.setStrokeWidth(0);
+        }
+    }
+
+    @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        stopBudgetBreathingWarning();
+    }
+
+
     private void toAC(){
         Intent intent = new Intent(requireContext(), HistoryGalleryActivity.class);
         startActivity(intent);
