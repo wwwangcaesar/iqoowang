@@ -1474,6 +1474,17 @@ function renderResults(results) {
     list.innerHTML = '<div class="empty-state"><div class="empty-icon">🔍</div><div class="empty-text">当前条件未发现符合信号的股票</div></div>';
     return;
   }
+  // 防御性转换：后端字段类型异常时不至于整个列表渲染失败
+  results.forEach(r => {
+    r.latestClose = Number(r.latestClose) || 0;
+    r.change = Number(r.change) || 0;
+    r.score = Number(r.score) || 0;
+    r.cap = Number(r.cap) || 0;
+    r.name = r.name != null ? String(r.name) : (r.code || '--');
+    r.code = r.code != null ? String(r.code) : '--';
+    r.signal = r.signal != null ? String(r.signal) : '';
+    r.volMultiActual = r.volMultiActual != null ? String(r.volMultiActual) : '--';
+  });
   list.innerHTML = results.map(r => `
     <div class="result-item ${r.change < 0 ? 'down' : ''}" onclick="openTradeModal('${r.code}')">
       <div class="stock-info">
@@ -1496,6 +1507,7 @@ function renderResults(results) {
 
 function updateHomeSignals(results) {
   const el = document.getElementById('homeSignalList');
+  if (!el) return; // 容器不存在（当前首页未提供该区域），直接跳过，不影响选股结果列表正常渲染
   if (!results.length) return;
   const top3 = results.slice(0, 3);
   el.innerHTML = top3.map(r => `
@@ -3012,8 +3024,17 @@ window.onDownloadError = function(msg) {
 };
 
 window.onScreenerResult = function(jsonStr) {
+  // 调试：把原始payload打到控制台/logcat(chromium tag)，方便排查
+  console.log('[SCR][raw] len=' + (jsonStr ? jsonStr.length : 0), jsonStr);
+  let results;
   try {
-    const results = JSON.parse(jsonStr);
+    results = JSON.parse(jsonStr);
+  } catch(e) {
+    console.error('[SCR] JSON.parse失败', e, jsonStr);
+    window.onScreenerError('JSON解析失败: ' + e.message);
+    return;
+  }
+  try {
     STATE.screenResults = results;
     renderResults(results);
     updateHomeSignals(results);
@@ -3027,9 +3048,17 @@ window.onScreenerResult = function(jsonStr) {
     document.getElementById('scanBtn').disabled = false;
     
     addThinkLine('good', `[SCR] 真实数据筛选完成：${results.length} 支通过公式`);
+  } catch(e) {
+    console.error('[SCR] 渲染阶段失败', e);
+    window.onScreenerError('渲染失败: ' + e.message + (e.stack ? (' @ ' + e.stack.split('\n')[0]) : ''));
+    return;
+  }
+  // AI分析单独try，不影响已经渲染出来的结果列表
+  try {
     triggerAIAnalysis(results);
   } catch(e) {
-    window.onScreenerError('解析结果失败');
+    console.error('[SCR] triggerAIAnalysis失败', e);
+    addThinkLine('bad', '[AI ] 分析启动失败: ' + e.message);
   }
 };
 
