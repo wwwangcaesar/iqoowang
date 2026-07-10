@@ -112,7 +112,22 @@ public class EastMoneyApi {
     // ──────────────────────────────────────────
 
     public void fetchKline(String code, String period, int limit, KlineCallback cb) {
-        String mkt = getTencentMarket(code);
+        fetchKlineWithMarket(getTencentMarket(code), code, period, limit, cb);
+    }
+
+    /**
+     * 指数/大盘K线 — 指数代码（如上证指数"000001"）不能用个股的市场判断规则
+     * （"000001"按个股规则会被误判为sz的平安银行），必须显式指定市场前缀。
+     *
+     * 常用指数：
+     *   上证指数 sh 000001    深证成指 sz 399001
+     *   创业板指 sz 399006    沪深300  sh 000300
+     */
+    public void fetchIndexKline(String market, String indexCode, String period, int limit, KlineCallback cb) {
+        fetchKlineWithMarket(market, indexCode, period, limit, cb);
+    }
+
+    private void fetchKlineWithMarket(String mkt, String code, String period, int limit, KlineCallback cb) {
         String tPeriod = toTencentPeriod(period);
         boolean isMinute = tPeriod.startsWith("m");
 

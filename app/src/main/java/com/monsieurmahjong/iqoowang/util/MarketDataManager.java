@@ -833,6 +833,60 @@ public class MarketDataManager {
         return bars;
     }
 
+    /**
+     * 市场宽度统计 — 基于本地已缓存的全市场个股K线（最新交易日一条）直接计算，
+     * 不需要额外联网下载。用于向 AI 提供"今天到底是普涨还是普跌"这层大盘环境依据，
+     * 避免只看筛选出的少数几支强势股就误判整体行情。
+     *
+     * @return JSON: {"tradeDate":"2026-07-09","total":2201,"up":1523,"down":612,
+     *                "flat":66,"limitUp":18,"limitDown":3,"avgChangePct":0.62}
+     */
+    public String computeMarketBreadth() {
+        JSONObject obj = new JSONObject();
+        try {
+            String latestDate;
+            Cursor dc = mDb.rawQuery("SELECT MAX(trade_date) FROM kline_cache", null);
+            try {
+                if (!dc.moveToFirst() || dc.isNull(0)) {
+                    obj.put("hasData", false);
+                    return obj.toString();
+                }
+                latestDate = dc.getString(0);
+            } finally { dc.close(); }
+
+            int total = 0, up = 0, down = 0, flat = 0, limitUp = 0, limitDown = 0;
+            double sumPct = 0;
+            Cursor c = mDb.rawQuery(
+                    "SELECT change_pct FROM kline_cache WHERE trade_date=?",
+                    new String[]{latestDate});
+            try {
+                while (c.moveToNext()) {
+                    double pct = c.getDouble(0);
+                    total++;
+                    sumPct += pct;
+                    if (pct > 0.01) up++;
+                    else if (pct < -0.01) down++;
+                    else flat++;
+                    if (pct >= 9.9) limitUp++;
+                    if (pct <= -9.9) limitDown++;
+                }
+            } finally { c.close(); }
+
+            obj.put("hasData", total > 0);
+            obj.put("tradeDate", latestDate);
+            obj.put("total", total);
+            obj.put("up", up);
+            obj.put("down", down);
+            obj.put("flat", flat);
+            obj.put("limitUp", limitUp);
+            obj.put("limitDown", limitDown);
+            obj.put("avgChangePct", total > 0 ? sumPct / total : 0);
+        } catch (Exception e) {
+            Log.w(TAG, "computeMarketBreadth failed", e);
+        }
+        return obj.toString();
+    }
+
     /** 获取股票流通市值 */
     private double getStockCap(String code) {
         Cursor c = mDb.rawQuery("SELECT cap FROM stock_list_cache WHERE stock_code=?",

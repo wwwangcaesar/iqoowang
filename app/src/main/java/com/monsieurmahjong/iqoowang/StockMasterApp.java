@@ -40,6 +40,10 @@ public class StockMasterApp extends Application {
         com.monsieurmahjong.iqoowang.util.MarketDataManager.init(this);
         Log.i(TAG, "MarketDataManager initialized");
 
+        // 初始化大盘指数管理器（上证/深证/创业板指，供AI分析大盘环境）
+        com.monsieurmahjong.iqoowang.util.MarketIndexManager.init(this);
+        Log.i(TAG, "MarketIndexManager initialized");
+
         // 注册每日收盘快照 WorkManager（15:05 后触发）
         scheduleDailySnapshot();
 

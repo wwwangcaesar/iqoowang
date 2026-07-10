@@ -37,6 +37,7 @@ public class LocalAIAgent {
     private final Context       mContext;
     private final LlmEngine     mEngine;
     private final StockExpertSystem mExpert;
+    private final AIContextBuilder  mCtxBuilder;
     private final ExecutorService   mExecutor;
     private final Handler           mMainHandler;
     private final AtomicBoolean     mInferring = new AtomicBoolean(false);
@@ -63,6 +64,7 @@ public class LocalAIAgent {
         mContext     = context;
         mEngine      = LlmEngine.get();
         mExpert      = new StockExpertSystem();
+        mCtxBuilder  = new AIContextBuilder(context);
         mExecutor    = Executors.newSingleThreadExecutor();
         mMainHandler = new Handler(Looper.getMainLooper());
 
@@ -215,19 +217,23 @@ public class LocalAIAgent {
             try {
                 JSONArray results = new JSONArray(screenResultJson);
 
-                // 专家规则预分析（快速）
-                String expertPre = mExpert.analyzeResults(results);
+                // 聚合真实数据上下文：大盘指数+市场宽度 / 历史战绩 / 每支股票近期走势&个人历史
+                // 注意：这里会阻塞等待指数下载(最长6秒)，但发生在后台线程，不影响 UI
+                String marketCtx = mCtxBuilder.buildMarketContext();
+                String historyCtx = mCtxBuilder.buildTradeHistoryContext();
+                String perStockCtx = buildPerStockContext(results);
 
                 // 构造提示词
-                String prompt = buildScreenPrompt(results, expertPre);
+                String prompt = buildScreenPrompt(results, marketCtx, historyCtx, perStockCtx);
 
                 if (mEngine.isReady()) {
                     // 重置上轮对话历史，避免上下文污染
                     mEngine.reset();
                     runStream(prompt, cb);
                 } else {
-                    // 降级：专家规则流式输出
-                    String result = consumeDebugLog() + mExpert.generate(prompt);
+                    // 降级：专家规则直接产出与 LLM 同样的结构化格式，同样基于真实大盘/历史数据
+                    String result = consumeDebugLog()
+                            + mExpert.generateStructured(results, marketCtx, historyCtx, mCtxBuilder);
                     streamToCallback(result, cb);
                 }
             } catch (Exception e) {
@@ -236,6 +242,29 @@ public class LocalAIAgent {
                 mMainHandler.post(() -> cb.onError(e.getMessage()));
             }
         });
+    }
+
+    /** 为每支候选股拼接：基础指标 + 近期走势 + 个人历史操作提醒 */
+    private String buildPerStockContext(JSONArray results) throws Exception {
+        StringBuilder sb = new StringBuilder();
+        int n = Math.min(results.length(), 6); // 控制长度，避免超出本地小模型的 max_new_tokens 限制
+        for (int i = 0; i < n; i++) {
+            JSONObject r = results.getJSONObject(i);
+            String code = r.optString("code");
+            String trend = mCtxBuilder.buildRecentTrend(code);
+            String histNote = mCtxBuilder.buildStockHistoryNote(code);
+            sb.append(String.format("  %d. %s(%s) ¥%.2f 量比%sx 评分%d %s",
+                    i + 1,
+                    r.optString("name"), code,
+                    r.optDouble("latestClose", 0),
+                    r.optString("volMultiActual"),
+                    r.optInt("score"),
+                    r.optString("signal")));
+            if (!trend.isEmpty()) sb.append(" 近日:").append(trend);
+            if (!histNote.isEmpty()) sb.append(" ").append(histNote);
+            sb.append("\n");
+        }
+        return sb.toString();
     }
 
     // ──────────────────────────────────────────
@@ -339,30 +368,31 @@ public class LocalAIAgent {
     // 提示词构造
     // ──────────────────────────────────────────
 
-    private String buildScreenPrompt(JSONArray results, String expertPre) throws Exception {
+    private String buildScreenPrompt(JSONArray results, String marketCtx, String historyCtx, String perStockCtx) throws Exception {
         StringBuilder sb = new StringBuilder();
         sb.append(getSystemPrompt()).append("\n\n");
-        sb.append("【本次选股结果】共").append(results.length()).append("支：\n");
+        sb.append(marketCtx);
+        sb.append(historyCtx);
+        sb.append("\n【本次选股结果】共").append(results.length()).append("支通过公式筛选（下面每支都已附上近期走势和你自己的历史操作记录）：\n");
+        sb.append(perStockCtx);
 
-        for (int i = 0; i < Math.min(results.length(), 8); i++) {
-            JSONObject r = results.getJSONObject(i);
-            sb.append(String.format("  %d. %s(%s) ¥%.2f 量比%sx 评分%d %s\n",
-                    i + 1,
-                    r.optString("name"), r.optString("code"),
-                    r.optDouble("latestClose", 0),
-                    r.optString("volMultiActual"),
-                    r.optInt("score"),
-                    r.optString("signal")));
-        }
-        sb.append("\n【规则引擎预判】\n").append(expertPre);
-        sb.append("\n\n请从以下角度分析：①市场信号强弱 ②重点标的及理由 ③风险提示 ④操盘建议。");
-        sb.append("风格：资深操盘手，简洁直接，不超过200字。");
+        sb.append("\n【输出要求】严格按下面格式输出，不要写其他对话或寒暄：\n");
+        sb.append("◆大盘研判：一句话，结合上面的大盘指数和市场宽度数据，判断现在适合激进还是保守\n");
+        sb.append("对每一支股票，依次输出以下块（六行，不要增减字段）：\n");
+        sb.append("▶股票：名称(代码)\n评分：0-100的整数（可参考但不必等于规则引擎评分，结合大盘环境微调）\n");
+        sb.append("操作：从[买入/观察/回避]中选一个\n挂单：建议挂单价格区间（依据昨收+0.2~0.3的操盘手经验）\n");
+        sb.append("止损：具体价格（参考SAR支撑位）\n理由：一句话，必须提及大盘环境、量价信号、历史操作记录中至少一项具体依据，不要编造未提供的数字\n");
         return sb.toString();
     }
 
     private String buildChatPrompt(String message, String historyJson) throws Exception {
         StringBuilder sb = new StringBuilder();
         sb.append(getSystemPrompt()).append("\n\n");
+
+        // 给自由问答也接上一行简短的大盘背景（只用现有缓存，不重新触发下载，保持对话快途）
+        try {
+            sb.append("【当前大盘】").append(com.monsieurmahjong.iqoowang.util.MarketIndexManager.get().getMarketSummaryText()).append("\n\n");
+        } catch (Exception ignored) {}
 
         if (historyJson != null && !historyJson.isEmpty()) {
             JSONArray history = new JSONArray(historyJson);
@@ -411,9 +441,9 @@ public class LocalAIAgent {
                 "【你的职责】\n" +
                 "1. 分析股票时，主动结合操盘手经验给出具体挂单价区间\n" +
                 "2. 评估量价信号时，判断是信号A（放量突破）还是信号B（缩量整理）\n" +
-                "3. 筛选新闻时，优先关注：重大利好/利空公告、主力资金流向、行业政策、业绩预告\n" +
-                "4. 每次分析结果精炼，操盘手风格：直接、简洁、有明确操作建议\n" +
-                "5. 不超过200字，不废话\n";
+                "3. 必须结合给定的大盘指数、市场宽度、历史交易记录做判断，这些都是真实数据，不是可有可无的参考信息\n" +
+                "4. 绝不编造未提供的具体数字（如不存在的资金流向、新闻），没有依据就说\"数据不足\"，不要硬编\n" +
+                "5. 操盘手风格：直接、简洁、有明确操作建议；自由问答时不超过200字，选股分析时按指定的结构化格式输出，不受字数限制\n";
     }
 
     // ──────────────────────────────────────────
