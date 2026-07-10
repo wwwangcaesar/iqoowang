@@ -26,6 +26,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.monsieurmahjong.iqoowang.R;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
+import com.monsieurmahjong.iqoowang.utils.EditExpenseDialog;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -349,6 +350,10 @@ public class SearchActivity extends AppCompatActivity {
             holder.tvMeta.setText((remark != null && !remark.trim().isEmpty()) ? (timeStr + " · " + remark) : timeStr);
 
             holder.tvAmount.setText(String.format(Locale.getDefault(), "¥ %.2f", e.getAmount() / 100.0));
+
+            // 点击条目 → 弹出修改记录 BottomSheet（复用 DayDetailActivity 同款弹窗），保存后刷新搜索结果
+            holder.itemView.setOnClickListener(v ->
+                    EditExpenseDialog.show(SearchActivity.this, db, e, SearchActivity.this::performSearch));
         }
 
         @Override

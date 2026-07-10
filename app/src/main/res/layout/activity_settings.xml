@@ -68,19 +68,13 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <!-- 家庭档案模块 -->
-            <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
-
             <!-- 连续打卡模块（独立于消费记录，只认手动点亮打卡） -->
             <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical">
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
 
-            <TextView
+                <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="连续打卡"

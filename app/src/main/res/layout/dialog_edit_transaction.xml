@@ -40,18 +40,20 @@
             android:hint="消费金额 (元)" />
     </com.google.android.material.textfield.TextInputLayout>
 
+    <!-- 消费分类：单选下拉菜单（点击弹出已有分类列表，不允许直接自由输入） -->
     <com.google.android.material.textfield.TextInputLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginBottom="12dp"
         app:boxStrokeColor="#80bea6"
         app:hintTextColor="#80bea6"
-        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu">
 
-        <com.google.android.material.textfield.TextInputEditText
+        <AutoCompleteTextView
             android:id="@+id/et_edit_category"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:inputType="none"
             android:textColor="#064E3B"
             android:hint="消费分类" />
     </com.google.android.material.textfield.TextInputLayout>

@@ -135,20 +135,50 @@ public class HistoryGalleryActivity extends AppCompatActivity {
         selectedYear = REAL_CURRENT_YEAR;
         selectedMonth = REAL_CURRENT_MONTH;
 
-        int jumpYear = getIntent().getIntExtra("jump_year", -1);
-        int jumpMonth = getIntent().getIntExtra("jump_month", -1);
-        int jumpDay = getIntent().getIntExtra("jump_day", -1);
+        handleIncomingIntent(getIntent(), false);
+    }
+
+    /**
+     * 提取 Intent 中的 jump_year/jump_month/jump_day 并处理跳转。
+     *
+     * 重要：本 Activity 声明了 android:launchMode="singleTask"，
+     * 当实例已存在于任务栈中时，再次 startActivity() 会走 onNewIntent()，
+     * 而不会重新调用 onCreate()。之前跳转逻辑只写在 onCreate() 里，
+     * 导致从日历弹窗点击时，若 Activity 已经存在过，新的跳转参数会被静默丢弃，
+     * 必须退出重进（触发真正的 onCreate）才能看到正确结果。
+     * 现在 onCreate 和 onNewIntent 都调用同一套逻辑，修复这个问题。
+     */
+    private void handleIncomingIntent(Intent intent, boolean isNewIntent) {
+        if (intent == null) {
+            if (!isNewIntent) loadYearData();
+            return;
+        }
+
+        int jumpYear = intent.getIntExtra("jump_year", -1);
+        int jumpMonth = intent.getIntExtra("jump_month", -1);
+        int jumpDay = intent.getIntExtra("jump_day", -1);
 
         if (jumpYear > 0 && jumpMonth > 0 && jumpDay > 0) {
             // 来自日历弹窗的直接跳转：定位到对应年/月的周视图，并自动打开当天详情
+            if (isNewIntent) {
+                saveCurrentScrollState();
+            }
             selectedYear = jumpYear;
             selectedMonth = jumpMonth;
             pendingJumpDay = jumpDay;
             loadWeekData(selectedYear, selectedMonth);
-        } else {
-            // 默认进入：自动定位到当前年份（年视图列表默认以当前年份在顶部，已满足需求）
+        } else if (!isNewIntent) {
+            // 默认进入（仅 onCreate 首次启动时）：自动定位到当前年份
             loadYearData();
         }
+        // isNewIntent 且无跳转参数时（比如从其他入口普通重新打开），保持当前页面状态不变，不做额外处理
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIncomingIntent(intent, true);
     }
 
     private void saveCurrentScrollState() {

@@ -1,6 +1,7 @@
 package com.monsieurmahjong.iqoowang.fragment;
 
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
@@ -27,9 +28,11 @@ import com.monsieurmahjong.iqoowang.connect.Achievement;
 import com.monsieurmahjong.iqoowang.dao.AchievementManager;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
+import com.monsieurmahjong.iqoowang.streak.StreakActivity;
 import com.monsieurmahjong.iqoowang.utils.AchievementCelebrationDialog;
 import com.monsieurmahjong.iqoowang.utils.CheckInManager;
 import com.monsieurmahjong.iqoowang.utils.SpBudgetUtils;
+import com.monsieurmahjong.iqoowang.utils.StreakManager;
 import com.monsieurmahjong.iqoowang.view.CoolBudgetSeekBar;
 
 import java.io.IOException;
@@ -66,6 +69,10 @@ public class SettingsFragment extends Fragment {
     private LinearLayout llFamilyNewsContainer;
     private TextView tvFamilyNewsLoading;
     private LinearLayout llAchievementHeader;
+
+    private CardView cardStreakEntry;
+    private TextView tvStreakDays;
+    private final StreakManager streakManager = StreakManager.getInstance();
 
     // ── 数据 ─────────────────────────────────────────────
     /** 完整成就列表（含已解锁/未解锁），用于传递给 DialogFragment */
@@ -139,6 +146,8 @@ public class SettingsFragment extends Fragment {
         llFamilyNewsContainer= view.findViewById(R.id.ll_family_news_container);
         tvFamilyNewsLoading  = view.findViewById(R.id.tv_family_news_loading);
         llAchievementHeader  = view.findViewById(R.id.ll_achievement_header);
+        cardStreakEntry      = view.findViewById(R.id.card_streak_entry);
+        tvStreakDays         = view.findViewById(R.id.tv_streak_days);
 
         // ── 工具初始化 ───────────────────────────────────
         sharedPreferences = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
@@ -156,6 +165,11 @@ public class SettingsFragment extends Fragment {
         // 3. 成就徽章头部 → 弹出全部成就对话框
         llAchievementHeader.setOnClickListener(v -> openAchievementDialog());
 
+        // 4. 连续打卡卡片 → 跳转到打卡火苗页面（与消费记录完全独立）
+        if (cardStreakEntry != null) {
+            cardStreakEntry.setOnClickListener(v -> startActivity(new Intent(requireContext(), StreakActivity.class)));
+        }
+
         setupBudgetSlider();
 
         // 加载家庭新闻（模拟网络请求）
@@ -168,6 +182,23 @@ public class SettingsFragment extends Fragment {
         syncBudgetDisplay();
         calculateRealTimeCheckIn();
         updateAchievementsState();
+        refreshStreakDisplay();
+    }
+
+    // ─────────────────────────────────────────────────────
+    //  连续打卡（独立于消费记录，只认手动点亮打卡）
+    // ─────────────────────────────────────────────────────
+    private void refreshStreakDisplay() {
+        if (tvStreakDays == null || getContext() == null) return;
+        int streak = streakManager.getCurrentStreak(requireContext());
+        boolean checkedToday = streakManager.isCheckedToday(requireContext());
+        if (streak <= 0) {
+            tvStreakDays.setText("还没有打卡记录，点击点亮第一天的火苗");
+        } else if (checkedToday) {
+            tvStreakDays.setText(String.format(Locale.getDefault(), "连续 %d 天，今天已经点亮啦", streak));
+        } else {
+            tvStreakDays.setText(String.format(Locale.getDefault(), "连续 %d 天，点击点亮今天的火苗", streak));
+        }
     }
 
     // ─────────────────────────────────────────────────────

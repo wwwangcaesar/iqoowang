@@ -136,62 +136,11 @@ public class DayDetailActivity extends AppCompatActivity {
     }
 
     /**
-     * 弹出修改记录的 BottomSheet
-     */
-    /**
-     * 弹出修改记录的 BottomSheet
+     * 弹出修改记录的 BottomSheet（已抽成共用组件 EditExpenseDialog，
+     * SearchActivity 等其他入口点击条目也复用同一个弹窗）
      */
     private void showEditDialog(Expense expense) {
-        // 🌟 核心修复点 1：显式指定带有 Material 属性的底部弹窗主题
-        BottomSheetDialog dialog = new BottomSheetDialog(this, com.google.android.material.R.style.Theme_MaterialComponents_Light_BottomSheetDialog);
-
-        // 🌟 核心修复点 2：使用 ContextThemeWrapper 强行将 LayoutInflater 的上下文包装为 MaterialComponents 主题
-        // 这样可以确保布局内所有的 TextInputLayout 和 TextInputEditText 都能完美识别并渲染其样式
-        androidx.appcompat.view.ContextThemeWrapper contextThemeWrapper =
-                new androidx.appcompat.view.ContextThemeWrapper(this, com.google.android.material.R.style.Theme_MaterialComponents_Light);
-
-        // 🌟 注意：这里必须传入包装后的 contextThemeWrapper
-        View view = LayoutInflater.from(contextThemeWrapper).inflate(R.layout.dialog_edit_transaction, null);
-        dialog.setContentView(view);
-
-        TextInputEditText etAmount = view.findViewById(R.id.et_edit_amount);
-        TextInputEditText etCategory = view.findViewById(R.id.et_edit_category);
-        TextInputEditText etRemark = view.findViewById(R.id.et_edit_remark);
-        Button btnSave = view.findViewById(R.id.btn_save_changes);
-
-        // 回显数据
-        etAmount.setText(String.valueOf(expense.getAmount() / 100.0));
-        etCategory.setText(expense.getCategoryName());
-        if (expense.getRemark() != null) {
-            etRemark.setText(expense.getRemark());
-        }
-
-        btnSave.setOnClickListener(v -> {
-            try {
-                double newAmountDouble = Double.parseDouble(etAmount.getText().toString());
-                long newAmountCents = (long) (newAmountDouble * 100);
-                String newCategory = etCategory.getText().toString().trim();
-                String newRemark = etRemark.getText().toString().trim();
-
-                expense.setAmount(newAmountCents);
-                expense.setCategoryName(newCategory.isEmpty() ? "其他支出" : newCategory);
-                expense.setRemark(newRemark);
-
-                new Thread(() -> {
-                    db.expenseDao().updateExpense(expense);
-                    runOnUiThread(() -> {
-                        dialog.dismiss();
-                        Toast.makeText(this, "修改成功", Toast.LENGTH_SHORT).show();
-                    });
-                }).start();
-            } catch (NumberFormatException e) {
-                Toast.makeText(this, "请输入合法的金额", Toast.LENGTH_SHORT).show();
-            }
-        });
-
-        // 让 BottomSheet 背景透明以展示我们自绘的圆角背景
-        ((View) view.getParent()).setBackgroundColor(Color.TRANSPARENT);
-        dialog.show();
+        com.monsieurmahjong.iqoowang.utils.EditExpenseDialog.show(this, db, expense, null);
     }
 
 
