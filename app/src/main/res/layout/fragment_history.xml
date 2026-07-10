@@ -68,14 +68,14 @@
                 android:layout_marginEnd="18dp"
                 android:src="@drawable/ic_search"
                 app:layout_constraintBottom_toBottomOf="@id/iv_avatar"
-                app:layout_constraintEnd_toStartOf="@id/iv_calendar"
+                app:layout_constraintEnd_toStartOf="@id/iv_piggy_bank"
                 app:layout_constraintTop_toTopOf="@id/iv_avatar"/>
 
             <ImageView
-                android:id="@+id/iv_calendar"
+                android:id="@+id/iv_piggy_bank"
                 android:layout_width="24dp"
                 android:layout_height="24dp"
-                android:src="@drawable/ic_calendar"
+                android:src="@drawable/ic_piggy_bank"
                 app:layout_constraintBottom_toBottomOf="@id/iv_avatar"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintTop_toTopOf="@id/iv_avatar"/>

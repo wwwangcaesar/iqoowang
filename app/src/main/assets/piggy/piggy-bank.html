@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>心愿储蓄罐</title>
+<style>
+  :root{
+    --bg-a:#FFF6E9; --bg-b:#FFE3C2; --bg-c:#FFD3E4;
+    --card:#FFFFFF; --card-line:rgba(150,100,40,.08);
+    --text:#3A2A17; --sub:#9A8367;
+    --primary:#FF9A3C; --primary-2:#FFCB4C; --accent:#FF6F91;
+    --ring:#FFFFFF; --shadow:0 18px 40px rgba(255,140,40,.22);
+    --track:#FFE7C6; --track-fill:linear-gradient(90deg,#FF9A3C,#FFCB4C);
+    --glow:0 0 0 rgba(0,0,0,0);
+    --radius:26px;
+    --font-display:'PingFang SC','Noto Sans SC',-apple-system,sans-serif;
+  }
+  body.cyber{
+    --bg-a:#050716; --bg-b:#0B0F2E; --bg-c:#160B33;
+    --card:#0D1230; --card-line:rgba(120,180,255,.18);
+    --text:#E7ECFF; --sub:#8792C9;
+    --primary:#20E3FF; --primary-2:#B355FF; --accent:#FF2FD0;
+    --ring:#20E3FF; --shadow:0 0 40px rgba(32,227,255,.18);
+    --track:#141A3D; --track-fill:linear-gradient(90deg,#20E3FF,#B355FF);
+    --glow:0 0 24px rgba(32,227,255,.55);
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none;}
+  html,body{margin:0;padding:0;height:100%;}
+  body{
+    font-family:var(--font-display);
+    color:var(--text);
+    min-height:100vh;
+    background:
+      radial-gradient(120% 90% at 15% -10%, var(--bg-c) 0%, transparent 55%),
+      radial-gradient(120% 90% at 100% 0%, var(--bg-b) 0%, transparent 60%),
+      var(--bg-a);
+    transition:background .7s ease, color .5s ease;
+    overflow-x:hidden;
+    padding-bottom:40px;
+  }
+  body.cyber{ background:
+      radial-gradient(120% 90% at 15% -10%, var(--bg-c) 0%, transparent 55%),
+      radial-gradient(120% 90% at 100% 0%, var(--bg-b) 0%, transparent 60%),
+      var(--bg-a);
+  }
+
+  /* ── 顶部栏 ─────────────────────────── */
+  .topbar{ display:flex; align-items:center; justify-content:space-between; padding:18px 20px 6px; }
+  .back{ width:36px;height:36px;border-radius:50%; display:flex;align-items:center;justify-content:center;
+    background:var(--card); box-shadow:var(--shadow); font-size:20px; color:var(--text); border:1px solid var(--card-line); }
+  .title{ font-size:17px; font-weight:700; letter-spacing:.5px; }
+  .theme-toggle{ display:flex; background:var(--card); border-radius:999px; padding:3px; box-shadow:var(--shadow); border:1px solid var(--card-line); }
+  .theme-toggle button{ border:none; background:transparent; padding:7px 12px; border-radius:999px; font-size:12px; color:var(--sub); font-weight:600; }
+  .theme-toggle button.active{ background:linear-gradient(90deg,var(--primary),var(--primary-2)); color:#fff; box-shadow:0 4px 12px rgba(255,140,40,.35); }
+  body.cyber .theme-toggle button.active{ box-shadow:0 0 14px rgba(32,227,255,.6); }
+
+  /* ── 目标卡片 ─────────────────────────── */
+  .goal-card{
+    margin:14px 20px 0; padding:18px 20px; border-radius:22px;
+    background:var(--card); border:1px solid var(--card-line); box-shadow:var(--shadow);
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    position:relative; overflow:hidden;
+  }
+  body.cyber .goal-card::before{
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background:repeating-linear-gradient(180deg, rgba(32,227,255,.06) 0px, rgba(32,227,255,.06) 1px, transparent 1px, transparent 3px);
+    mix-blend-mode:screen; opacity:.5;
+  }
+  .goal-info .goal-name{ font-size:13px; color:var(--sub); font-weight:600; }
+  .goal-info .goal-target{ font-size:20px; font-weight:800; margin-top:2px; }
+  .goal-info .goal-deadline{ font-size:12px; color:var(--sub); margin-top:4px; }
+  .goal-deadline b{ color:var(--accent); }
+  .edit-goal{ width:34px;height:34px;border-radius:50%; border:none; background:var(--track); color:var(--primary);
+    font-size:16px; display:flex;align-items:center;justify-content:center; flex-shrink:0; }
+
+  /* ── 舞台：储蓄罐 ─────────────────────────── */
+  .stage{ position:relative; height:300px; margin-top:6px; display:flex; align-items:center; justify-content:center; }
+  .stage-glow{
+    position:absolute; width:230px; height:230px; border-radius:50%;
+    background:radial-gradient(circle, var(--primary-2) 0%, transparent 68%);
+    opacity:.35; filter:blur(6px); animation:pulseGlow 3.4s ease-in-out infinite;
+    transition:background .4s;
+  }
+  body.cyber .stage-glow{ background:radial-gradient(circle, var(--primary) 0%, transparent 65%); opacity:.28; }
+  .stage-glow.angry{ background:radial-gradient(circle, #FF5B4A 0%, rgba(255,90,70,.16) 55%, transparent 75%) !important; }
+  @keyframes pulseGlow{ 0%,100%{ transform:scale(.94); opacity:.28;} 50%{ transform:scale(1.05); opacity:.42;} }
+
+  .piggy-wrap{ position:relative; width:190px; height:190px; animation:idleBreathe 3.2s ease-in-out infinite; }
+  @keyframes idleBreathe{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.018);} }
+  .piggy-wrap.micro-jiggle{ animation:microJiggle .24s ease-out; }
+  @keyframes microJiggle{
+    0%{ transform:rotate(0deg) scale(1.018); }
+    30%{ transform:rotate(-2.4deg) scale(1.018); }
+    65%{ transform:rotate(1.7deg) scale(1.018); }
+    100%{ transform:rotate(0deg) scale(1.018); }
+  }
+  .piggy-wrap.angry{ animation:angryShake .42s ease-in-out infinite; }
+  @keyframes angryShake{
+    0%,100%{ transform:rotate(0deg); }
+    25%{ transform:rotate(-2.6deg); }
+    75%{ transform:rotate(2.6deg); }
+  }
+
+  .piggy{ width:100%; height:100%; transform-origin:50% 62%; filter:drop-shadow(0 14px 20px rgba(255,120,40,.28)); transition:filter .5s; }
+  body.cyber .piggy{ filter:drop-shadow(0 0 22px rgba(32,227,255,.55)); }
+  .piggy.wobble{ animation:piggyWobble .68s cubic-bezier(.34,1.56,.64,1); }
+  @keyframes piggyWobble{
+    0%{ transform:scale(.92) rotate(0deg); }
+    28%{ transform:scale(1.09) rotate(-4deg); }
+    55%{ transform:scale(1.03) rotate(4deg); }
+    78%{ transform:scale(1.015) rotate(-1.5deg); }
+    100%{ transform:scale(1) rotate(0deg); }
+  }
+  .piggy-body{ fill:url(#pigBodyGradReward); transition:fill .6s; }
+  .piggy.angry .piggy-body{ fill:url(#pigBodyGradAngry); }
+  .piggy-body-shade{ fill:var(--primary-2); opacity:.55; transition:fill .6s; }
+  .piggy-detail{ fill:var(--text); opacity:.85; }
+  body.cyber .piggy-body{ fill:url(#pigBodyGradCyber); stroke:var(--primary); stroke-width:2.4; }
+  body.cyber .piggy-body-shade{ fill:none; stroke:var(--primary-2); stroke-width:1.4; opacity:.7; }
+  body.cyber .piggy-detail{ fill:var(--primary); opacity:.9; }
+  .piggy-scanline{ opacity:0; }
+  body.cyber .piggy-scanline{ opacity:1; }
+
+  /* 细腻纹理：噪点颗粒 + 褶皱线条，赛博皮肤下隐藏（走描边风格更合适） */
+  .skin-texture{ opacity:.7; pointer-events:none; }
+  body.cyber .skin-texture{ opacity:0; }
+
+  /* 生气表情：默认不可见，超支状态下由 JS 加 .angry 类触发 */
+  .angry-marks{ opacity:0; transition:opacity .35s ease; pointer-events:none; }
+  .piggy.angry .angry-marks{ opacity:1; }
+  .angry-tint{ fill:#FF3B2E; opacity:.24; mix-blend-mode:multiply; }
+  body.cyber .angry-tint{ fill:#FF2FD0; mix-blend-mode:screen; opacity:.2; }
+  .angry-brow{ stroke:#7A2411; stroke-width:3.2; stroke-linecap:round; fill:none; }
+  body.cyber .angry-brow{ stroke:#FF2FD0; }
+  .angry-steam{ stroke:#C9C4BC; stroke-width:2; fill:none; stroke-linecap:round; opacity:.75;
+    animation:steamFloat 1.6s ease-in-out infinite; transform-box:fill-box; transform-origin:bottom center; }
+  .angry-steam:nth-child(4){ animation-delay:.3s; }
+  @keyframes steamFloat{ 0%{ transform:translateY(0); opacity:.75;} 100%{ transform:translateY(-6px); opacity:0;} }
+
+  .coin-slot{ fill:#7a4a12; opacity:.85; }
+  body.cyber .coin-slot{ fill:#000; opacity:.9; }
+
+  /* 罐内金币：更大、更像真实硬币（带内圈压边 + 高光），取代原来的"豆子" */
+  .pile-coin{ transition:none; }
+  .pile-coin .coin-face{ fill:url(#coinGradReward); stroke:#B8631A; stroke-width:1.8;
+    transform-box:fill-box; transform-origin:center; }
+  body.cyber .pile-coin .coin-face{ fill:url(#coinGradCyber); stroke:#0C1A33; stroke-width:1.5; }
+  .pile-coin .coin-rim{ stroke:rgba(255,255,255,.55); stroke-width:1.1; }
+  body.cyber .pile-coin .coin-rim{ stroke:rgba(32,227,255,.55); }
+  .pile-coin .coin-shine{ fill:rgba(255,255,255,.78); pointer-events:none; }
+  body.cyber .pile-coin .coin-shine{ fill:rgba(255,255,255,.6); }
+
+  .fill-pct-label{ font-size:11px; font-weight:800; fill:#fff; opacity:0; transition:opacity .5s; text-anchor:middle; paint-order:stroke; stroke:#00000055; stroke-width:2px; }
+  .fill-pct-label.show{ opacity:.95; }
+
+  /* 冲击波 / 能量环 */
+  .shock{ position:absolute; left:50%; top:52%; width:20px; height:20px; margin:-10px 0 0 -10px;
+    border-radius:50%; border:3px solid var(--primary-2); opacity:0; pointer-events:none; }
+  .shock.play{ animation:shockPlay .6s cubic-bezier(.16,1,.3,1) forwards; }
+  @keyframes shockPlay{
+    0%{ width:20px;height:20px;margin:-10px 0 0 -10px; opacity:.85; border-width:4px;}
+    100%{ width:230px;height:230px;margin:-115px 0 0 -115px; opacity:0; border-width:1px;}
+  }
+  body.cyber .shock{ border-color:var(--primary); box-shadow:0 0 18px var(--primary); }
+
+  /* ── 金额区 ─────────────────────────── */
+  .amount-zone{ text-align:center; margin-top:2px; }
+  .amount-label{ font-size:12px; color:var(--sub); letter-spacing:1px; }
+  .amount-value{ font-size:38px; font-weight:800; margin-top:2px;
+    background:linear-gradient(90deg,var(--primary),var(--accent));
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  body.cyber .amount-value{ background:linear-gradient(90deg,var(--primary),var(--primary-2)); -webkit-background-clip:text; background-clip:text; text-shadow:0 0 18px rgba(32,227,255,.35); }
+
+  .progress-track{ height:12px; border-radius:999px; background:var(--track); margin:14px 20px 4px; overflow:hidden; position:relative; }
+  .progress-fill{ height:100%; width:0%; border-radius:999px; background:var(--track-fill); transition:width .8s cubic-bezier(.16,1,.3,1); position:relative; }
+  .progress-fill::after{ content:''; position:absolute; inset:0; background:linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent); width:40%; animation:shimmer 2.2s linear infinite; }
+  @keyframes shimmer{ 0%{ transform:translateX(-120%);} 100%{ transform:translateX(320%);} }
+  .progress-meta{ display:flex; justify-content:space-between; padding:0 21px; font-size:12px; color:var(--sub); }
+
+  /* 时效节奏刻度：在进度条上标出"按剩余天数换算，此刻应存到的位置" */
+  .pace-marker{ position:absolute; top:-4px; width:2px; height:20px; background:var(--text); opacity:.55; border-radius:2px;
+    transition:left .8s cubic-bezier(.16,1,.3,1); pointer-events:none; }
+  .pace-marker::after{ content:'目标节奏'; position:absolute; top:-18px; left:50%; transform:translateX(-50%); font-size:9px;
+    color:var(--sub); white-space:nowrap; opacity:.8; }
+  body.cyber .pace-marker{ background:var(--primary-2); box-shadow:0 0 8px var(--primary-2); }
+
+  .pace-status{ margin:10px 20px 0; padding:10px 14px; border-radius:14px; font-size:12px; font-weight:700; text-align:center;
+    background:var(--track); color:var(--sub); transition:background .4s,color .4s; }
+  .pace-status.ahead{ background:linear-gradient(90deg, rgba(120,220,150,.18), rgba(120,220,150,.06)); color:#1F9D57; }
+  .pace-status.ontrack{ background:linear-gradient(90deg, rgba(255,196,60,.2), rgba(255,196,60,.06)); color:#B8790C; }
+  .pace-status.behind{ background:linear-gradient(90deg, rgba(255,110,110,.18), rgba(255,110,110,.06)); color:#D34848; }
+  body.cyber .pace-status.ahead{ background:rgba(32,227,255,.14); color:var(--primary); }
+  body.cyber .pace-status.ontrack{ background:rgba(179,85,255,.16); color:var(--primary-2); }
+  body.cyber .pace-status.behind{ background:rgba(255,47,208,.16); color:var(--accent); }
+
+  /* ── 存入按钮组 ─────────────────────────── */
+  .deposit-row{ display:flex; gap:10px; padding:20px 20px 4px; }
+  .coin-btn{ flex:1; position:relative; border:none; border-radius:18px; padding:14px 6px; font-size:15px; font-weight:800;
+    color:#fff; background:linear-gradient(135deg,var(--primary),var(--primary-2)); box-shadow:0 10px 22px rgba(255,140,40,.35);
+    overflow:visible; }
+  body.cyber .coin-btn{ background:linear-gradient(135deg,var(--primary),var(--primary-2)); box-shadow:0 0 20px rgba(32,227,255,.4); }
+  .coin-btn:active{ transform:scale(.96); }
+  .coin-btn .sub{ display:block; font-size:10px; font-weight:600; opacity:.85; margin-top:2px;}
+
+  .custom-row{ display:flex; gap:10px; padding:10px 20px 0; }
+  .custom-input{ flex:1; border-radius:16px; border:1px solid var(--card-line); background:var(--card); color:var(--text);
+    padding:12px 14px; font-size:15px; font-weight:700; }
+  .custom-input::placeholder{ color:var(--sub); font-weight:500; }
+  .custom-go{ width:52px; border:none; border-radius:16px; background:var(--text); color:var(--card); font-size:20px; font-weight:800; }
+  body.cyber .custom-go{ background:linear-gradient(135deg,var(--primary),var(--primary-2)); color:#050716; }
+
+  .hint{ text-align:center; font-size:12px; color:var(--sub); margin-top:16px; padding:0 30px; line-height:1.6;}
+
+  /* ── 里程碑 / 完成横幅 ─────────────────────────── */
+  .milestone-banner{
+    position:fixed; left:50%; top:18%; transform:translate(-50%,-14px) scale(.9); opacity:0;
+    background:linear-gradient(135deg,var(--primary),var(--accent)); color:#fff; padding:14px 26px; border-radius:18px;
+    font-weight:800; font-size:16px; box-shadow:0 18px 40px rgba(255,90,90,.35); pointer-events:none; z-index:40; text-align:center; white-space:nowrap;
+  }
+  .milestone-banner.show{ animation:milestonePop 1.9s cubic-bezier(.34,1.56,.64,1) forwards; }
+  @keyframes milestonePop{
+    0%{ opacity:0; transform:translate(-50%,-14px) scale(.7); }
+    14%{ opacity:1; transform:translate(-50%,0) scale(1.08); }
+    22%{ transform:translate(-50%,0) scale(1); }
+    82%{ opacity:1; transform:translate(-50%,0) scale(1); }
+    100%{ opacity:0; transform:translate(-50%,-10px) scale(.94); }
+  }
+  body.cyber .milestone-banner{ background:linear-gradient(135deg,var(--primary),var(--primary-2)); color:#050716; letter-spacing:1px; text-shadow:none; box-shadow:0 0 30px rgba(32,227,255,.6);}
+
+  canvas#fx{ position:fixed; inset:0; pointer-events:none; z-index:30; }
+
+  /* ── 设置弹层 ─────────────────────────── */
+  .sheet-mask{ position:fixed; inset:0; background:rgba(10,6,2,.45); backdrop-filter:blur(2px); opacity:0; pointer-events:none; transition:opacity .25s; z-index:50;}
+  .sheet-mask.show{ opacity:1; pointer-events:auto; }
+  .sheet{ position:fixed; left:0; right:0; bottom:0; background:var(--card); border-radius:24px 24px 0 0; padding:22px 22px 28px;
+    transform:translateY(100%); transition:transform .32s cubic-bezier(.16,1,.3,1); z-index:51; border-top:1px solid var(--card-line); }
+  .sheet-mask.show .sheet{ transform:translateY(0); }
+  .sheet h3{ margin:0 0 14px; font-size:17px; }
+  .field{ margin-bottom:14px; }
+  .field label{ font-size:12px; color:var(--sub); display:block; margin-bottom:6px; }
+  .field input{ width:100%; border-radius:14px; border:1px solid var(--card-line); background:var(--bg-a); color:var(--text);
+    padding:12px 14px; font-size:15px; font-weight:600; }
+  body.cyber .field input{ background:#0A0E27; }
+  .sheet-actions{ display:flex; gap:10px; margin-top:6px; }
+  .sheet-actions button{ flex:1; border:none; border-radius:14px; padding:13px; font-weight:800; font-size:14px; }
+  .sheet-cancel{ background:var(--track); color:var(--sub); }
+  .sheet-save{ background:linear-gradient(135deg,var(--primary),var(--primary-2)); color:#fff; }
+  body.cyber .sheet-save{ color:#050716; }
+</style>
+</head>
+<body>
+
+  <canvas id="fx"></canvas>
+  <div class="milestone-banner" id="milestone"></div>
+
+  <div class="topbar">
+    <div class="back" onclick="window.PiggyBridge && PiggyBridge.close && PiggyBridge.close()">‹</div>
+    <div class="title">心愿储蓄罐</div>
+    <div class="theme-toggle">
+      <button id="btnReward" class="active" onclick="setTheme('reward')">治愈</button>
+      <button id="btnCyber" onclick="setTheme('cyber')">赛博</button>
+    </div>
+  </div>
+
+  <div class="goal-card">
+    <div class="goal-info">
+      <div class="goal-name" id="goalName">新耳机基金</div>
+      <div class="goal-target">目标 <span id="goalTarget">¥899.00</span></div>
+      <div class="goal-deadline">预计期限还剩 <b id="goalDays">45</b> 天</div>
+    </div>
+    <button class="edit-goal" onclick="openSheet()">✎</button>
+  </div>
+
+  <div class="stage">
+    <div class="stage-glow"></div>
+    <div class="shock" id="shock"></div>
+    <div class="piggy-wrap">
+      <svg class="piggy" id="piggy" viewBox="0 0 200 200">
+        <defs>
+          <clipPath id="piggyBellyClip">
+            <ellipse cx="100" cy="115" rx="70" ry="52"/>
+          </clipPath>
+          <clipPath id="piggyFullClip">
+            <ellipse cx="100" cy="115" rx="72" ry="54"/>
+            <circle cx="150" cy="85" r="20"/>
+            <circle cx="55" cy="80" r="16"/>
+          </clipPath>
+          <radialGradient id="coinGradReward" cx="35%" cy="30%" r="75%">
+            <stop offset="0%" stop-color="#FFF3CE"/>
+            <stop offset="55%" stop-color="#FFCB4C"/>
+            <stop offset="100%" stop-color="#FF9A3C"/>
+          </radialGradient>
+          <radialGradient id="coinGradCyber" cx="35%" cy="30%" r="75%">
+            <stop offset="0%" stop-color="#E8FBFF"/>
+            <stop offset="55%" stop-color="#20E3FF"/>
+            <stop offset="100%" stop-color="#B355FF"/>
+          </radialGradient>
+          <linearGradient id="pigBodyGradReward" x1="0.2" y1="0" x2="0.75" y2="1">
+            <stop offset="0%" stop-color="#FFC17E"/>
+            <stop offset="45%" stop-color="#FF9A3C"/>
+            <stop offset="100%" stop-color="#F0791E"/>
+          </linearGradient>
+          <linearGradient id="pigBodyGradCyber" x1="0.2" y1="0" x2="0.75" y2="1">
+            <stop offset="0%" stop-color="#1B2456"/>
+            <stop offset="100%" stop-color="#0B0F26"/>
+          </linearGradient>
+          <linearGradient id="pigBodyGradAngry" x1="0.2" y1="0" x2="0.75" y2="1">
+            <stop offset="0%" stop-color="#FF8F6B"/>
+            <stop offset="45%" stop-color="#FF6B4A"/>
+            <stop offset="100%" stop-color="#E24B2E"/>
+          </linearGradient>
+          <filter id="grainFilter" x="-20%" y="-20%" width="140%" height="140%">
+            <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="2" stitchTiles="stitch" result="noise"/>
+            <feColorMatrix in="noise" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.06 0"/>
+          </filter>
+        </defs>
+
+        <ellipse class="piggy-body" cx="100" cy="115" rx="72" ry="54"/>
+        <ellipse class="piggy-body-shade" cx="80" cy="140" rx="46" ry="18"/>
+
+        <!-- 细腻纹理：低透明度噪点颗粒，叠加在猪身表面，让皮肤看起来不是纯色平涂 -->
+        <g class="skin-texture" clip-path="url(#piggyFullClip)">
+          <rect x="20" y="45" width="164" height="150" filter="url(#grainFilter)" opacity=".55"/>
+        </g>
+        <!-- 细腻纹理：腿部/身体连接处的褶皱细节 -->
+        <g class="skin-texture">
+          <path d="M58,166 Q65,158 74,164" stroke="#00000020" stroke-width="2" fill="none" stroke-linecap="round"/>
+          <path d="M133,166 Q140,158 149,164" stroke="#00000020" stroke-width="2" fill="none" stroke-linecap="round"/>
+          <path d="M118,145 Q100,152 82,146" stroke="#00000014" stroke-width="2" fill="none" stroke-linecap="round"/>
+        </g>
+
+        <!-- 罐内金币堆：真实物理掉落 + 碰撞挤压，由 JS 动态生成/更新 <g class="pile-coin"> -->
+        <g id="coinPileGroup" clip-path="url(#piggyBellyClip)"></g>
+        <text id="fillPctLabel" class="fill-pct-label" x="100" y="150">0%</text>
+
+        <circle class="piggy-body" cx="150" cy="85" r="20"/>
+        <circle class="piggy-body" cx="55" cy="80" r="16"/>
+        <circle class="piggy-body" cx="150" cy="90" r="4" fill="#3A2A17" opacity=".7"/>
+        <polygon class="piggy-body" points="45,64 60,58 55,80"/>
+        <polygon class="piggy-body" points="70,56 84,54 78,78"/>
+        <ellipse class="piggy-detail" cx="150" cy="86" rx="3" ry="4"/>
+        <ellipse class="piggy-body" cx="34" cy="112" rx="18" ry="14"/>
+        <ellipse class="piggy-detail" cx="27" cy="110" rx="5" ry="7"/>
+        <ellipse class="piggy-detail" cx="27" cy="118" rx="5" ry="7"/>
+        <rect class="piggy-body" x="55" y="158" width="14" height="26" rx="6"/>
+        <rect class="piggy-body" x="130" y="158" width="14" height="26" rx="6"/>
+        <rect class="coin-slot" x="82" y="70" width="36" height="8" rx="4"/>
+
+        <!-- 生气表情：默认隐藏，超支状态下显示（皱眉 + 泛红 + 蒸汽） -->
+        <g class="angry-marks">
+          <ellipse class="angry-tint" cx="128" cy="102" rx="58" ry="44"/>
+          <path class="angry-brow" d="M133,73 L148,67" />
+          <path class="angry-brow" d="M156,67 L169,74" />
+          <path class="angry-steam" d="M118,52 q-4,-8 2,-14 q6,-6 1,-14" />
+          <path class="angry-steam" d="M136,48 q-4,-8 2,-14 q6,-6 1,-14" />
+        </g>
+
+        <g class="piggy-scanline">
+          <line x1="30" y1="98" x2="172" y2="98" stroke="#20E3FF" stroke-width="1" opacity=".5"/>
+          <line x1="30" y1="130" x2="172" y2="130" stroke="#20E3FF" stroke-width="1" opacity=".35"/>
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  <div class="amount-zone">
+    <div class="amount-label">已存入</div>
+    <div class="amount-value" id="amountValue">¥0.00</div>
+  </div>
+
+  <div class="progress-track">
+    <div class="progress-fill" id="progressFill"></div>
+    <div class="pace-marker" id="paceMarker" style="left:0%"></div>
+  </div>
+  <div class="progress-meta"><span id="progressPct">0%</span><span id="progressRemain">还差 ¥899.00</span></div>
+  <div class="pace-status" id="paceStatus">设置目标期限后，这里会告诉你存钱节奏快慢～</div>
+
+  <div class="deposit-row">
+    <button class="coin-btn" data-amt="20" onclick="deposit(event,20)">+¥20<span class="sub">零钱</span></button>
+    <button class="coin-btn" data-amt="50" onclick="deposit(event,50)">+¥50<span class="sub">日常</span></button>
+    <button class="coin-btn" data-amt="100" onclick="deposit(event,100)">+¥100<span class="sub">加把劲</span></button>
+  </div>
+  <div class="custom-row">
+    <input class="custom-input" id="customAmt" type="number" inputmode="decimal" placeholder="自定义金额" />
+    <button class="custom-go" onclick="depositCustom(event)">→</button>
+  </div>
+
+  <div class="hint">每一次存入都会被记录，攒够目标金额，愿望就成真啦～</div>
+
+  <div class="sheet-mask" id="sheetMask" onclick="closeSheetOnMask(event)">
+    <div class="sheet">
+      <h3>设置心愿目标</h3>
+      <div class="field"><label>心愿名称</label><input id="inputName" type="text" placeholder="例如：新耳机"/></div>
+      <div class="field"><label>目标金额（元）</label><input id="inputTarget" type="number" inputmode="decimal" placeholder="899"/></div>
+      <div class="field"><label>预计期限（天）</label><input id="inputDays" type="number" inputmode="numeric" placeholder="45"/></div>
+      <div class="sheet-actions">
+        <button class="sheet-cancel" onclick="closeSheet()">取消</button>
+        <button class="sheet-save" onclick="saveGoal()">保存目标</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   数据状态（后续由 Android JavascriptInterface 注入真实数据）
+   window.PiggyBridge.getGoalData() -> {name,targetCents,savedCents,deadlineDays,style}
+   window.PiggyBridge.deposit(cents) -> 持久化存入金额
+   window.PiggyBridge.saveGoal(name,targetCents,deadlineDays)
+   ════════════════════════════════════════════════════════════ */
+const DAY_MS = 86400000;
+let state = {
+  name:'新耳机基金',
+  target:899,
+  saved:236,
+  totalDays:45,           // 目标制定时设置的总期限（天）
+  createdAt: Date.now() - 15*DAY_MS,  // 目标建立时间；演示默认已过 15 天，便于直接看到节奏刻度效果
+  theme:'reward'
+};
+
+function paceInfo(){
+  const elapsed = Math.max(0, Math.min(state.totalDays, Math.floor((Date.now()-state.createdAt)/DAY_MS)));
+  const remain = Math.max(0, state.totalDays - elapsed);
+  const expectedPct = state.totalDays>0 ? Math.min(100, (elapsed/state.totalDays)*100) : 0;
+  const actualPct = state.target>0 ? Math.min(100, (state.saved/state.target)*100) : 0;
+  return {elapsed, remain, expectedPct, actualPct};
+}
+
+function fmt(n){ return '¥' + n.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+function render(full){
+  document.getElementById('goalName').textContent = state.name;
+  document.getElementById('goalTarget').textContent = fmt(state.target);
+
+  const pace = paceInfo();
+  document.getElementById('goalDays').textContent = pace.remain;
+
+  const pct = pace.actualPct;
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressPct').textContent = Math.round(pct) + '%';
+  const remainAmt = Math.max(0, state.target - state.saved);
+  document.getElementById('progressRemain').textContent = remainAmt <= 0 ? '已达成目标 🎉' : ('还差 ' + fmt(remainAmt));
+
+  // 节奏刻度：按已过天数/总期限换算出"此刻该存到的位置"，标在进度条上
+  const marker = document.getElementById('paceMarker');
+  marker.style.left = Math.max(0,Math.min(100,pace.expectedPct)) + '%';
+
+  // 节奏文案 + 状态色：对比"实际占比"与"时间应存占比"
+  const status = document.getElementById('paceStatus');
+  const diff = pace.actualPct - pace.expectedPct;
+  status.classList.remove('ahead','ontrack','behind');
+  if(state.saved<=0 && pace.elapsed<1){
+    status.textContent = `按 ${state.totalDays} 天的计划，平均每天约存 ${fmt(state.target/Math.max(1,state.totalDays))}`;
+  } else if(diff >= 6){
+    status.classList.add('ahead');
+    status.textContent = `存钱节奏遥遥领先，比计划快了 ${Math.round(diff)}% 🚀`;
+  } else if(diff <= -6){
+    status.classList.add('behind');
+    status.textContent = `节奏有点慢，比计划落后 ${Math.round(-diff)}%，加把劲哦 💪`;
+  } else {
+    status.classList.add('ontrack');
+    status.textContent = `存钱节奏刚刚好，按计划推进中 👍`;
+  }
+
+  // 罐内金币堆百分比标签（金币堆本身由 dropCoins() 物理掉落生成，这里只负责文字）
+  const pctLabel = document.getElementById('fillPctLabel');
+  pctLabel.textContent = Math.round(pct) + '%';
+  pctLabel.classList.toggle('show', pct >= 8);
+
+  if(full !== false) animateNumber(document.getElementById('amountValue'), state.saved);
+}
+
+function animateNumber(el, target){
+  const start = parseFloat((el.textContent||'').replace(/[^\d.]/g,'')) || 0;
+  const dur = 650; const t0 = performance.now();
+  function easeOutExpo(t){ return t===1?1:1-Math.pow(2,-10*t); }
+  function step(t){
+    const p = Math.min(1,(t-t0)/dur);
+    const v = start + (target-start)*easeOutExpo(p);
+    el.textContent = fmt(Math.max(0,v));
+    if(p<1) requestAnimationFrame(step);
+    else el.textContent = fmt(target);
+  }
+  requestAnimationFrame(step);
+}
+
+/* ── 主题切换 ───────────────────────────── */
+function setTheme(t){
+  state.theme = t;
+  document.body.classList.toggle('cyber', t==='cyber');
+  document.getElementById('btnReward').classList.toggle('active', t==='reward');
+  document.getElementById('btnCyber').classList.toggle('active', t==='cyber');
+  if(window.PiggyBridge && PiggyBridge.setStyle) PiggyBridge.setStyle(t);
+}
+
+/* ── 设置弹层 ───────────────────────────── */
+function openSheet(){
+  document.getElementById('inputName').value = state.name;
+  document.getElementById('inputTarget').value = state.target;
+  document.getElementById('inputDays').value = paceInfo().remain || state.totalDays;
+  document.getElementById('sheetMask').classList.add('show');
+}
+function closeSheet(){ document.getElementById('sheetMask').classList.remove('show'); }
+function closeSheetOnMask(e){ if(e.target.id==='sheetMask') closeSheet(); }
+function saveGoal(){
+  const name = document.getElementById('inputName').value.trim() || '我的心愿';
+  const target = Math.max(1, parseFloat(document.getElementById('inputTarget').value) || state.target);
+  const days = Math.max(1, parseInt(document.getElementById('inputDays').value) || state.totalDays);
+  state.name = name; state.target = target;
+  // 重新设定期限：从今天起重新计算节奏（总期限=输入天数，已过天数清零）
+  state.totalDays = days; state.createdAt = Date.now();
+  render();
+  closeSheet();
+  if(window.PiggyBridge && PiggyBridge.saveGoal) PiggyBridge.saveGoal(name, Math.round(target*100), days, state.createdAt);
+}
+
+/* ════════════════════════════════════════════════════════════
+   粒子引擎（canvas）：拖尾 / 冲击星光 / 撞入粒子 / 纸屑
+   ════════════════════════════════════════════════════════════ */
+const cvs = document.getElementById('fx');
+const ctx = cvs.getContext('2d');
+function resize(){ cvs.width = innerWidth*devicePixelRatio; cvs.height = innerHeight*devicePixelRatio; cvs.style.width=innerWidth+'px'; cvs.style.height=innerHeight+'px'; ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); }
+resize(); addEventListener('resize', resize);
+
+let particles = [];
+function spawnTrail(x,y,color){
+  particles.push({x,y,vx:(Math.random()-.5)*0.6,vy:(Math.random()-.5)*0.6,life:1,decay:0.045+Math.random()*0.02,r:2+Math.random()*2.4,color,type:'trail'});
+}
+function spawnSpark(cx,cy,color,count=16){
+  for(let i=0;i<count;i++){
+    const ang = (Math.PI*2*i)/count + Math.random()*0.4;
+    const speed = 2.2+Math.random()*2.6;
+    particles.push({x:cx,y:cy,vx:Math.cos(ang)*speed,vy:Math.sin(ang)*speed,life:1,decay:0.02+Math.random()*0.015,r:2.4+Math.random()*2,color,type:'spark'});
+  }
+}
+function spawnConfetti(cx,cy,count=26){
+  const colors = state.theme==='cyber' ? ['#20E3FF','#B355FF','#FF2FD0','#7CFFCB'] : ['#FF9A3C','#FFCB4C','#FF6F91','#FFE29A'];
+  for(let i=0;i<count;i++){
+    particles.push({
+      x:cx+(Math.random()-.5)*40, y:cy-10, vx:(Math.random()-.5)*3.4, vy:-(3+Math.random()*3.4),
+      life:1, decay:0.012+Math.random()*0.006, r:3+Math.random()*3,
+      color:colors[i%colors.length], type:'confetti', rot:Math.random()*Math.PI, vr:(Math.random()-.5)*0.3, grav:0.16
+    });
+  }
+}
+function tick(){
+  ctx.clearRect(0,0,innerWidth,innerHeight);
+  particles = particles.filter(p=>p.life>0);
+  for(const p of particles){
+    if(p.type==='confetti'){ p.vy += p.grav; p.x+=p.vx; p.y+=p.vy; p.rot+=p.vr; }
+    else { p.x+=p.vx; p.y+=p.vy; p.vx*=0.98; p.vy*=0.98; }
+    p.life -= p.decay;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0,p.life);
+    if(p.type==='confetti'){
+      ctx.translate(p.x,p.y); ctx.rotate(p.rot);
+      ctx.fillStyle=p.color; ctx.fillRect(-p.r,-p.r*0.6,p.r*2,p.r*1.2);
+    } else {
+      ctx.fillStyle=p.color; ctx.shadowColor=p.color; ctx.shadowBlur = p.type==='spark'?8:4;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r*Math.max(.2,p.life),0,Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+  }
+  requestAnimationFrame(tick);
+}
+tick();
+
+/* ════════════════════════════════════════════════════════════
+   存入动画（治愈风：单枚金币贝塞尔飞行 / 赛博风：四方汇入）
+   ════════════════════════════════════════════════════════════ */
+function easeOutBack(t){ const c1=1.70158,c3=c1+1; return 1+c3*Math.pow(t-1,3)+c1*Math.pow(t-1,2); }
+function easeOutExpo(t){ return t===1?1:1-Math.pow(2,-10*t); }
+
+function getPiggyCenter(){
+  const r = document.querySelector('.piggy-wrap').getBoundingClientRect();
+  return {x:r.left+r.width/2, y:r.top+r.height*0.42};
+}
+
+function flyCoinReward(fromX, fromY){
+  const target = getPiggyCenter();
+  const coin = document.createElement('div');
+  coin.style.cssText = 'position:fixed;width:26px;height:26px;border-radius:50%;z-index:35;pointer-events:none;'+
+    'background:radial-gradient(circle at 35% 30%,#FFF3CE,#FFCB4C 55%,#FF9A3C);'+
+    'box-shadow:0 4px 10px rgba(255,150,40,.5);font-size:14px;display:flex;align-items:center;justify-content:center;color:#a5590a;font-weight:800;';
+  coin.textContent='¥';
+  document.body.appendChild(coin);
+
+  const ctrlX = (fromX+target.x)/2 + (Math.random()>0.5?-1:1)*60;
+  const ctrlY = Math.min(fromY,target.y) - 110;
+  const dur = 620; const t0 = performance.now();
+
+  function bez(t){
+    const mt=1-t;
+    return {
+      x: mt*mt*fromX + 2*mt*t*ctrlX + t*t*target.x,
+      y: mt*mt*fromY + 2*mt*t*ctrlY + t*t*target.y
+    };
+  }
+  function step(now){
+    const p = Math.min(1,(now-t0)/dur);
+    const eased = p<0.85 ? (p/0.85) : 1; // 位置用线性沿贝塞尔，落点用 back 收尾另处理
+    const pos = bez(Math.min(1,eased));
+    const scale = 1 - 0.25*easeOutBack(p);
+    coin.style.transform = `translate(${pos.x-13}px, ${pos.y-13}px) scale(${Math.max(.4,scale)}) rotate(${p*380}deg)`;
+    coin.style.opacity = p>0.9 ? (1-(p-0.9)*10) : 1;
+    if(Math.random()<0.7) spawnTrail(pos.x, pos.y, '#FFCB4C');
+    if(p<1) requestAnimationFrame(step);
+    else{ coin.remove(); onCoinArrive(); }
+  }
+  requestAnimationFrame(step);
+}
+
+function flyCoinsCyber(){
+  const target = getPiggyCenter();
+  const edges = [
+    {x:-20,y:target.y-80}, {x:innerWidth+20,y:target.y-40},
+    {x:target.x-100,y:-20}, {x:target.x+90,y:innerHeight+20},
+    {x:-10,y:target.y+60}, {x:innerWidth+10,y:target.y+20}
+  ];
+  let remaining = edges.length;
+  edges.forEach((edge,i)=>{
+    setTimeout(()=>{
+      const coin = document.createElement('div');
+      coin.style.cssText = 'position:fixed;width:16px;height:16px;border-radius:4px;z-index:35;pointer-events:none;'+
+        'background:linear-gradient(135deg,#20E3FF,#B355FF);box-shadow:0 0 12px rgba(32,227,255,.85);';
+      document.body.appendChild(coin);
+      const dur = 600; const t0 = performance.now();
+      function step(now){
+        const p = Math.min(1,(now-t0)/dur);
+        const e = easeOutExpo(p);
+        const x = edge.x + (target.x-edge.x)*e;
+        const y = edge.y + (target.y-edge.y)*e;
+        coin.style.transform = `translate(${x-8}px,${y-8}px) rotate(${p*280}deg)`;
+        coin.style.opacity = 1-p*0.15;
+        if(Math.random()<0.8) spawnTrail(x,y, i%2? '#B355FF':'#20E3FF');
+        if(p<1) requestAnimationFrame(step);
+        else{ coin.remove(); remaining--; if(remaining<=0) onCoinArrive(); }
+      }
+      requestAnimationFrame(step);
+    }, i*40);
+  });
+}
+
+/* ════════════════════════════════════════════════════════════
+   罐内金币堆叠：分列高度图（skyline）落定式堆叠，取代真实 n 体碰撞
+   —— 之前用小圆点做全量碰撞会因为聚簇早早被"挤"到半空稳定，
+      看起来像一串金豆子挂在嘴边、还一直触发火花。
+   现在改为：大号硬币，一枚枚从罐口竖直下落，按"最矮的列"选位，
+   落到该列当前堆高处，只在真正触地那一刻触发一次挤压/叮声/火花，
+   不再有持续抖动或碰撞误报。
+   ════════════════════════════════════════════════════════════ */
+const svgNS = 'http://www.w3.org/2000/svg';
+const COIN_R = 13;                 // 硬币半径（明显更大，像硬币而不是豆子）
+const COL_COUNT = 5;                // 罐内分几列堆叠
+const COL_SPACING_X = 24;           // 相邻列间距（略小于直径，制造紧贴感）
+const LAYER_SPACING_Y = 15;         // 层间距（明显小于直径，硬币互相叠压嵌入）
+const PILE_CAPACITY = 20;           // 100% 时罐内摆满的金币总数
+const PIT_CX = 100, PIT_CY = 115, PIT_RX = 68, PIT_RY = 50; // 猪肚裁剪椭圆（略收边）
+
+let columnHeights = new Array(COL_COUNT).fill(0);
+let pileCoinCount = 0;
+
+function coinsForPct(pct){ return Math.round(Math.max(0,Math.min(100,pct))/100 * PILE_CAPACITY); }
+
+function floorYAt(x){
+  const dx = (x - PIT_CX) / PIT_RX;
+  const clamped = Math.max(-0.95, Math.min(0.95, dx));
+  return PIT_CY + PIT_RY * Math.sqrt(1 - clamped*clamped) - 4;
+}
+
+function columnX(i){
+  const totalWidth = (COL_COUNT-1) * COL_SPACING_X;
+  return PIT_CX - totalWidth/2 + i*COL_SPACING_X;
+}
+
+/** 选一列来放下一枚硬币：优先选当前最矮的列（多列并列则随机挑一个），让堆形自然呈中间高、两边低的小山丘 */
+function pickColumn(){
+  const minH = Math.min(...columnHeights);
+  const candidates = [];
+  columnHeights.forEach((h,i)=>{ if(h===minH) candidates.push(i); });
+  return candidates[Math.floor(Math.random()*candidates.length)];
+}
+
+/* Web Audio 合成的"叮"声：无需任何音频素材，首次用户手势后自动解锁 */
+let audioCtx = null;
+function ensureAudio(){
+  if(!audioCtx){
+    try{ audioCtx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return; }
+  }
+  if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+function playDing(strength){
+  if(!audioCtx) return;
+  const t0 = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  const base = state.theme==='cyber' ? 1300 : 1760;
+  osc.type = state.theme==='cyber' ? 'square' : 'sine';
+  osc.frequency.setValueAtTime(base + Math.random()*300, t0);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(200,base*0.7), t0+0.15);
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.exponentialRampToValueAtTime(Math.min(0.24, 0.05+strength*0.2), t0+0.007);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0+0.24);
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(t0); osc.stop(t0+0.26);
+}
+
+function svgToScreen(xSvg, ySvg){
+  const rect = document.getElementById('piggy').getBoundingClientRect();
+  const scale = rect.width/200;
+  return { x: rect.left + xSvg*scale, y: rect.top + ySvg*scale };
+}
+
+/** 挤压回弹：落地那一刻硬币短促压扁再弹回，模拟撞击挤压感（只在真正落地时触发一次） */
+function squashCoin(faceEl){
+  faceEl.style.transition = 'transform .07s ease-out';
+  faceEl.style.transform = 'scaleY(.58) scaleX(1.22)';
+  requestAnimationFrame(()=>{
+    faceEl.style.transition = 'transform .28s cubic-bezier(.34,1.56,.64,1)';
+    faceEl.style.transform = 'scaleY(1) scaleX(1)';
+  });
+}
+
+function buildCoinEl(){
+  const g = document.createElementNS(svgNS,'g');
+  g.setAttribute('class','pile-coin');
+  const face = document.createElementNS(svgNS,'circle');
+  face.setAttribute('class','coin-face'); face.setAttribute('r', COIN_R);
+  const rim = document.createElementNS(svgNS,'circle');
+  rim.setAttribute('class','coin-rim'); rim.setAttribute('r', COIN_R-4); rim.setAttribute('fill','none');
+  const shine = document.createElementNS(svgNS,'ellipse');
+  shine.setAttribute('class','coin-shine'); shine.setAttribute('cx',-4); shine.setAttribute('cy',-4.5);
+  shine.setAttribute('rx',3.4); shine.setAttribute('ry',2);
+  g.appendChild(face); g.appendChild(rim); g.appendChild(shine);
+  return {g, face};
+}
+
+/** 一枚硬币：从罐口竖直落下（加速下坠），到位后轻微下沉回弹一次，只触发一次撞击反馈 */
+function spawnFallingCoin(){
+  const col = pickColumn();
+  const layer = columnHeights[col];
+  columnHeights[col]++;
+  pileCoinCount++;
+
+  const x = columnX(col) + (Math.random()-0.5)*2.5;
+  const floor = floorYAt(x);
+  const targetY = floor - COIN_R - layer*LAYER_SPACING_Y;
+  const startY = 60;
+  const rot = (Math.random()-0.5)*26;
+
+  const {g, face} = buildCoinEl();
+  document.getElementById('coinPileGroup').appendChild(g);
+  g.setAttribute('transform', `translate(${x.toFixed(2)},${startY}) rotate(${rot.toFixed(1)})`);
+
+  const fallDist = Math.max(20, targetY - startY);
+  const fallDur = Math.max(240, Math.min(560, fallDist*2.4));
+  const overshootY = targetY + 5;
+  const t0 = performance.now();
+
+  function fallStep(now){
+    const p = Math.min(1, (now-t0)/fallDur);
+    const eased = p*p; // ease-in：模拟重力加速下坠
+    const y = startY + (overshootY-startY)*eased;
+    g.setAttribute('transform', `translate(${x.toFixed(2)},${y.toFixed(2)}) rotate(${rot.toFixed(1)})`);
+    if(p<1){ requestAnimationFrame(fallStep); }
+    else landCoin();
+  }
+
+  function landCoin(){
+    // 落地瞬间：一次性触发挤压 + 叮声 + 微光，不会重复触发
+    playDing(0.55 + Math.random()*0.3);
+    squashCoin(face);
+    const sp = svgToScreen(x, targetY);
+    spawnSpark(sp.x, sp.y, state.theme==='cyber' ? '#20E3FF' : '#FFE29A', 6);
+
+    // 罐子本体随每一枚金币落地轻轻晃一下（比整体 wobble 幅度小，更接近真实撞击反馈）
+    const wrap = document.querySelector('.piggy-wrap');
+    wrap.classList.remove('micro-jiggle'); void wrap.offsetWidth; wrap.classList.add('micro-jiggle');
+
+    const bt0 = performance.now();
+    const bounceDur = 200;
+    function bounceStep(now){
+      const p = Math.min(1, (now-bt0)/bounceDur);
+      const e = 1-Math.pow(1-p,3);
+      const y = overshootY + (targetY-overshootY)*e;
+      g.setAttribute('transform', `translate(${x.toFixed(2)},${y.toFixed(2)}) rotate(${rot.toFixed(1)})`);
+      if(p<1) requestAnimationFrame(bounceStep);
+      else g.setAttribute('transform', `translate(${x.toFixed(2)},${targetY.toFixed(2)}) rotate(${rot.toFixed(1)})`);
+    }
+    requestAnimationFrame(bounceStep);
+  }
+
+  requestAnimationFrame(fallStep);
+}
+
+function dropCoins(count, staggerMs){
+  const n = Math.max(0, count);
+  for(let i=0;i<n;i++){
+    setTimeout(()=>{ spawnFallingCoin(); }, i*(staggerMs==null?140:staggerMs));
+  }
+}
+
+function onCoinArrive(){
+  const piggy = document.getElementById('piggy');
+  piggy.classList.remove('wobble'); void piggy.offsetWidth; piggy.classList.add('wobble');
+
+  const shock = document.getElementById('shock');
+  shock.classList.remove('play'); void shock.offsetWidth; shock.classList.add('play');
+
+  const c = getPiggyCenter();
+  spawnSpark(c.x, c.y, state.theme==='cyber' ? '#20E3FF' : '#FFD27A', state.theme==='cyber'?18:12);
+
+  applyPendingDeposit();
+}
+
+let pendingAmt = 0;
+function deposit(evt, amt){
+  ensureAudio();
+  const rect = evt.currentTarget.getBoundingClientRect();
+  const fromX = rect.left+rect.width/2, fromY = rect.top+rect.height/2;
+  pendingAmt = amt;
+  if(state.theme==='cyber') flyCoinsCyber(); else flyCoinReward(fromX, fromY);
+}
+function depositCustom(evt){
+  ensureAudio();
+  const v = parseFloat(document.getElementById('customAmt').value);
+  if(!v || v<=0) return;
+  document.getElementById('customAmt').value='';
+  const rect = evt.currentTarget.getBoundingClientRect();
+  pendingAmt = v;
+  if(state.theme==='cyber') flyCoinsCyber(); else flyCoinReward(rect.left+rect.width/2, rect.top+rect.height/2);
+}
+
+function applyPendingDeposit(){
+  const before = state.saved;
+  const beforePct = Math.floor((before/state.target)*100/25);
+  state.saved += pendingAmt;
+  const afterPct = Math.floor((state.saved/state.target)*100/25);
+  render();
+
+  // 罐内金币堆：按新的占比换算出应有的金币数量，一枚一枚掉落补齐（每次最多补 8 枚，保证节奏感与性能）
+  const pace = paceInfo();
+  const wantCoins = coinsForPct(pace.actualPct);
+  const need = Math.max(pendingAmt>0 ? 1 : 0, Math.min(8, wantCoins - pileCoinCount));
+  dropCoins(need, state.theme==='cyber' ? 90 : 140);
+
+  if(window.PiggyBridge && PiggyBridge.deposit) PiggyBridge.deposit(Math.round(pendingAmt*100));
+
+  if(state.saved >= state.target && before < state.target){
+    showMilestone('🎉 心愿达成啦！');
+    spawnConfetti(innerWidth/2, innerHeight*0.35, 60);
+  } else if(afterPct > beforePct){
+    showMilestone(state.theme==='cyber' ? 'LEVEL UP ⚡' : `已完成 ${afterPct*25}% 啦！`);
+    spawnConfetti(innerWidth/2, innerHeight*0.35, 30);
+  }
+  pendingAmt = 0;
+}
+
+function showMilestone(text){
+  const el = document.getElementById('milestone');
+  el.textContent = text;
+  el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+}
+
+/* ════════════════════════════════════════════════════════════
+   情绪状态：neutral（默认）/ happy（自动结余存入）/ angry（昨日超支）
+   ════════════════════════════════════════════════════════════ */
+function setMood(mood){
+  const piggy = document.getElementById('piggy');
+  const wrap = document.querySelector('.piggy-wrap');
+  const glow = document.querySelector('.stage-glow');
+  piggy.classList.toggle('angry', mood==='angry');
+  wrap.classList.toggle('angry', mood==='angry');
+  glow.classList.toggle('angry', mood==='angry');
+}
+
+/* ════════════════════════════════════════════════════════════
+   每日结余自动入罐 / 超支生气：由真实消费数据驱动
+   —— 计算方式（Android 侧）：日均预算 = 月预算 / 当月天数；
+   —— 每天打开一次时结算"昨天"：
+        昨日花费 < 日均预算 → 差额自动存入储蓄罐，播放开心存入动效；
+        昨日花费 ≥ 日均预算 → 不存钱，储蓄罐今天显示生气表情，直到再次打开确认。
+   桥接契约：
+   window.PiggyBridge.getDailyResult() -> JSON string:
+     { status:'saved'|'overspent'|'none',
+       amount,            // 自动存入的结余金额（元），status=saved 时有效
+       overAmount,        // 超支金额（元），status=overspent 时有效
+       dailyBudget, yesterdaySpend, dateStr }
+   window.PiggyBridge.ackDailyResult() -> 通知 Android 这次结果已经展示过，避免重复弹
+   ════════════════════════════════════════════════════════════ */
+function applyDailyResult(result){
+  if(!result || result.status === 'none') return;
+
+  if(result.status === 'saved' && result.amount > 0){
+    setMood('happy'); // 复用 wobble/spark 视觉即为"开心"，无需额外类
+    setTimeout(()=>{
+      state.saved += result.amount;
+      render();
+      const wantCoins = coinsForPct(paceInfo().actualPct);
+      dropCoins(Math.max(1, Math.min(8, wantCoins - pileCoinCount)), 130);
+      showMilestone(`昨天少花了 ¥${result.amount.toFixed(2)}，已自动存入 🐷`);
+      spawnConfetti(innerWidth/2, innerHeight*0.35, 24);
+    }, 500);
+    if(window.PiggyBridge && PiggyBridge.ackDailyResult) PiggyBridge.ackDailyResult();
+  } else if(result.status === 'overspent'){
+    setMood('angry');
+    showMilestone(`昨天超支了 ¥${(result.overAmount||0).toFixed(2)}，储蓄罐生气啦 😠`);
+    if(window.PiggyBridge && PiggyBridge.ackDailyResult) PiggyBridge.ackDailyResult();
+  }
+}
+
+function checkDailyResult(){
+  try{
+    if(window.PiggyBridge && PiggyBridge.getDailyResult){
+      const result = JSON.parse(PiggyBridge.getDailyResult());
+      applyDailyResult(result);
+    }
+  }catch(e){}
+}
+
+/* ════════════════════════════════════════════════════════════
+   初始化：尝试从 Android 注入的数据加载
+   ════════════════════════════════════════════════════════════ */
+function initFromBridge(){
+  try{
+    if(window.PiggyBridge && PiggyBridge.getGoalData){
+      const data = JSON.parse(PiggyBridge.getGoalData());
+      state.name = data.name || state.name;
+      state.target = (data.targetCents||89900)/100;
+      state.saved = (data.savedCents||0)/100;
+      if(data.totalDays!=null) state.totalDays = data.totalDays;
+      if(data.createdAt!=null) state.createdAt = data.createdAt;
+      if(data.style) setTheme(data.style);
+    }
+  }catch(e){}
+  render(false);
+  document.getElementById('amountValue').textContent = fmt(state.saved);
+
+  // 首次进入：把已有余额换算成金币数量，"倒入"罐中（比正常存入更快的节奏，作为开场展示）
+  const initCoins = coinsForPct(paceInfo().actualPct);
+  if(initCoins > 0) dropCoins(initCoins, 55);
+
+  // 倒入动画结束后，再结算"昨日结余/超支"（真实桥接数据；demo 环境下没有桥接，不会触发）
+  setTimeout(checkDailyResult, 1300);
+}
+initFromBridge();
+</script>
+
+</body>
+</html>

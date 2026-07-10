@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>连续打卡</title>
+<style>
+  :root{
+    --bg-a:#FFF7EC; --bg-b:#FFE7C9;
+    --card:#FFFFFF; --card-line:rgba(150,100,40,.08);
+    --text:#3A2A17; --sub:#9A8367;
+    --gray1:#C7C1B8; --gray2:#A9A294;
+    --orange:#FF8A3D; --gold:#FFC93C; --white-hot:#FFF7E0;
+    --font-display:'PingFang SC','Noto Sans SC',-apple-system,sans-serif;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent; user-select:none;}
+  html,body{margin:0;padding:0;height:100%;}
+  body{
+    font-family:var(--font-display); color:var(--text); min-height:100vh; overflow-x:hidden;
+    background:radial-gradient(120% 80% at 50% -10%, var(--bg-b) 0%, transparent 60%), var(--bg-a);
+    padding-bottom:40px;
+  }
+  .topbar{ display:flex; align-items:center; justify-content:space-between; padding:18px 20px 4px; }
+  .back{ width:36px;height:36px;border-radius:50%; display:flex;align-items:center;justify-content:center;
+    background:var(--card); box-shadow:0 10px 24px rgba(255,150,60,.18); font-size:20px; border:1px solid var(--card-line); }
+  .title{ font-size:17px; font-weight:800; }
+  .spacer{ width:36px; }
+
+  .hero{ position:relative; margin-top:6px; padding:10px 20px 6px; text-align:center; }
+  .streak-badge{
+    display:inline-flex; align-items:center; gap:8px; background:var(--card); border-radius:999px; padding:8px 18px 8px 10px;
+    box-shadow:0 12px 30px rgba(255,150,60,.22); border:1px solid var(--card-line); transform:scale(0);
+  }
+  .streak-badge.pop{ animation:badgePop .7s cubic-bezier(.34,1.56,.64,1) forwards; }
+  @keyframes badgePop{ 0%{transform:scale(0) rotate(-8deg);} 65%{transform:scale(1.12) rotate(3deg);} 100%{transform:scale(1) rotate(0deg);} }
+  .streak-badge .mini-flame{ width:22px;height:22px; }
+  .streak-badge b{ font-size:15px; }
+
+  .stage{ position:relative; height:280px; display:flex; align-items:center; justify-content:center; margin-top:6px; }
+
+  .flame-glow{
+    position:absolute; width:200px; height:200px; border-radius:50%;
+    background:radial-gradient(circle, rgba(255,180,60,.0) 0%, rgba(255,180,60,0) 100%);
+    filter:blur(4px); transition:background 1s ease;
+  }
+  .flame-glow.lit{ background:radial-gradient(circle, rgba(255,190,70,.55) 0%, rgba(255,140,40,.18) 55%, transparent 75%); animation:glowPulse 2.6s ease-in-out infinite; }
+  @keyframes glowPulse{ 0%,100%{ transform:scale(.95); opacity:.85;} 50%{ transform:scale(1.08); opacity:1;} }
+
+  .flame-wrap{ position:relative; width:150px; height:190px; }
+  .flame-svg{ width:100%; height:100%; transform-origin:50% 92%; }
+  .flame-svg .layer{ transition:fill 1.1s ease; }
+  .flame-svg .core{ transition:fill 1.1s ease, opacity .8s ease; opacity:0; }
+  .flame-wrap.lit .core{ opacity:1; }
+
+  .flame-wrap.idle-sway .flame-svg{ animation:sway 2.4s ease-in-out infinite; }
+  @keyframes sway{
+    0%,100%{ transform:rotate(-2.2deg) scaleY(1); }
+    50%{ transform:rotate(2.4deg) scaleY(1.02); }
+  }
+  .flame-wrap.ignite .flame-svg{ animation:ignite .85s cubic-bezier(.34,1.56,.64,1); }
+  @keyframes ignite{
+    0%{ transform:scale(.8) rotate(0deg); }
+    35%{ transform:scale(1.18,.82) rotate(-4deg); }
+    55%{ transform:scale(.92,1.12) rotate(3deg); }
+    75%{ transform:scale(1.05,.96) rotate(-1.5deg); }
+    100%{ transform:scale(1) rotate(0deg); }
+  }
+  .flame-wrap.happy-bounce .flame-svg{ animation:happyBounce 1.6s ease-in-out 0.9s 2; }
+  @keyframes happyBounce{
+    0%,100%{ transform:translateY(0) scale(1,1); }
+    25%{ transform:translateY(-10px) scale(1.04,.96); }
+    50%{ transform:translateY(0) scale(.97,1.05); }
+    75%{ transform:translateY(-4px) scale(1.02,.98); }
+  }
+
+  .face{ opacity:0; transition:opacity .6s ease .5s; }
+  .flame-wrap.lit .face{ opacity:1; }
+
+  canvas#fx{ position:fixed; inset:0; pointer-events:none; z-index:30; }
+
+  .count-zone{ text-align:center; margin-top:0px; }
+  .count-num{ font-size:52px; font-weight:900; line-height:1; color:var(--gray2); transition:color .8s ease; }
+  .count-num.lit{ background:linear-gradient(90deg,var(--orange),var(--gold)); -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent; color:transparent; }
+  .count-num.pop{ animation:numPop .55s cubic-bezier(.34,1.56,.64,1); }
+  @keyframes numPop{ 0%{transform:scale(.5); } 65%{ transform:scale(1.22);} 100%{ transform:scale(1);} }
+  .count-label{ font-size:13px; color:var(--sub); margin-top:2px; letter-spacing:1px; }
+
+  .status-card{ margin:22px 20px 0; padding:18px 20px; border-radius:22px; background:var(--card); border:1px solid var(--card-line);
+    box-shadow:0 12px 30px rgba(255,150,60,.14); display:flex; align-items:center; justify-content:space-between; }
+  .status-text{ font-size:14px; font-weight:700; }
+  .status-sub{ font-size:12px; color:var(--sub); margin-top:3px; }
+  .checkin-btn{ border:none; border-radius:16px; padding:12px 22px; font-weight:800; font-size:14px; color:#fff;
+    background:linear-gradient(135deg,var(--orange),var(--gold)); box-shadow:0 10px 22px rgba(255,150,40,.4); }
+  .checkin-btn[disabled]{ background:#E4DFD5; color:#B4AC9C; box-shadow:none; }
+  .checkin-btn:active:not([disabled]){ transform:scale(.95); }
+
+  .week-row{ display:flex; justify-content:space-between; margin:16px 20px 0; }
+  .week-dot{ flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .week-dot .dot{ width:30px;height:30px;border-radius:50%; background:var(--gray1); display:flex;align-items:center;justify-content:center; font-size:14px; color:#fff; transition:all .4s; }
+  .week-dot.done .dot{ background:linear-gradient(135deg,var(--orange),var(--gold)); box-shadow:0 6px 14px rgba(255,150,40,.4); }
+  .week-dot.today .dot{ box-shadow:0 0 0 3px rgba(255,150,40,.28); }
+  .week-dot span{ font-size:11px; color:var(--sub); }
+
+  .hint{ text-align:center; font-size:12px; color:var(--sub); margin-top:20px; padding:0 30px; line-height:1.6; }
+
+  .toast{
+    position:fixed; left:50%; bottom:34px; transform:translate(-50%,20px); opacity:0;
+    background:var(--text); color:#fff; padding:10px 18px; border-radius:999px; font-size:13px; font-weight:700; z-index:40;
+  }
+  .toast.show{ animation:toastPop 2.2s ease forwards; }
+  @keyframes toastPop{
+    0%{ opacity:0; transform:translate(-50%,20px);} 12%{ opacity:1; transform:translate(-50%,0);}
+    82%{ opacity:1; transform:translate(-50%,0);} 100%{ opacity:0; transform:translate(-50%,-8px);}
+  }
+</style>
+</head>
+<body>
+
+  <canvas id="fx"></canvas>
+
+  <div class="topbar">
+    <div class="back" onclick="window.StreakBridge && StreakBridge.close && StreakBridge.close()">‹</div>
+    <div class="title">连续打卡</div>
+    <div class="spacer"></div>
+  </div>
+
+  <div class="hero">
+    <div class="streak-badge" id="streakBadge">
+      <svg class="mini-flame" viewBox="0 0 24 24"><path fill="#FF8A3D" d="M12 2c1 3-2 4-2 7a4 4 0 108 0c2 2 2 5 0 8a8 8 0 11-11-11c1-1 2-2 5-4z"/></svg>
+      <b id="badgeText">连续 12 天</b>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="flame-glow" id="flameGlow"></div>
+    <div class="flame-wrap idle-sway" id="flameWrap">
+      <svg class="flame-svg" viewBox="0 0 150 190">
+        <path class="layer outer" fill="var(--gray1)" d="M75 10c22 30-14 40-14 66a30 30 0 1060 0c14 16 14 42-2 62a58 58 0 11-78-84c8-16 20-30 34-44z"/>
+        <path class="layer mid" fill="var(--gray2)" d="M78 46c12 18-8 24-8 42a19 19 0 1038 0c8 10 8 26-2 38a37 37 0 11-50-52c6-10 14-20 22-28z"/>
+        <path class="core" fill="var(--white-hot)" d="M80 92c5 8-3 11-3 19a9 9 0 1018 0c4 5 4 12-1 18a17.5 17.5 0 11-24-25c3-5 6-9 10-12z"/>
+        <g class="face">
+          <circle cx="66" cy="118" r="4" fill="#5A3416"/>
+          <circle cx="88" cy="118" r="4" fill="#5A3416"/>
+          <path d="M68 132 Q77 140 86 132" stroke="#5A3416" stroke-width="3" fill="none" stroke-linecap="round"/>
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  <div class="count-zone">
+    <div class="count-num" id="countNum">12</div>
+    <div class="count-label">已连续打卡天数</div>
+  </div>
+
+  <div class="status-card">
+    <div>
+      <div class="status-text" id="statusText">今天还没打卡哦</div>
+      <div class="status-sub" id="statusSub">记一笔账，火苗就会亮起来</div>
+    </div>
+    <button class="checkin-btn" id="checkinBtn" onclick="checkIn()">点亮打卡</button>
+  </div>
+
+  <div class="week-row" id="weekRow"></div>
+
+  <div class="hint">每天打卡一次，连续不中断，火苗会越烧越旺；错过一天，就要从灰烬重新点燃～</div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   数据状态（后续由 Android JavascriptInterface 注入真实数据）
+   window.StreakBridge.getStreakData() -> {currentStreak, checkedToday, last7Days:[bool*7]}
+   window.StreakBridge.close()
+   ════════════════════════════════════════════════════════════ */
+let state = { streak:12, checkedToday:false, week:[true,true,false,true,true,true,false] };
+
+const weekLabels=['一','二','三','四','五','六','日'];
+
+function renderWeek(){
+  const row = document.getElementById('weekRow');
+  row.innerHTML='';
+  const todayIdx = state.week.length-1;
+  state.week.forEach((done,i)=>{
+    const d = document.createElement('div');
+    d.className = 'week-dot' + (done?' done':'') + (i===todayIdx?' today':'');
+    d.innerHTML = `<div class="dot">${done?'✓':''}</div><span>${weekLabels[i]}</span>`;
+    row.appendChild(d);
+  });
+}
+
+function renderBase(){
+  document.getElementById('countNum').textContent = state.streak;
+  document.getElementById('badgeText').textContent = '连续 ' + state.streak + ' 天';
+  renderWeek();
+
+  const flameWrap = document.getElementById('flameWrap');
+  const glow = document.getElementById('flameGlow');
+  const countNum = document.getElementById('countNum');
+  const btn = document.getElementById('checkinBtn');
+
+  if(state.checkedToday){
+    flameWrap.classList.add('lit'); glow.classList.add('lit'); countNum.classList.add('lit');
+    document.getElementById('statusText').textContent = '今天已打卡！';
+    document.getElementById('statusSub').textContent = '火苗正旺，明天继续哦';
+    btn.textContent = '已完成'; btn.disabled = true;
+  } else {
+    flameWrap.classList.remove('lit'); glow.classList.remove('lit'); countNum.classList.remove('lit');
+    document.getElementById('statusText').textContent = '今天还没打卡哦';
+    document.getElementById('statusSub').textContent = '点一下按钮，为今天点亮这团火';
+    btn.textContent = '点亮打卡'; btn.disabled = false;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   粒子：火星飘浮（常驻，微弱） + 打卡纸屑爆发
+   ════════════════════════════════════════════════════════════ */
+const cvs = document.getElementById('fx');
+const ctx = cvs.getContext('2d');
+function resize(){ cvs.width=innerWidth*devicePixelRatio; cvs.height=innerHeight*devicePixelRatio; cvs.style.width=innerWidth+'px'; cvs.style.height=innerHeight+'px'; ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); }
+resize(); addEventListener('resize', resize);
+
+let particles = [];
+function flameCenter(){
+  const r = document.getElementById('flameWrap').getBoundingClientRect();
+  return {x:r.left+r.width/2, y:r.top+r.height*0.35};
+}
+function spawnEmber(){
+  if(!state.checkedToday) return;
+  const c = flameCenter();
+  particles.push({
+    x:c.x+(Math.random()-.5)*46, y:c.y+20+Math.random()*20,
+    vx:(Math.random()-.5)*0.5, vy:-(0.6+Math.random()*0.8),
+    life:1, decay:0.012+Math.random()*0.01, r:1.6+Math.random()*1.8,
+    color: Math.random()>0.5 ? '#FF8A3D' : '#FFC93C', type:'ember'
+  });
+}
+function spawnConfetti(cx,cy,count=40){
+  const colors = ['#FF8A3D','#FFC93C','#FFF3CE','#FF6F91'];
+  for(let i=0;i<count;i++){
+    particles.push({
+      x:cx+(Math.random()-.5)*30, y:cy-10, vx:(Math.random()-.5)*4.2, vy:-(4+Math.random()*4),
+      life:1, decay:0.011+Math.random()*0.006, r:3+Math.random()*3,
+      color:colors[i%colors.length], type:'confetti', rot:Math.random()*Math.PI, vr:(Math.random()-.5)*0.35, grav:0.17
+    });
+  }
+}
+let emberTick=0;
+function tick(){
+  ctx.clearRect(0,0,innerWidth,innerHeight);
+  emberTick++;
+  if(emberTick%5===0) spawnEmber();
+  particles = particles.filter(p=>p.life>0);
+  for(const p of particles){
+    if(p.type==='confetti'){ p.vy+=p.grav; p.x+=p.vx; p.y+=p.vy; p.rot+=p.vr; }
+    else { p.x+=p.vx; p.y+=p.vy; p.vx*=0.985; }
+    p.life -= p.decay;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0,p.life);
+    if(p.type==='confetti'){
+      ctx.translate(p.x,p.y); ctx.rotate(p.rot);
+      ctx.fillStyle=p.color; ctx.fillRect(-p.r,-p.r*0.6,p.r*2,p.r*1.2);
+    } else {
+      ctx.fillStyle=p.color; ctx.shadowColor=p.color; ctx.shadowBlur=6;
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r*Math.max(.2,p.life),0,Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+  }
+  requestAnimationFrame(tick);
+}
+tick();
+
+/* ════════════════════════════════════════════════════════════
+   打卡序列：灰 → 橙 → 金 → 白芯，Glow，happy bounce，数字弹跳，
+   徽章弹出，纸屑，toast
+   ════════════════════════════════════════════════════════════ */
+function checkIn(){
+  if(state.checkedToday) return;
+  const flameWrap = document.getElementById('flameWrap');
+  const glow = document.getElementById('flameGlow');
+  const countNum = document.getElementById('countNum');
+  const badge = document.getElementById('streakBadge');
+  const btn = document.getElementById('checkinBtn');
+  btn.disabled = true;
+
+  flameWrap.classList.remove('idle-sway');
+  flameWrap.classList.add('ignite');
+  glow.classList.add('lit');
+
+  setTimeout(()=>{
+    flameWrap.classList.add('lit');
+  }, 120);
+
+  setTimeout(()=>{
+    flameWrap.classList.add('happy-bounce');
+  }, 300);
+
+  setTimeout(()=>{
+    state.streak += 1;
+    state.checkedToday = true;
+    if(state.week.length) state.week[state.week.length-1] = true;
+
+    countNum.textContent = state.streak;
+    countNum.classList.add('lit');
+    countNum.classList.remove('pop'); void countNum.offsetWidth; countNum.classList.add('pop');
+
+    document.getElementById('badgeText').textContent = '连续 ' + state.streak + ' 天';
+    badge.classList.remove('pop'); void badge.offsetWidth; badge.classList.add('pop');
+
+    document.getElementById('statusText').textContent = '今天已打卡！';
+    document.getElementById('statusSub').textContent = '火苗正旺，明天继续哦';
+    btn.textContent = '已完成';
+
+    renderWeek();
+
+    const c = flameCenter();
+    spawnConfetti(c.x, c.y-20, 46);
+
+    showToast(milestoneText(state.streak));
+
+    if(window.StreakBridge && StreakBridge.checkIn) StreakBridge.checkIn();
+
+    setTimeout(()=>{ flameWrap.classList.remove('ignite'); flameWrap.classList.add('idle-sway'); }, 900);
+  }, 620);
+}
+
+function milestoneText(n){
+  if(n % 30 === 0) return `🔥 连续 ${n} 天！你就是打卡达人`;
+  if(n % 7 === 0) return `🔥 连续 ${n} 天！满一周啦`;
+  return `🔥 火苗又亮了一天！`;
+}
+function showToast(text){
+  const t = document.getElementById('toast');
+  t.textContent = text;
+  t.classList.remove('show'); void t.offsetWidth; t.classList.add('show');
+}
+
+/* ════════════════════════════════════════════════════════════
+   初始化：尝试从 Android 注入的数据加载
+   ════════════════════════════════════════════════════════════ */
+function initFromBridge(){
+  try{
+    if(window.StreakBridge && StreakBridge.getStreakData){
+      const data = JSON.parse(StreakBridge.getStreakData());
+      state.streak = data.currentStreak ?? state.streak;
+      state.checkedToday = !!data.checkedToday;
+      if(Array.isArray(data.last7Days) && data.last7Days.length===7) state.week = data.last7Days;
+    }
+  }catch(e){}
+  renderBase();
+}
+initFromBridge();
+</script>
+</body>
+</html>

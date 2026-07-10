@@ -82,6 +82,12 @@
         <activity
             android:name=".search.SearchActivity"
             android:exported="false" />
+        <activity
+            android:name=".piggy.PiggyBankActivity"
+            android:exported="false" />
+        <activity
+            android:name=".streak.StreakActivity"
+            android:exported="false" />
 
         <activity
             android:name=".NfcTriggerActivity"

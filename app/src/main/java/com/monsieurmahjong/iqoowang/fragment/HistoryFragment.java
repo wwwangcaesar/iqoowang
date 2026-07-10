@@ -26,6 +26,7 @@ import com.monsieurmahjong.iqoowang.R;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
 import com.monsieurmahjong.iqoowang.pet.PetActivity;
+import com.monsieurmahjong.iqoowang.piggy.PiggyBankActivity;
 import com.monsieurmahjong.iqoowang.search.SearchActivity;
 import com.monsieurmahjong.iqoowang.utils.AnimationUtils;
 import com.monsieurmahjong.iqoowang.view.CircularProgressView;
@@ -91,14 +92,31 @@ public class HistoryFragment extends Fragment {
         tvSmartTip = view.findViewById(R.id.tv_smart_tip);
 
         db = AppDatabase.getDatabase(requireContext());
-        ImageView tvCalendarMonth = view.findViewById(R.id.iv_calendar);
         ImageView iv_avatar = view.findViewById(R.id.iv_avatar);
         iv_avatar.setOnClickListener(v -> openActvity());
         ImageView ivSearch = view.findViewById(R.id.iv_search);
         if (ivSearch != null) {
             ivSearch.setOnClickListener(v -> startActivity(new Intent(requireContext(), SearchActivity.class)));
         }
+
+        // 存钱罐入口：点击跳转到心愿储蓄罐，页面加载时播一次晃动动画提醒用户可以点击
+        ImageView ivPiggyBank = view.findViewById(R.id.iv_piggy_bank);
+        if (ivPiggyBank != null) {
+            ivPiggyBank.setOnClickListener(v -> startActivity(new Intent(requireContext(), PiggyBankActivity.class)));
+            playPiggyIconShake(ivPiggyBank);
+        }
         return view;
+    }
+
+    /** 存钱罐图标晃动提醒：HistoryFragment 页面加载时播放一次，不影响任何数据 */
+    private void playPiggyIconShake(View iconView) {
+        iconView.animate().cancel();
+        iconView.setRotation(0f);
+        android.animation.ObjectAnimator anim = android.animation.ObjectAnimator.ofFloat(
+                iconView, "rotation", 0f, -14f, 11f, -8f, 5f, -2f, 0f);
+        anim.setDuration(650);
+        anim.setStartDelay(200);
+        anim.start();
     }
 
     private void openActvity() {

@@ -24,6 +24,10 @@ public interface ExpenseDao {
     @Query("SELECT IFNULL(SUM(amount), 0) FROM expense_table WHERE date_str = :dateStr")
     LiveData<Long> getDailyTotal(String dateStr);
 
+    // 获取特定日期的总花费（同步版本，供后台线程计算使用，如储蓄罐每日结余结算）
+    @Query("SELECT IFNULL(SUM(amount), 0) FROM expense_table WHERE date_str = :dateStr")
+    long getDailyTotalSync(String dateStr);
+
     // 获取特定日期的所有花费明细列表
     @Query("SELECT * FROM expense_table WHERE date_str = :dateStr ORDER BY timestamp DESC")
     LiveData<List<Expense>> getDailyExpenses(String dateStr);
