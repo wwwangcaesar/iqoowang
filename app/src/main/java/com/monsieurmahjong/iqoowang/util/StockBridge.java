@@ -522,25 +522,23 @@ public class StockBridge {
             }
             if (codes.isEmpty()) return;
 
-            mApi.fetchBatchQuotes(codes, new EastMoneyApi.BatchQuoteCallback() {
-                @Override
-                public void onSuccess(Map<String, EastMoneyApi.QuoteData> quotes) {
-                    JSONObject priceMap = new JSONObject();
-                    for (Map.Entry<String, EastMoneyApi.QuoteData> e : quotes.entrySet()) {
-                        try { priceMap.put(e.getKey(), e.getValue().price); }
-                        catch (Exception ignored) {}
-                    }
-                    // 更新DB
-                    mDb.batchUpdatePrices(priceMap);
-                    // 推送到WebView
-                    String escaped = priceMap.toString().replace("'", "\\'");
-                    evalJs("window.onPriceUpdate && window.onPriceUpdate('" + escaped + "')");
-                }
-                @Override
-                public void onError(String msg) {
-                    Log.w(TAG, "refreshPositionPrices error: " + msg);
-                }
-            });
+            com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.get().fetchBatch(codes,
+                    (quotes, failedCodes) -> {
+                        if (!failedCodes.isEmpty()) {
+                            Log.w(TAG, "refreshPositionPrices: " + failedCodes.size() + "支两个数据源都未拿到: " + failedCodes);
+                        }
+                        if (quotes.isEmpty()) return;
+                        JSONObject priceMap = new JSONObject();
+                        for (Map.Entry<String, com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote> e : quotes.entrySet()) {
+                            try { priceMap.put(e.getKey(), e.getValue().price); }
+                            catch (Exception ignored) {}
+                        }
+                        // 更新DB
+                        mDb.batchUpdatePrices(priceMap);
+                        // 推送到WebView
+                        String escaped = priceMap.toString().replace("\\", "\\\\").replace("'", "\\'");
+                        evalJs("window.onPriceUpdate && window.onPriceUpdate('" + escaped + "')");
+                    });
         } catch (Exception e) {
             Log.e(TAG, "refreshPositionPrices parse", e);
         }

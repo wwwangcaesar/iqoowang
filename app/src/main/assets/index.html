@@ -1095,6 +1095,61 @@ window.onStockList = function(jsonStr, market, page) {
   } catch(e) { console.error('onStockList', e); }
 };
 
+// ══ AI选股结果解析 & 卡片渲染 ══
+function parseAIScreenAnalysis(text) {
+  const result = { verdict: '', stocks: [] };
+  const verdictMatch = text.match(/◆大盘研判[：:]\s*(.+)/);
+  if (verdictMatch) result.verdict = verdictMatch[1].trim();
+
+  const blocks = text.split('▶股票：').slice(1);
+  for (const block of blocks) {
+    const get = (label) => {
+      const m = block.match(new RegExp(label + '[：:]\\s*(.+)'));
+      return m ? m[1].trim() : '';
+    };
+    const titleLine = block.split('\n')[0].trim();
+    const tm = titleLine.match(/^(.+?)\(([^)]+)\)/);
+    result.stocks.push({
+      name: tm ? tm[1] : titleLine,
+      code: tm ? tm[2] : '',
+      score: parseInt(get('评分')) || 0,
+      action: get('操作'),
+      order: get('挂单'),
+      stop: get('止损'),
+      reason: get('理由'),
+    });
+  }
+  return result;
+}
+
+function renderAIAnalysisCards(text) {
+  const container = document.getElementById('aiScreenSummary');
+  const parsed = parseAIScreenAnalysis(text);
+  if (!parsed.stocks.length) {
+    // 未能按预期格式解析到任何股票块（比如降级文本或模型输出跑偏了），
+    // 未能解析到股票块，直接显示原始文本，不让用户看到空白
+    container.textContent = text;
+    return;
+  }
+  const actionColor = (a) => a === '买入' ? 'var(--up-red)' : a === '回避' ? 'var(--down-green)' : 'var(--accent-gold)';
+  let html = '';
+  if (parsed.verdict) {
+    html += `<div style="padding:8px 10px;margin-bottom:8px;background:var(--bg-card2);border-radius:8px;border-left:3px solid var(--accent-cyan);color:var(--text-prime);">🌐 ${parsed.verdict}</div>`;
+  }
+  html += parsed.stocks.map(s => `
+    <div style="padding:10px;margin-bottom:8px;background:var(--bg-card2);border-radius:8px;border:1px solid var(--border);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+        <span style="font-weight:600;color:var(--text-prime);">${s.name} <span style="color:var(--text-dim);font-size:10px;">${s.code}</span></span>
+        <span style="font-weight:700;color:${actionColor(s.action)};padding:2px 8px;border:1px solid ${actionColor(s.action)};border-radius:10px;font-size:11px;">${s.action || '--'} · ${s.score}分</span>
+      </div>
+      <div style="font-size:11px;color:var(--text-sub);line-height:1.8;">
+        挂单 <span style="color:var(--text-prime);">${s.order || '--'}</span>　止损 <span style="color:var(--up-red);">${s.stop || '--'}</span><br>
+        ${s.reason || ''}
+      </div>
+    </div>`).join('');
+  container.innerHTML = html;
+}
+
 // ══ AI Token流式回调══
 window.onAiToken = function(token) {
   STATE.aiStreamBuffer += token;
@@ -1110,7 +1165,7 @@ window.onAiToken = function(token) {
 window.onAiAnalysis = function(text) {
   STATE.aiStreamBuffer = '';
   STATE.aiStreamTarget = null;
-  document.getElementById('aiScreenSummary').textContent = text;
+  renderAIAnalysisCards(text);
   document.getElementById('aiAnalyzeStatus').textContent = '✓ 分析完成';
 };
 

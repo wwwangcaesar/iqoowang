@@ -10,6 +10,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -32,7 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class LocalAIAgent {
 
     private static final String TAG = "LocalAIAgent";
-    private static final String MODEL_DIR = "qwen2.5-1.5b-instruct-int4";
+    private static final String MODEL_DIR = "qwen3.5-4b-instruct-int4";   
 
     private final Context       mContext;
     private final LlmEngine     mEngine;
@@ -468,7 +469,7 @@ public class LocalAIAgent {
             JSONObject obj = new JSONObject();
             obj.put("level",      mLevel);
             obj.put("exp",        mExp);
-            obj.put("modelName",  mEngineReady ? "Qwen2.5-1.5B-INT4" : "专家规则系统");
+            obj.put("modelName",  mEngineReady ? "Qwen3.5-4B-Instruct-INT4" : "专家规则系统");
             obj.put("ready",      true);
             obj.put("llmReady",   mEngine.isReady());
             obj.put("jniLoaded",  LlmEngine.isJniLoaded());
@@ -485,30 +486,61 @@ public class LocalAIAgent {
 
     static class StockExpertSystem {
 
-        String analyzeResults(JSONArray results) throws Exception {
+        /**
+         * 降级方案：在本地 LLM 不可用时，用确定性规则产出与 LLM 同样的结构化标签格式，
+         * 保证前端解析逻辑不用区分数据来源。所有判断都基于传入的真实大盘/历史数据，
+         * 不是随便模板充数。
+         */
+        String generateStructured(JSONArray results, String marketCtx, String historyCtx, AIContextBuilder ctxBuilder) throws Exception {
             if (results.length() == 0)
                 return "未发现符合条件的股票，建议放宽筛选条件或等待更好入场时机。";
 
-            int condACount = 0;
-            double avgScore = 0;
-            JSONObject top = results.getJSONObject(0);
+            int tilt = 0; // 大盘倾向：+1偏多 / -1偏空 / 0中性
+            if (marketCtx.contains("大盘整体偏多")) tilt = 1;
+            else if (marketCtx.contains("大盘整体偏弱")) tilt = -1;
 
-            for (int i = 0; i < results.length(); i++) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("◆大盘研判：").append(
+                    tilt > 0 ? "当前大盘偏多，可适度提高强势股参与度。"
+                            : tilt < 0 ? "当前大盘偏弱，系统性风险较高，建议降低仓位、优先回避追高。"
+                            : "大盘涨跌不一，处于震荡阶段，宜精选个股、控制仓位。").append("\n");
+
+            int n = Math.min(results.length(), 6);
+            for (int i = 0; i < n; i++) {
                 JSONObject r = results.getJSONObject(i);
-                if ("放量突破".equals(r.optString("signal"))) condACount++;
-                avgScore += r.optInt("score");
-            }
-            avgScore /= results.length();
+                String code = r.optString("code");
+                String name = r.optString("name");
+                int baseScore = r.optInt("score");
+                double latestClose = r.optDouble("latestClose", 0);
+                double changePct = r.optDouble("change", 0);
+                String signal = r.optString("signal");
+                double prevClose = (1 + changePct / 100.0) != 0 ? latestClose / (1 + changePct / 100.0) : latestClose;
 
-            return String.format(
-                    "共%d支通过，信号A(放量)%d支，信号B(缩量)%d支，均分%.1f。" +
-                            "最强：%s评分%d。%s",
-                    results.length(), condACount, results.length() - condACount, avgScore,
-                    top.optString("name"), top.optInt("score"),
-                    condACount > results.length() / 2
-                            ? "放量信号为主，市场做多氛围较浓。"
-                            : "缩量整理为主，谨慎观望为宜。"
-            );
+                String histNote = ctxBuilder.buildStockHistoryNote(code);
+                boolean historyAllLoss = histNote.contains("0赢") && histNote.contains("亏") && !histNote.contains("亏0");
+
+                int score = Math.max(0, Math.min(100, baseScore + tilt * 5 - (historyAllLoss ? 10 : 0)));
+                String action;
+                if (tilt < 0 && score < 80) action = "回避";
+                else if (historyAllLoss) action = "观察";
+                else if (score >= 85) action = "买入";
+                else if (score >= 70) action = "观察";
+                else action = "回避";
+
+                double buyLow = prevClose + 0.2;
+                double buyHigh = prevClose + 0.3;
+                double stop = latestClose * 0.95;
+
+                StringBuilder reason = new StringBuilder();
+                reason.append(signal).append("，量价信号").append("放量突破".equals(signal) ? "较强" : "尚需观察");
+                if (tilt != 0) reason.append("，参考大盘").append(tilt > 0 ? "偏多环境" : "偏弱环境");
+                if (!histNote.isEmpty()) reason.append("，").append(histNote);
+
+                sb.append(String.format(Locale.CHINA,
+                        "▶股票：%s(%s)\n评分：%d\n操作：%s\n挂单：%.2f-%.2f\n止损：%.2f\n理由：%s\n",
+                        name, code, score, action, buyLow, buyHigh, stop, reason.toString()));
+            }
+            return sb.toString();
         }
 
         String answerQuestion(String q) {
@@ -543,14 +575,6 @@ public class LocalAIAgent {
             }
             return "基于操盘手经验：挂单在昨收+0.2~0.3元进场，跌破SAR止损，量比≥2放量才进，" +
                     "单票仓位≤30%。四维共振（EMA趋势+布林突破+量比放量+SAR支撑）才是最强信号。";
-        }
-
-        String generate(String prompt) {
-            if (prompt.contains("选股结果"))
-                return "根据通达信公式分析，当前筛选结果显示市场存在多头信号。" +
-                        "建议重点关注量比最高且满足信号A的标的，次日观察高开企稳后介入。" +
-                        "止损设SAR下方，仓位控制在30%以内，风控优先。";
-            return answerQuestion(prompt);
         }
     }
 }
