@@ -26,7 +26,7 @@ import java.util.Map;
  * 注册方式（MainActivity中）：
  *   webView.addJavascriptInterface(new StockBridge(this, webView), "Android");
  */
-public class StockBridge {
+public class StockBridge implements RealtimeMonitorService.Listener {
 
     private static final String TAG = "StockBridge";
 
@@ -48,6 +48,30 @@ public class StockBridge {
         mApi = EastMoneyApi.get();
         mDb = DatabaseManager.get();
         mAgent = LocalAIAgent.get(context);
+        RealtimeMonitorService.setListener(this);
+    }
+
+    // ══ RealtimeMonitorService.Listener ══ App在前台时，监控服务的事件实时推送到WebView
+
+    @Override
+    public void onSignalTriggered(String code, String name, String action, String note, double price) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("code", code);
+            o.put("name", name);
+            o.put("action", action);
+            o.put("note", note);
+            o.put("price", price);
+            String escaped = o.toString().replace("\\", "\\\\").replace("'", "\\'");
+            evalJs("window.onSignalTriggered && window.onSignalTriggered('" + escaped + "')");
+        } catch (Exception e) {
+            Log.e(TAG, "onSignalTriggered push", e);
+        }
+    }
+
+    @Override
+    public void onTick(int watchCount, int posCount, String timeStr) {
+        evalJs("window.onMonitorTick && window.onMonitorTick(" + watchCount + "," + posCount + ",'" + timeStr + "')");
     }
 
     // ══════════════════════════════════════════════
@@ -439,6 +463,18 @@ public class StockBridge {
                     new MarketDataManager.ScreenCallback() {
                         @Override
                         public void onResult(String resultJson) {
+                            // 无论筛选出多少支（哪怕为0支），都把结果写入候选池持久化跟踪（day1入池）
+                            try {
+                                JSONArray arr = new JSONArray(resultJson);
+                                for (int i = 0; i < arr.length(); i++) {
+                                    JSONObject r = arr.getJSONObject(i);
+                                    WatchlistManager.get().addIfAbsent(
+                                            r.optString("code"), r.optString("name"),
+                                            r.optInt("score"), r.optString("signal"));
+                                }
+                            } catch (Exception e) {
+                                Log.e(TAG, "候选池入池失败", e);
+                            }
                             String esc = resultJson.replace("\\", "\\\\").replace("'", "\\'");
                             evalJs("window.onScreenerResult && window.onScreenerResult('" + esc + "')");
                         }
@@ -457,6 +493,40 @@ public class StockBridge {
     @JavascriptInterface
     public String getDownloadStatus() {
         return MarketDataManager.get().getDownloadStatus();
+    }
+
+    // ══ 实时监控 & 候选池 ══
+
+    /**
+     * 启动实时监控（前台服务，锁屏/切后台也不中断）
+     * JS调用：Android.startMonitor(60000) 或 Android.startMonitor(30000)
+     */
+    @JavascriptInterface
+    public void startMonitor(long intervalMs) {
+        RealtimeMonitorService.start(mContext, intervalMs > 0 ? intervalMs : RealtimeMonitorService.DEFAULT_INTERVAL_MS);
+    }
+
+    @JavascriptInterface
+    public void stopMonitor() {
+        RealtimeMonitorService.stop(mContext);
+    }
+
+    /** 当前跟踪中的候选池（观察中/已建底仓/已加仓，不含止损/已移除的） */
+    @JavascriptInterface
+    public String getActiveWatchlist() {
+        return WatchlistManager.get().getActiveWatchlistJson();
+    }
+
+    /** 全部候选池记录（含止损/已移除的历史） */
+    @JavascriptInterface
+    public String getAllWatchlist() {
+        return WatchlistManager.get().getAllJson();
+    }
+
+    /** 手动从候选池移除（不硬删，只标记为已移除） */
+    @JavascriptInterface
+    public void removeFromWatchlist(String code) {
+        WatchlistManager.get().removeManual(code);
     }
 
     // ══════════════════════════════════════════════

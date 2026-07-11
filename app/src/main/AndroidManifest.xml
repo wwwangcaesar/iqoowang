@@ -22,6 +22,7 @@
     <!-- 后台任务（WorkManager：收盘保存快照） -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- iQOO 11s：保持屏幕常亮（行情监控模式） -->
@@ -72,6 +73,12 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- 实时监控前台服务：候选池/持仓行情轮询，买入/加仓/止损信号判断 -->
+        <service
+            android:name=".util.RealtimeMonitorService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
     </application>
 
