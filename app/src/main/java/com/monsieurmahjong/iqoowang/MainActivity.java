@@ -241,13 +241,18 @@ public class MainActivity extends Activity {
     // ──────────────────────────────────────────
 
     private void checkPermissions() {
-        String[] needed = {
+        java.util.List<String> neededList = new java.util.ArrayList<>(java.util.Arrays.asList(
                 Manifest.permission.INTERNET,
                 Manifest.permission.ACCESS_NETWORK_STATE,
                 Manifest.permission.WRITE_EXTERNAL_STORAGE,  // 模型文件写入
                 Manifest.permission.READ_EXTERNAL_STORAGE,
-                Manifest.permission.VIBRATE,
-        };
+                Manifest.permission.VIBRATE
+        ));
+        // Android 13+ 通知权限需运行时申请，否则实时监控的买入/止损信号通知发不出来
+        if (Build.VERSION.SDK_INT >= 33) {
+            neededList.add(Manifest.permission.POST_NOTIFICATIONS);
+        }
+        String[] needed = neededList.toArray(new String[0]);
         boolean allGranted = true;
         for (String p : needed) {
             if (ContextCompat.checkSelfPermission(this, p)
@@ -275,7 +280,7 @@ public class MainActivity extends Activity {
     /** 确保AI模型目录存在，并在JS中显示提示 */
     private void ensureModelDirectory() {
         File modelDir = new File(getExternalFilesDir(null),
-                "qwen2.5-1.5b-instruct-int4");
+                "qwen3.5-4b-instruct-int4");
         if (!modelDir.exists()) {
             modelDir.mkdirs();
             Log.i(TAG, "模型目录已创建: " + modelDir.getAbsolutePath());

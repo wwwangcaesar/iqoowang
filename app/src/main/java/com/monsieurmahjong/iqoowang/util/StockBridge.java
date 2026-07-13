@@ -388,6 +388,42 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         mAgent.warmup();
     }
 
+    /**
+     * 教AI一条新话术（知识库注入式学习，非模型权重级微调，见LocalAIAgent.learnWisdom注释）
+     * JS调用：Android.learnWisdom("你教的话术原文")
+     * 回调：window.onWisdomToken(token) / window.onWisdomLearned(summary) / window.onWisdomError(msg)
+     */
+    @JavascriptInterface
+    public void learnWisdom(String rawText) {
+        mAgent.learnWisdom(rawText, new LocalAIAgent.AICallback() {
+            @Override
+            public void onToken(String token) {
+                String escaped = token.replace("\\", "\\\\")
+                        .replace("'", "\\'")
+                        .replace("\n", "\\n");
+                evalJs("window.onWisdomToken && window.onWisdomToken('" + escaped + "')");
+            }
+            @Override
+            public void onComplete(String summary) {
+                String escaped = summary.replace("\\", "\\\\")
+                        .replace("'", "\\'")
+                        .replace("\n", "\\n");
+                evalJs("window.onWisdomLearned && window.onWisdomLearned('" + escaped + "')");
+            }
+            @Override
+            public void onError(String msg) {
+                String esc = msg.replace("'", "\\'");
+                evalJs("window.onWisdomError && window.onWisdomError('" + esc + "')");
+            }
+        });
+    }
+
+    /** 话术学习历史（进化记录列表） */
+    @JavascriptInterface
+    public String getWisdomLog() {
+        return com.monsieurmahjong.iqoowang.util.WisdomManager.get().getAllJson();
+    }
+
     // ══════════════════════════════════════════════
     // 行情数据下载与选股接口
     // ══════════════════════════════════════════════
@@ -511,6 +547,17 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         RealtimeMonitorService.stop(mContext);
     }
 
+    /**
+     * 延迟N秒后发一条测试通知——点下去后你有时间锁屏/切到后台，等着看能不能正常收到。
+     * JS调用：Android.testNotificationDelayed(10)
+     */
+    @JavascriptInterface
+    public void testNotificationDelayed(int delaySeconds) {
+        long delayMs = Math.max(0, delaySeconds) * 1000L;
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                () -> RealtimeMonitorService.sendTestNotification(mContext), delayMs);
+    }
+
     /** 当前跟踪中的候选池（观察中/已建底仓/已加仓，不含止损/已移除的） */
     @JavascriptInterface
     public String getActiveWatchlist() {
@@ -527,6 +574,43 @@ public class StockBridge implements RealtimeMonitorService.Listener {
     @JavascriptInterface
     public void removeFromWatchlist(String code) {
         WatchlistManager.get().removeManual(code);
+    }
+
+    /**
+     * 用户确认一条待确认信号——真正把规则引擎+AI验证过的候选信号落地成终态
+     * （建底仓/加仓/止损）。注意：这只是更新候选池状态方便你跟踪，
+     * 实际买卖仍需你在持仓页自己录入交易记录。
+     * JS调用：Android.confirmSignal(code)
+     */
+    @JavascriptInterface
+    public void confirmSignal(String code) {
+        WatchlistManager.get().confirmPending(code);
+    }
+
+    /** 用户忽略一条待确认信号——打回确认前的状态，继续观察，不采取任何行动 */
+    @JavascriptInterface
+    public void dismissSignal(String code) {
+        WatchlistManager.get().dismissPending(code);
+    }
+
+    /** 当前所有待确认信号（PENDING_*状态） */
+    @JavascriptInterface
+    public String getPendingSignals() {
+        org.json.JSONArray arr = new org.json.JSONArray();
+        for (WatchlistManager.WatchlistItem it : WatchlistManager.get().getPendingSignals()) {
+            try {
+                org.json.JSONObject o = new org.json.JSONObject();
+                o.put("code", it.code);
+                o.put("name", it.name);
+                o.put("status", it.status);
+                o.put("pendingAction", it.pendingAction);
+                o.put("pendingPrice", it.pendingPrice);
+                o.put("pendingAiConfirmed", it.pendingAiConfirmed);
+                o.put("pendingReason", it.pendingReason);
+                arr.put(o);
+            } catch (Exception ignored) {}
+        }
+        return arr.toString();
     }
 
     // ══════════════════════════════════════════════

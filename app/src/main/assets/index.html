@@ -802,6 +802,28 @@
       </div>
       <div class="result-list" id="resultList"></div>
     </div>
+
+    <!-- 实时监控面板 -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">实时监控</div>
+        <div style="font-size:10px;color:var(--text-dim);" id="monitorTickStatus">未开启</div>
+      </div>
+      <div style="padding:10px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <button class="scan-btn" style="flex:1;min-width:120px;padding:8px;font-size:12px;" id="monitorToggleBtn" onclick="toggleMonitor()">▶ 启动监控</button>
+        <select id="monitorInterval" style="background:var(--bg-card2);color:var(--text-prime);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:12px;">
+          <option value="30000">30秒</option>
+          <option value="60000" selected>1分钟</option>
+        </select>
+      </div>
+      <div style="padding:0 14px 12px;font-size:10px;color:var(--text-dim);">
+        候选池会持续跟踪直到满足买入条件或手动移除，锁屏/切后台不中断。
+      </div>
+      <div style="padding:0 14px 12px;display:flex;gap:8px;align-items:center;">
+        <button onclick="testNotification()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--accent-cyan);background:transparent;color:var(--accent-cyan);font-size:11px;">🔔 测试通知(10秒后到)</button>
+      </div>
+      <div id="watchlistContainer" style="padding:0 12px 12px;"></div>
+    </div>
   </div>
 
   <!-- ══ 持仓页 ══ -->
@@ -889,13 +911,30 @@
       </button>
     </div>
 
+    <!-- 话术学习 -->
+    <div class="card" style="margin-top:10px;">
+      <div class="card-header">
+        <div class="card-title">教AI新话术</div>
+        <div style="font-size:9px;color:var(--text-dim);">知识库注入式学习</div>
+      </div>
+      <div style="padding:10px 14px;font-size:10px;color:var(--text-dim);line-height:1.6;">
+        说明：这不是真正的模型微调，而是把你教的话术持久化存起来，之后每次分析/对话都会重新参考，模拟"记住"的效果。
+      </div>
+      <div style="padding:0 14px 12px;display:flex;gap:8px;">
+        <textarea id="wisdomInput" placeholder="例如：突破前一日收盘价就加仓，跌破前一日最低价就止损" rows="2"
+          style="flex:1;background:var(--bg-card2);color:var(--text-prime);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:12px;resize:none;"></textarea>
+      </div>
+      <div style="padding:0 14px 12px;display:flex;justify-content:space-between;align-items:center;">
+        <div style="font-size:10px;color:var(--accent-cyan);" id="wisdomStatus"></div>
+        <button class="scan-btn" style="padding:8px 16px;font-size:12px;" onclick="learnWisdom()">开始学习</button>
+      </div>
+    </div>
+
     <!-- 进化记录 -->
     <div class="card" style="margin-top:10px;">
       <div class="card-header"><div class="card-title">进化记录</div></div>
       <div id="evolveLog" style="padding:10px 14px;font-size:11px;color:var(--text-sub);line-height:2;">
-        <div>📚 学习了通达信EMA/SAR核心公式逻辑</div>
-        <div>📊 建立了放量突破识别模型</div>
-        <div>🔍 获得市值筛选经验（20亿-320亿区间）</div>
+        <div>还没教过话术，在上面输入框教AI第一条操盘经验吧</div>
       </div>
     </div>
   </div>
@@ -1005,6 +1044,20 @@ window.initPositions = function(jsonStr) {
     updateAssetDisplay();
     renderPositions();
     addThinkLine('good', `[DB ] 已从本地数据库加载 ${arr.length} 个持仓`);
+
+    // 候选池初始加载 + 恢复上次的监控开关状态（比如上次关程序前监控是开着的，重新打开App自动接上）
+    if (IS_ANDROID) {
+      loadWatchlist();
+      loadEvolveLog();
+      if (Android.loadPrefs('monitor_running', '0') === '1') {
+        const savedInterval = +Android.loadPrefs('monitor_interval', '60000') || 60000;
+        document.getElementById('monitorInterval').value = String(savedInterval);
+        Android.startMonitor(savedInterval);
+        STATE.monitorRunning = true;
+        document.getElementById('monitorToggleBtn').textContent = '⏹ 停止监控';
+        document.getElementById('monitorTickStatus').textContent = '恢复中...';
+      }
+    }
   } catch(e) { console.error('initPositions', e); }
 };
 
@@ -1169,6 +1222,136 @@ window.onAiAnalysis = function(text) {
   document.getElementById('aiAnalyzeStatus').textContent = '✓ 分析完成';
 };
 
+// ══ 实时监控 & 候选池 ══
+
+STATE.monitorRunning = false;
+
+function testNotification() {
+  if (!IS_ANDROID) { showToast('测试通知需要在App中运行'); return; }
+  showToast('10秒后将发送测试通知，现在可以锁屏或切到后台');
+  addThinkLine('sys', '[TST] 已安排测试通知，10秒后到达，现在可以锁屏验证');
+  Android.testNotificationDelayed(10);
+}
+
+function toggleMonitor() {
+  if (!IS_ANDROID) { showToast('实时监控需要在App中运行'); return; }
+  const btn = document.getElementById('monitorToggleBtn');
+  if (STATE.monitorRunning) {
+    Android.stopMonitor();
+    STATE.monitorRunning = false;
+    btn.textContent = '▶ 启动监控';
+    document.getElementById('monitorTickStatus').textContent = '已停止';
+  } else {
+    const interval = +document.getElementById('monitorInterval').value || 60000;
+    Android.startMonitor(interval);
+    STATE.monitorRunning = true;
+    btn.textContent = '⏹ 停止监控';
+    document.getElementById('monitorTickStatus').textContent = '启动中...';
+    Android.savePrefs('monitor_running', '1');
+    Android.savePrefs('monitor_interval', String(interval));
+  }
+}
+
+function loadWatchlist() {
+  if (!IS_ANDROID) return;
+  try {
+    const items = JSON.parse(Android.getActiveWatchlist() || '[]');
+    renderWatchlist(items);
+  } catch (e) { console.error('[Watchlist] 加载失败', e); }
+}
+
+const WATCHLIST_STATUS_LABEL = {
+  WATCHING: { text: '观察中', color: 'var(--accent-gold)' },
+  STARTER:  { text: '已建底仓', color: 'var(--up-red)' },
+  ADDED:    { text: '已加仓', color: 'var(--up-red)' },
+  PENDING_STARTER: { text: '待确认·买入底仓', color: 'var(--accent-cyan)' },
+  PENDING_ADD:     { text: '待确认·加仓', color: 'var(--accent-cyan)' },
+  PENDING_STOP:    { text: '待确认·止损', color: 'var(--down-green)' },
+};
+
+const PENDING_STATUSES = ['PENDING_STARTER', 'PENDING_ADD', 'PENDING_STOP'];
+
+function renderWatchlist(items) {
+  const box = document.getElementById('watchlistContainer');
+  if (!items.length) {
+    box.innerHTML = '<div style="padding:16px 0;text-align:center;color:var(--text-dim);font-size:11px;">候选池为空，运行选股后自动入池</div>';
+    return;
+  }
+  box.innerHTML = items.map(it => {
+    const label = WATCHLIST_STATUS_LABEL[it.status] || { text: it.status, color: 'var(--text-sub)' };
+    const isPending = PENDING_STATUSES.includes(it.status);
+
+    if (isPending) {
+      const aiTag = it.pendingAiConfirmed
+        ? '<span style="color:var(--accent-cyan);font-size:9px;">✓ AI认可</span>'
+        : '<span style="color:var(--text-dim);font-size:9px;">⚠ AI存疑，仅供参考</span>';
+      return `
+      <div style="padding:10px;margin-top:8px;background:var(--bg-card2);border-radius:8px;border:1.5px solid ${label.color};">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <span style="font-weight:600;color:var(--text-prime);font-size:12px;">${it.name} <span style="color:var(--text-dim);font-size:10px;">${it.code}</span></span>
+          <span style="color:${label.color};font-size:10px;border:1px solid ${label.color};border-radius:8px;padding:1px 6px;">${label.text}</span>
+        </div>
+        <div style="font-size:9px;margin-bottom:4px;">${aiTag}，触发价¥${(it.pendingPrice||0).toFixed(2)}</div>
+        <div style="font-size:11px;color:var(--text-prime);line-height:1.6;margin-bottom:8px;">${it.pendingReason || ''}</div>
+        <div style="display:flex;gap:8px;">
+          <button onclick="confirmWatchlistSignal('${it.code}')" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--up-red);background:transparent;color:var(--up-red);font-size:11px;">✓ 确认执行</button>
+          <button onclick="dismissWatchlistSignal('${it.code}')" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-sub);font-size:11px;">忽略</button>
+        </div>
+      </div>`;
+    }
+
+    return `
+    <div style="padding:8px 10px;margin-top:8px;background:var(--bg-card2);border-radius:8px;border:1px solid var(--border);">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-weight:600;color:var(--text-prime);font-size:12px;">${it.name} <span style="color:var(--text-dim);font-size:10px;">${it.code}</span></span>
+        <span style="display:flex;align-items:center;gap:6px;">
+          <span style="color:${label.color};font-size:10px;border:1px solid ${label.color};border-radius:8px;padding:1px 6px;">${label.text}</span>
+          <span onclick="removeWatchlistItem('${it.code}')" style="color:var(--text-dim);font-size:14px;padding:0 4px;">✕</span>
+        </span>
+      </div>
+      <div style="font-size:10px;color:var(--text-sub);margin-top:4px;line-height:1.5;">${it.lastNote || ('day1入池 · 评分' + it.score + ' · ' + (it.signal||''))}</div>
+    </div>`;
+  }).join('');
+}
+
+function removeWatchlistItem(code) {
+  if (!IS_ANDROID) return;
+  Android.removeFromWatchlist(code);
+  loadWatchlist();
+}
+
+function confirmWatchlistSignal(code) {
+  if (!IS_ANDROID) return;
+  Android.confirmSignal(code);
+  showToast('已确认，可去持仓页录入实际交易');
+  loadWatchlist();
+}
+
+function dismissWatchlistSignal(code) {
+  if (!IS_ANDROID) return;
+  Android.dismissSignal(code);
+  showToast('已忽略，继续观察');
+  loadWatchlist();
+}
+
+window.onMonitorTick = function(watchCount, posCount, timeStr) {
+  document.getElementById('monitorTickStatus').textContent =
+      `观察${watchCount}支 · 持仓${posCount}支 · ${timeStr}`;
+  loadWatchlist();
+};
+
+window.onSignalTriggered = function(jsonStr) {
+  try {
+    const sig = JSON.parse(jsonStr);
+    const isStop = sig.action.includes('止损');
+    const icon = isStop ? '🔴' : '🟢';
+    showToast(`${icon} ${sig.name}(${sig.code}) ${sig.action}（待确认）¥${sig.price.toFixed(2)}`);
+    addThinkLine(isStop ? 'bad' : 'good',
+        `[监控] ${sig.name}(${sig.code}) ${sig.action}·待确认：${sig.note}`);
+    loadWatchlist();
+  } catch (e) { console.error('[Signal] 解析失败', e); }
+};
+
 window.onAiChatReply = function(text) {
   STATE.aiStreamBuffer = '';
   STATE.aiStreamTarget = null;
@@ -1179,6 +1362,52 @@ window.onAiChatReply = function(text) {
   }
   document.getElementById('chatArea').scrollTop = 9999;
 };
+
+// ══ 话术学习 ══
+
+function learnWisdom() {
+  if (!IS_ANDROID) { showToast('话术学习需要在App中运行'); return; }
+  const input = document.getElementById('wisdomInput');
+  const text = input.value.trim();
+  if (!text) { showToast('先输入要教的话术'); return; }
+
+  document.getElementById('wisdomStatus').textContent = 'AI正在理解中...';
+  addThinkLine('sys', `[LRN] 开始学习新话术：${text.slice(0,30)}...`);
+  Android.learnWisdom(text);
+}
+
+window.onWisdomToken = function(token) {
+  const el = document.getElementById('wisdomStatus');
+  el.textContent = 'AI复述：' + (el.textContent.startsWith('AI复述：') ? el.textContent.slice(4) : '') + token;
+};
+
+window.onWisdomLearned = function(summary) {
+  document.getElementById('wisdomStatus').textContent = '';
+  document.getElementById('wisdomInput').value = '';
+  showToast('✅ 学习完成');
+  addThinkLine('good', `[LRN] 已学习：${summary}`);
+  loadEvolveLog();
+};
+
+window.onWisdomError = function(msg) {
+  document.getElementById('wisdomStatus').textContent = '';
+  showToast('学习失败：' + msg);
+};
+
+function loadEvolveLog() {
+  if (!IS_ANDROID) return;
+  try {
+    const items = JSON.parse(Android.getWisdomLog() || '[]');
+    const box = document.getElementById('evolveLog');
+    if (!items.length) {
+      box.innerHTML = '<div>还没教过话术，在上面输入框教AI第一条操盘经验吧</div>';
+      return;
+    }
+    box.innerHTML = items.map(it =>
+      `<div>📚 <span style="color:var(--text-dim);font-size:9px;">[${it.addedAt}]</span> ${it.summary}</div>`
+    ).join('');
+  } catch (e) { console.error('[EvolveLog] 加载失败', e); }
+}
 
 // ══ App生命周期══
 window.onAppResume = function() {
@@ -1438,6 +1667,10 @@ function runScreener() {
       if (status.downloading) {
         showToast('数据正在下载中，请稍后');
         return;
+      }
+      if (status.isStale) {
+        showToast(`⚠️ 缓存数据是${status.latestTradeDate}的，不是最新交易日(${status.expectedTradeDate})，建议先重新下载`);
+        addThinkLine('warn', `[SCR] 缓存数据停留在${status.latestTradeDate}，与预期的最近交易日${status.expectedTradeDate}不一致，仍将继续使用这份旧数据筛选`);
       }
     } catch(e) {}
   }
@@ -3062,7 +3295,7 @@ window.onDownloadComplete = function(stockCount, barCount) {
   document.getElementById('downloadBtn').disabled = false;
   document.getElementById('downloadBtn').style.opacity = '1';
   document.getElementById('downloadBtn').innerHTML = '⬇ 重新下载最新数据';
-  document.getElementById('downloadStatusText').textContent = '已就绪 (' + stockCount + '支)';
+  refreshDownloadStatusText();
   
   setTimeout(() => {
     document.getElementById('downloadProgressContainer').style.display = 'none';
@@ -3103,6 +3336,7 @@ window.onScreenerResult = function(jsonStr) {
     document.getElementById('scanBtn').disabled = false;
     
     addThinkLine('good', `[SCR] 真实数据筛选完成：${results.length} 支通过公式`);
+    loadWatchlist(); // 本次筛选结果已在Java端入池(WatchlistManager)，刷新面板展示
   } catch(e) {
     console.error('[SCR] 渲染阶段失败', e);
     window.onScreenerError('渲染失败: ' + e.message + (e.stack ? (' @ ' + e.stack.split('\n')[0]) : ''));
@@ -3124,16 +3358,26 @@ window.onScreenerError = function(msg) {
   addThinkLine('bad', '[SCR] 选股出错: ' + msg);
 };
 
-function initDownloadStatus() {
-  if (IS_ANDROID) {
-    try {
-      const status = JSON.parse(Android.getDownloadStatus());
-      if (status.stockCount > 0 && status.barCount > 0) {
-        document.getElementById('downloadStatusText').textContent = '已就绪 (' + status.stockCount + '支)';
-        document.getElementById('downloadBtn').innerHTML = '⬇ 重新下载最新数据';
+function refreshDownloadStatusText() {
+  if (!IS_ANDROID) return;
+  try {
+    const status = JSON.parse(Android.getDownloadStatus());
+    const el = document.getElementById('downloadStatusText');
+    if (status.stockCount > 0 && status.barCount > 0) {
+      if (status.isStale) {
+        el.innerHTML = `⚠️ ${status.latestTradeDate}的旧数据 (${status.stockCount}支)`;
+        el.style.color = 'var(--accent-gold)';
+      } else {
+        el.innerHTML = `已就绪·${status.latestTradeDate} (${status.stockCount}支)`;
+        el.style.color = 'var(--text-dim)';
       }
-    } catch(e){}
-  }
+      document.getElementById('downloadBtn').innerHTML = '⬇ 重新下载最新数据';
+    }
+  } catch(e){}
+}
+
+function initDownloadStatus() {
+  refreshDownloadStatusText();
 }
 
 loadState();

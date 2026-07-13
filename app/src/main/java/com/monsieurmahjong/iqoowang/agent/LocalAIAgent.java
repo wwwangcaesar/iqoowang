@@ -282,6 +282,7 @@ public class LocalAIAgent {
                 String prompt = buildChatPrompt(message, historyJson);
 
                 if (mEngine.isReady()) {
+                    mEngine.reset(); // prompt里已经手动拼接了完整历史，reset避免引擎残留状态和这份历史对不上
                     runStream(prompt, cb);
                 } else {
                     String fallback = consumeDebugLog() + mExpert.answerQuestion(message);
@@ -293,6 +294,178 @@ public class LocalAIAgent {
                 mMainHandler.post(() -> cb.onError(e.getMessage()));
             }
         });
+    }
+
+    // ──────────────────────────────────────────
+    // 信号二次验证（规则引擎只做候选初筛，AI结合已学话术做二次确认+生成人话解释）
+    // ──────────────────────────────────────────
+
+    public static class VerifyResult {
+        public boolean confirmed;
+        public String reason;
+    }
+
+    /**
+     * 规则引擎命中候选信号后调用。AI 结合已学话术、真实行情、历史操作记录，
+     * 判断这个信号是否真的靠谱，并生成小白也能看懂的理由——不是简单复述规则，
+     * 而是要把"为什么"讲清楚。最终是否执行，由用户在App里手动确认，AI不能替用户下单。
+     */
+    public void verifySignal(String code, String name, String action, String ruleNote,
+                              com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote quote,
+                              AICallback cb) {
+        if (mInferring.getAndSet(true)) {
+            cb.onError("AI正在思考中，请稍后");
+            return;
+        }
+        mExecutor.execute(() -> {
+            try {
+                String histNote = mCtxBuilder.buildStockHistoryNote(code);
+                String trend = mCtxBuilder.buildRecentTrend(code);
+                String prompt = buildVerifyPrompt(code, name, action, ruleNote, quote, histNote, trend);
+
+                if (mEngine.isReady()) {
+                    mEngine.reset();
+                    runStream(prompt, cb);
+                } else {
+                    String fallback = consumeDebugLog() + fallbackVerifyText(action, ruleNote);
+                    mInferring.set(false);
+                    streamToCallback(fallback, cb);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "verifySignal", e);
+                mInferring.set(false);
+                mMainHandler.post(() -> cb.onError(e.getMessage()));
+            }
+        });
+    }
+
+    private String buildVerifyPrompt(String code, String name, String action, String ruleNote,
+                                      com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote quote,
+                                      String histNote, String trend) {
+        String actionCn = "BUY_STARTER".equals(action) ? "买入底仓"
+                : "ADD_POSITION".equals(action) ? "加仓" : "止损清仓";
+        StringBuilder sb = new StringBuilder();
+        sb.append(getSystemPrompt()).append("\n\n");
+        sb.append("【复核任务】规则引擎按固定公式检测到一个候选信号，现在需要你结合真实数据和你学过的操盘手话术，判断这个信号靠不靠谱。\n\n");
+        sb.append("股票：").append(name).append("(").append(code).append(")\n");
+        sb.append("规则引擎候选动作：").append(actionCn).append("\n");
+        sb.append("规则引擎判断依据：").append(ruleNote).append("\n");
+        if (quote != null) {
+            sb.append(String.format(Locale.CHINA,
+                    "实时行情：现价¥%.2f 今开¥%.2f 最高¥%.2f 最低¥%.2f 涨跌幅%.2f%%\n",
+                    quote.price, quote.open, quote.high, quote.low, quote.changePct));
+        }
+        if (!trend.isEmpty()) sb.append("近期走势：").append(trend).append("\n");
+        if (!histNote.isEmpty()) sb.append("你和这支股票的历史交易：").append(histNote).append("\n");
+
+        sb.append("\n【输出要求】严格按下面两行输出，不要写其他内容：\n");
+        sb.append("判断：确认 或 不确认（这个候选信号是否真的值得操作）\n");
+        sb.append("说明：不超过100字，用完全不懂技术分析的普通人也能看懂的大白话，说清楚为什么、以及风险提示。不要用\"N≥N1\"这种公式化表达，要说人话。\n");
+        return sb.toString();
+    }
+
+    private String fallbackVerifyText(String action, String ruleNote) {
+        String actionCn = "BUY_STARTER".equals(action) ? "买入底仓"
+                : "ADD_POSITION".equals(action) ? "加仓" : "止损清仓";
+        return "判断：确认\n说明：本地AI暂不可用，以下是规则引擎的原始判断（未经AI复核，请自行斟酌）：" +
+                actionCn + "——" + ruleNote;
+    }
+
+    /** 解析AI复核结果——解析不到明确"判断"时保守处理为"确认"，交给用户自己看理由判断，不代替用户拦截 */
+    public static VerifyResult parseVerifyResult(String text) {
+        VerifyResult r = new VerifyResult();
+        if (text == null || text.trim().isEmpty()) {
+            r.confirmed = true;
+            r.reason = "AI未返回有效结果，请自行判断规则引擎给出的原始信号";
+            return r;
+        }
+        boolean hasNotConfirm = text.contains("不确认");
+        boolean hasConfirm = text.contains("确认");
+        // 没提取到明确结论时不做拦截，交给用户自己看理由判断
+        r.confirmed = hasNotConfirm ? false : true;
+
+        java.util.regex.Matcher rm = java.util.regex.Pattern.compile("说明[:：]\\s*([\\s\\S]+)").matcher(text);
+        r.reason = rm.find() ? rm.group(1).trim() : text.trim();
+        return r;
+    }
+
+    // ──────────────────────────────────────────
+    // 话术学习（知识库注入，非模型权重级学习——见 WisdomManager 类注释）
+    // ──────────────────────────────────────────
+
+    /**
+     * 教AI一条新话术。流程：
+     *   1. 让模型用一句话复述它理解到的要点（用于确认理解是否正确 + 生成简明摘要）
+     *   2. 无论模型是否可用，原始话术原文都会持久化进 WisdomManager
+     *   3. 之后每次涉及交易判断的分析/对话，都会重新把这条话术塞进 Prompt
+     *
+     * 【诚实说明】这不是真正的模型微调，是"知识库注入"，模拟"记住"的效果。
+     */
+    public void learnWisdom(String rawText, AICallback cb) {
+        if (rawText == null || rawText.trim().isEmpty()) {
+            cb.onError("话术内容不能为空");
+            return;
+        }
+        if (mInferring.getAndSet(true)) {
+            cb.onError("AI正在思考中，请稍后再教学");
+            return;
+        }
+        final String text = rawText.trim();
+        mExecutor.execute(() -> {
+            try {
+                if (mEngine.isReady()) {
+                    String prompt = buildLearnPrompt(text);
+                    mEngine.reset();
+                    runLearnStream(text, prompt, cb);
+                } else {
+                    // 模型不可用：直接用规则生成一个简明摘要（截断+去空白），照样持久化
+                    String summary = fallbackSummary(text);
+                    com.monsieurmahjong.iqoowang.util.WisdomManager.get().addEntry(text, summary);
+                    mInferring.set(false);
+                    String msg = consumeDebugLog() + "已记录（专家系统模式，未做AI复述确认）：" + summary;
+                    streamToCallback(msg, cb);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "learnWisdom", e);
+                mInferring.set(false);
+                mMainHandler.post(() -> cb.onError(e.getMessage()));
+            }
+        });
+    }
+
+    private String buildLearnPrompt(String rawText) {
+        return getCorePersona() +
+                "【学习任务】用户要教你一条新的操盘经验，原文如下：\n" +
+                "\"" + rawText + "\"\n\n" +
+                "请用不超过30字，复述你理解到的核心要点（比如：什么条件下做什么操作），" +
+                "只输出这一句复述，不要输出其他解释或客套话。\n";
+    }
+
+    private void runLearnStream(String rawText, String prompt, AICallback cb) {
+        final StringBuilder full = new StringBuilder();
+        mEngine.chatStream(prompt, new LlmEngine.Callback() {
+            @Override
+            public void onToken(String token) {
+                full.append(token);
+                mMainHandler.post(() -> cb.onToken(token));
+            }
+            @Override
+            public void onFinish(String fullText) {
+                mInferring.set(false);
+                String result = fullText.isEmpty() ? full.toString() : fullText;
+                String summary = (result.startsWith("[response") || result.startsWith("[推理")
+                        || result.startsWith("[签名") || result.trim().isEmpty())
+                        ? fallbackSummary(rawText) : result.trim();
+                com.monsieurmahjong.iqoowang.util.WisdomManager.get().addEntry(rawText, summary);
+                gainExp(8); // 学习一条新话术给更高经验值，鼓励持续教学
+                mMainHandler.post(() -> cb.onComplete(summary));
+            }
+        });
+    }
+
+    private String fallbackSummary(String rawText) {
+        String s = rawText.replaceAll("\\s+", "");
+        return s.length() > 30 ? s.substring(0, 30) + "..." : s;
     }
 
     // ──────────────────────────────────────────
@@ -388,12 +561,17 @@ public class LocalAIAgent {
 
     private String buildChatPrompt(String message, String historyJson) throws Exception {
         StringBuilder sb = new StringBuilder();
-        sb.append(getSystemPrompt()).append("\n\n");
-
-        // 给自由问答也接上一行简短的大盘背景（只用现有缓存，不重新触发下载，保持对话快途）
-        try {
-            sb.append("【当前大盘】").append(com.monsieurmahjong.iqoowang.util.MarketIndexManager.get().getMarketSummaryText()).append("\n\n");
-        } catch (Exception ignored) {}
+        sb.append(getCorePersona());
+        // 只有看起来真的在问股票/交易相关问题时，才把公式+操盘手经验这一大段塞进去，
+        // 日常打招呼这类消息跳过，prefill量小很多，回复明显更快
+        boolean needKnowledge = looksTradingRelated(message);
+        if (needKnowledge) {
+            sb.append(getTradingKnowledge());
+            // 只有涉及交易判断时才接上大盘背景，问候语不需要
+            try {
+                sb.append("【当前大盘】").append(com.monsieurmahjong.iqoowang.util.MarketIndexManager.get().getMarketSummaryText()).append("\n\n");
+            } catch (Exception ignored) {}
+        }
 
         if (historyJson != null && !historyJson.isEmpty()) {
             JSONArray history = new JSONArray(historyJson);
@@ -411,9 +589,19 @@ public class LocalAIAgent {
     }
 
     private String getSystemPrompt() {
-        return "你是JarvTrader，专为A股操盘设计的本地AI，完全离线运行在用户手机上，数据不出设备。\n\n" +
+        return getCorePersona() + getTradingKnowledge();
+    }
 
-                "【选股公式核心（通达信）】\n" +
+    /** 精简人设，每轮对话都会发，保持很短以控制prefill开销 */
+    private String getCorePersona() {
+        return "你是JarvTrader，专为A股操盘设计的本地AI，完全离线运行在用户手机上，数据不出设备。\n" +
+                "操盘手风格：直接、简洁、有明确操作建议，不说废话。自由问答不超过200字。\n" +
+                "绝不编造未提供的具体数字，没有依据就说\"数据不足\"。\n\n";
+    }
+
+    /** 详细交易知识（公式+操盘手经验），只在真正论及股票/交易的场景下注入，避免日常对话也要prefill这一大段 */
+    private String getTradingKnowledge() {
+        return "【选股公式核心（通达信）】\n" +
                 "· N=EMA(C,2)：2日指数均线，反映最新动量\n" +
                 "· N1=11层嵌套EMA(2)：极平滑长期趋势\n" +
                 "· N2=MA(25)+STD(25)：布林上轨，突破代表强势\n" +
@@ -423,7 +611,7 @@ public class LocalAIAgent {
                 "· 排除：创业板 科创板 涨幅≥20% ST\n\n" +
 
                 "【资深操盘手经验（你必须深刻理解并融入判断）】\n" +
-                "以下是操盘手的原话，你要理解其含义并用于实际分析：\n\n" +
+                "以下是操盘手的原话，你要理解其含义并用于实战分析：\n\n" +
                 "经验1：\"买的时候，要参考昨天的这一价格，我一般加0.2～0.3做挂单进场\"\n" +
                 "→ 含义：不追涨，以昨日收盘价为基准，挂单在 昨收+0.2到0.3元 的位置等待成交。\n" +
                 "→ 实战：避免开盘追高，等回调到挂单位置再进，控制成本，提高安全边际。\n" +
@@ -443,8 +631,26 @@ public class LocalAIAgent {
                 "1. 分析股票时，主动结合操盘手经验给出具体挂单价区间\n" +
                 "2. 评估量价信号时，判断是信号A（放量突破）还是信号B（缩量整理）\n" +
                 "3. 必须结合给定的大盘指数、市场宽度、历史交易记录做判断，这些都是真实数据，不是可有可无的参考信息\n" +
-                "4. 绝不编造未提供的具体数字（如不存在的资金流向、新闻），没有依据就说\"数据不足\"，不要硬编\n" +
-                "5. 操盘手风格：直接、简洁、有明确操作建议；自由问答时不超过200字，选股分析时按指定的结构化格式输出，不受字数限制\n";
+                "4. 选股分析时按指定的结构化格式输出，不受字数限制\n"
+                + safeWisdomBlock();
+    }
+
+    /** 安全获取话术知识库注入块，WisdomManager未初始化或异常时返回空字符串，不影响正常分析 */
+    private String safeWisdomBlock() {
+        try {
+            return com.monsieurmahjong.iqoowang.util.WisdomManager.get().buildInjectBlock();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /** 粗略判断一句话是不是在问股票/交易相关的问题——只有这种情况才把详细公式/经验塞进去，日常对话保持轻量、回复快 */
+    private boolean looksTradingRelated(String message) {
+        if (message == null) return false;
+        String[] kw = {"股", "买", "卖", "止损", "挂单", "信号", "量比", "均线", "仓位", "SAR", "sar",
+                "EMA", "ema", "大盘", "涨停", "跌停", "市值", "K线", "k线", "分时", "收盘", "开盘"};
+        for (String k : kw) if (message.contains(k)) return true;
+        return message.matches(".*\\d{6}.*"); // 提到了看起来像股票代码的6位数字
     }
 
     // ──────────────────────────────────────────

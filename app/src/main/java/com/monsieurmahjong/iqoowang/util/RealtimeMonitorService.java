@@ -18,6 +18,7 @@ import android.util.Log;
 import androidx.core.app.NotificationCompat;
 
 import com.monsieurmahjong.iqoowang.MainActivity;
+import com.monsieurmahjong.iqoowang.agent.LocalAIAgent;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -27,14 +28,14 @@ import java.util.Set;
 /**
  * RealtimeMonitorService — 实时监控前台服务
  *
- * 按设定间隔（默认60秒，可调30秒）轮询候选池+持仓的实时行情和分时数据，
- * 跑 TradingRuleEngine 判断买入/加仓/止损，触发时：
- *   1. 更新 WatchlistManager 状态
- *   2. 发系统通知（震动）
- *   3. 如果 App 正在前台（StockBridge 已注册监听），同步推送到 WebView
+ * 按设定间隔（默认60秒，可调30秒）轮询候选池+持仓的实时行情和分时数据，跑：
+ *   1. TradingRuleEngine（确定性规则引擎）做候选信号初筛——快、零成本、100%可复现
+ *   2. 命中候选信号后，转 LocalAIAgent 做二次验证——结合已学话术+真实数据判断
+ *      靠不靠谱，并生成小白能看懂的理由
+ *   3. 无论AI是否认可，都落地成"待确认"状态，绝不自动买卖——真正要不要操作，
+ *      必须用户在App里手动点确认，AI和规则引擎都只是"建议"，不能替用户下决定
  *
- * 前台服务是为了保证锁屏/切后台时监控不中断——买卖判断这种事不能因为
- * 用户切了个微信就漏掉。
+ * 前台服务是为了保证锁屏/切后台时监控不中断。
  */
 public class RealtimeMonitorService extends Service {
 
@@ -131,6 +132,9 @@ public class RealtimeMonitorService extends Service {
             if (!failed.isEmpty()) Log.w(TAG, "本轮" + failed.size() + "支行情获取失败: " + failed);
 
             for (WatchlistManager.WatchlistItem item : watchItems) {
+                // 已经在"待确认"状态的跳过，等用户处理完这一条再评估下一轮，避免同一支股票信号刷屏
+                if (isPendingStatus(item.status)) continue;
+
                 RealtimeQuoteManager.Quote q = quotes.get(item.code);
                 if (q == null) continue;
 
@@ -154,36 +158,70 @@ public class RealtimeMonitorService extends Service {
         });
     }
 
+    private boolean isPendingStatus(String status) {
+        return WatchlistManager.STATUS_PENDING_STARTER.equals(status)
+                || WatchlistManager.STATUS_PENDING_ADD.equals(status)
+                || WatchlistManager.STATUS_PENDING_STOP.equals(status);
+    }
+
+    /**
+     * 第一步：规则引擎候选初筛。命中就转AI二次验证，不在这里直接改变持仓状态——
+     * 规则引擎的判断只是"看起来符合条件"，靠不靠谱还得AI结合话术和实际数据看一遍。
+     */
     private void evaluateAndAct(WatchlistManager.WatchlistItem item, RealtimeQuoteManager.Quote quote,
                                  List<RealtimeQuoteManager.MinutePoint> minutePoints) {
         TradingRuleEngine.PrevDayRef prevDay = mEngine.getPrevDayRef(item.code);
         TradingRuleEngine.RuleResult result = mEngine.evaluate(item.status, quote, minutePoints, prevDay);
 
-        WatchlistManager.get().updateNote(item.code, result.note);
-
-        if (result.action == TradingRuleEngine.Action.NONE) return;
-
-        String actionLabel;
-        switch (result.action) {
-            case BUY_STARTER:
-                WatchlistManager.get().markStarter(item.code, result.triggerPrice, result.note);
-                actionLabel = "买入底仓";
-                break;
-            case ADD_POSITION:
-                WatchlistManager.get().markAdded(item.code, result.triggerPrice, result.note);
-                actionLabel = "突破加仓";
-                break;
-            case STOP_LOSS:
-                WatchlistManager.get().markStopped(item.code, result.note);
-                actionLabel = "止损清仓";
-                break;
-            default:
-                return;
+        if (result.action == TradingRuleEngine.Action.NONE) {
+            WatchlistManager.get().updateNote(item.code, result.note);
+            return;
         }
 
-        Log.i(TAG, "【信号触发】" + item.name + "(" + item.code + ") " + actionLabel + " " + result.note);
-        fireAlert(item.code, item.name, actionLabel, result.note, result.triggerPrice);
-        if (sListener != null) sListener.onSignalTriggered(item.code, item.name, actionLabel, result.note, result.triggerPrice);
+        String actionKey = result.action.name(); // BUY_STARTER / ADD_POSITION / STOP_LOSS
+        Log.i(TAG, "【规则候选信号】" + item.name + "(" + item.code + ") " + actionKey
+                + " " + result.note + "，转AI二次验证");
+
+        // 第二步：AI结合已学话术+真实数据二次验证，生成小白能看懂的理由
+        LocalAIAgent.get(getApplicationContext()).verifySignal(
+                item.code, item.name, actionKey, result.note, quote,
+                new LocalAIAgent.AICallback() {
+                    @Override public void onToken(String token) {}
+
+                    @Override
+                    public void onComplete(String fullText) {
+                        LocalAIAgent.VerifyResult vr = LocalAIAgent.parseVerifyResult(fullText);
+                        handleVerified(item, actionKey, result.triggerPrice, vr);
+                    }
+
+                    @Override
+                    public void onError(String msg) {
+                        Log.w(TAG, "AI验证暂时不可用(" + msg + ")，仍展示规则引擎原始判断供用户参考");
+                        LocalAIAgent.VerifyResult vr = new LocalAIAgent.VerifyResult();
+                        vr.confirmed = true; // AI打不通不代表信号无效，交给用户自己看规则引擎原始依据判断
+                        vr.reason = "本轮AI复核暂时不可用，以下是规则引擎的原始判断：" + result.note;
+                        handleVerified(item, actionKey, result.triggerPrice, vr);
+                    }
+                });
+    }
+
+    /**
+     * 第三步：无论AI确认与否，都只落地成"待确认"状态，绝不自动买卖。
+     * 只有AI也认可时才推送打扰式通知；AI存疑的静默更新到候选池，用户打开App自己看。
+     */
+    private void handleVerified(WatchlistManager.WatchlistItem item, String actionKey, double price,
+                                 LocalAIAgent.VerifyResult vr) {
+        WatchlistManager.get().markPending(item.code, actionKey, price, vr.confirmed, vr.reason);
+
+        String actionLabel = "BUY_STARTER".equals(actionKey) ? "建议买入底仓"
+                : "ADD_POSITION".equals(actionKey) ? "建议加仓" : "建议止损";
+
+        if (vr.confirmed) {
+            fireAlert(item.code, item.name, actionLabel, vr.reason, price);
+        } else {
+            Log.i(TAG, "AI对该候选信号存疑，不推送通知，仅静默记录: " + item.code + " " + vr.reason);
+        }
+        if (sListener != null) sListener.onSignalTriggered(item.code, item.name, actionLabel, vr.reason, price);
     }
 
     // ══════════════════════════════════════════
@@ -196,7 +234,7 @@ public class RealtimeMonitorService extends Service {
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
             NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "实时监控",
                     NotificationManager.IMPORTANCE_HIGH);
-            ch.setDescription("买入/加仓/止损信号提醒");
+            ch.setDescription("待确认的买入/加仓/止损信号提醒（AI已初步核实，仍需你手动确认）");
             ch.enableVibration(true);
             nm.createNotificationChannel(ch);
         }
@@ -223,10 +261,10 @@ public class RealtimeMonitorService extends Service {
         nm.notify(NOTIFICATION_ID, buildNotification("实时监控运行中", content));
     }
 
-    private void fireAlert(String code, String name, String action, String note, double price) {
+    private void fireAlert(String code, String name, String actionLabel, String aiReason, double price) {
         NotificationManager nm = getSystemService(NotificationManager.class);
-        String title = "🔔 " + name + "(" + code + ") " + action;
-        String content = String.format(java.util.Locale.CHINA, "%s ¥%.2f · %s", action, price, note);
+        String title = "🔔 " + name + "(" + code + ") " + actionLabel + "・待确认";
+        String content = String.format(java.util.Locale.CHINA, "¥%.2f · %s\n点击App查看详情并确认", price, aiReason);
 
         Intent tapIntent = new Intent(this, MainActivity.class);
         PendingIntent pi = PendingIntent.getActivity(this, code.hashCode(), tapIntent,
@@ -253,5 +291,60 @@ public class RealtimeMonitorService extends Service {
                 }
             }
         } catch (Exception ignored) {}
+    }
+
+    // ══════════════════════════════════════
+    // 测试通知（不依赖服务运行，随时调用，用于验证锁屏/后台能否正常收到推送）
+    // ══════════════════════════════════════
+
+    /**
+     * 发一条和真实信号样式完全一致的测试通知（标题带[测试]前缀区分）。
+     * 不需要监控服务处于运行状态就能直接调，方便你单独验证通知权限/系统设置是否正常，
+     * 而不用先把整套监控流程跑起来。
+     */
+    public static void sendTestNotification(Context ctx) {
+        ensureChannel(ctx);
+        NotificationManager nm = ctx.getSystemService(NotificationManager.class);
+        String title = "🔔 [测试] 平安银行(000001) 建议买入底仓·待确认";
+        String content = "¥12.34 · 这是一条测试通知，用来验证锁屏/后台时能否正常收到提醒（不会影响任何真实持仓/候选池数据）";
+
+        Intent tapIntent = new Intent(ctx, MainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(ctx, 999999, tapIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        Notification n = new NotificationCompat.Builder(ctx, CHANNEL_ID)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(content))
+                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build();
+        nm.notify(999999, n);
+
+        try {
+            Vibrator vib = (Vibrator) ctx.getSystemService(Context.VIBRATOR_SERVICE);
+            if (vib != null && vib.hasVibrator()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vib.vibrate(VibrationEffect.createWaveform(new long[]{0, 200, 100, 200, 100, 200}, -1));
+                } else {
+                    vib.vibrate(new long[]{0, 200, 100, 200, 100, 200}, -1);
+                }
+            }
+        } catch (Exception ignored) {}
+        Log.i(TAG, "已发送测试通知");
+    }
+
+    private static void ensureChannel(Context ctx) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        NotificationManager nm = ctx.getSystemService(NotificationManager.class);
+        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+            NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "实时监控",
+                    NotificationManager.IMPORTANCE_HIGH);
+            ch.setDescription("待确认的买入/加仓/止损信号提醒（AI已初步核实，仍需你手动确认）");
+            ch.enableVibration(true);
+            nm.createNotificationChannel(ch);
+        }
     }
 }

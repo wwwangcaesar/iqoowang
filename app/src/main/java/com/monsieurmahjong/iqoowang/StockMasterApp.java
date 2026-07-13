@@ -48,6 +48,10 @@ public class StockMasterApp extends Application {
         com.monsieurmahjong.iqoowang.util.WatchlistManager.init(this);
         Log.i(TAG, "WatchlistManager initialized");
 
+        // 初始化话术知识库（用户教给AI的操盘手经验，持久化并注入后续分析）
+        com.monsieurmahjong.iqoowang.util.WisdomManager.init(this);
+        Log.i(TAG, "WisdomManager initialized");
+
         // 注册每日收盘快照 WorkManager（15:05 后触发）
         scheduleDailySnapshot();
 
