@@ -19,6 +19,7 @@ import androidx.core.app.NotificationCompat;
 
 import com.monsieurmahjong.iqoowang.MainActivity;
 import com.monsieurmahjong.iqoowang.agent.LocalAIAgent;
+import com.monsieurmahjong.iqoowang.dao.Position;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -28,12 +29,17 @@ import java.util.Set;
 /**
  * RealtimeMonitorService — 实时监控前台服务
  *
- * 按设定间隔（默认60秒，可调30秒）轮询候选池+持仓的实时行情和分时数据，跑：
+ * 按设定间隔（默认60秒，可调30秒）轮询候选池 + 真实持仓的实时行情和分时数据，跑：
  *   1. TradingRuleEngine（确定性规则引擎）做候选信号初筛——快、零成本、100%可复现
  *   2. 命中候选信号后，转 LocalAIAgent 做二次验证——结合已学话术+真实数据判断
  *      靠不靠谱，并生成小白能看懂的理由
  *   3. 无论AI是否认可，都落地成"待确认"状态，绝不自动买卖——真正要不要操作，
  *      必须用户在App里手动点确认，AI和规则引擎都只是"建议"，不能替用户下决定
+ *   4. 每一次规则命中信号（无论AI确认与否）都写一条决策日志到本地文件，供事后复盘
+ *
+ * 【重要】真实持仓（Position表，你在持仓页实际买入的股票）会在每轮开始时自动同步进
+ * 候选池并标记为"已建底仓"状态——这样"是否该止损"、"是否该加仓"这两条规则才会覆盖到
+ * 它们，而不是只监控day1筛选出来但还没买的候选股。
  *
  * 前台服务是为了保证锁屏/切后台时监控不中断。
  */
@@ -86,6 +92,7 @@ public class RealtimeMonitorService extends Service {
         mHandler.removeCallbacksAndMessages(null);
         mHandler.post(mTick);
         Log.i(TAG, "监控服务启动，间隔=" + mIntervalMs + "ms");
+        DecisionLogger.get().logNote("监控服务启动，间隔=" + (mIntervalMs / 1000) + "秒");
         return START_STICKY;
     }
 
@@ -94,6 +101,7 @@ public class RealtimeMonitorService extends Service {
         mHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
         Log.i(TAG, "监控服务停止");
+        try { DecisionLogger.get().logNote("监控服务停止"); } catch (Exception ignored) {}
     }
 
     @Override
@@ -114,12 +122,17 @@ public class RealtimeMonitorService extends Service {
 
     private void doTick() {
         mTickCount++;
+        List<Position> positions = DatabaseManager.get().getAllPositions();
+
+        // 真实持仓自动同步进候选池（标记为已建底仓），这样止损/加仓规则才会覆盖到它们，
+        // 不只是day1筛选出来但还没买的候选股
+        syncPositionsIntoWatchlist(positions);
+
         List<WatchlistManager.WatchlistItem> watchItems = WatchlistManager.get().getActiveWatchlist();
-        List<com.monsieurmahjong.iqoowang.dao.Position> positions = DatabaseManager.get().getAllPositions();
 
         Set<String> codeSet = new HashSet<>();
         for (WatchlistManager.WatchlistItem it : watchItems) codeSet.add(it.code);
-        for (com.monsieurmahjong.iqoowang.dao.Position p : positions) codeSet.add(p.getStockCode());
+        for (Position p : positions) codeSet.add(p.getStockCode());
         List<String> codes = new ArrayList<>(codeSet);
 
         String timeStr = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.CHINA).format(new java.util.Date());
@@ -158,6 +171,27 @@ public class RealtimeMonitorService extends Service {
         });
     }
 
+    /**
+     * 把真实持仓（Position表）同步进候选池：不存在就新建并标记为"已建底仓"；
+     * 之前是WATCHING/STOPPED/MANUAL_REMOVED状态的（比如止损卖飞后又重新买回来了）
+     * 也会被"复活"成STARTER；已经是STARTER/ADDED/待确认状态的不动，避免打断正在
+     * 进行的AI验证流程。
+     */
+    private void syncPositionsIntoWatchlist(List<Position> positions) {
+        for (Position p : positions) {
+            if (p.getQuantity() <= 0) continue;
+            WatchlistManager.WatchlistItem item = WatchlistManager.get().getByCode(p.getStockCode());
+            boolean needsSync = item == null
+                    || WatchlistManager.STATUS_WATCHING.equals(item.status)
+                    || WatchlistManager.STATUS_STOPPED.equals(item.status)
+                    || WatchlistManager.STATUS_REMOVED.equals(item.status);
+            if (needsSync) {
+                WatchlistManager.get().addIfAbsent(p.getStockCode(), p.getStockName(), 0, "MANUAL_POSITION");
+                WatchlistManager.get().markStarter(p.getStockCode(), p.getAvgCost(), "手动买入，自动纳入实时监控");
+            }
+        }
+    }
+
     private boolean isPendingStatus(String status) {
         return WatchlistManager.STATUS_PENDING_STARTER.equals(status)
                 || WatchlistManager.STATUS_PENDING_ADD.equals(status)
@@ -182,6 +216,8 @@ public class RealtimeMonitorService extends Service {
         Log.i(TAG, "【规则候选信号】" + item.name + "(" + item.code + ") " + actionKey
                 + " " + result.note + "，转AI二次验证");
 
+        Position pos = DatabaseManager.get().getPositionByCode(item.code);
+
         // 第二步：AI结合已学话术+真实数据二次验证，生成小白能看懂的理由
         LocalAIAgent.get(getApplicationContext()).verifySignal(
                 item.code, item.name, actionKey, result.note, quote,
@@ -191,7 +227,7 @@ public class RealtimeMonitorService extends Service {
                     @Override
                     public void onComplete(String fullText) {
                         LocalAIAgent.VerifyResult vr = LocalAIAgent.parseVerifyResult(fullText);
-                        handleVerified(item, actionKey, result.triggerPrice, vr);
+                        handleVerified(item, actionKey, result, quote, pos, vr);
                     }
 
                     @Override
@@ -200,28 +236,40 @@ public class RealtimeMonitorService extends Service {
                         LocalAIAgent.VerifyResult vr = new LocalAIAgent.VerifyResult();
                         vr.confirmed = true; // AI打不通不代表信号无效，交给用户自己看规则引擎原始依据判断
                         vr.reason = "本轮AI复核暂时不可用，以下是规则引擎的原始判断：" + result.note;
-                        handleVerified(item, actionKey, result.triggerPrice, vr);
+                        handleVerified(item, actionKey, result, quote, pos, vr);
                     }
                 });
     }
 
     /**
-     * 第三步：无论AI确认与否，都只落地成"待确认"状态，绝不自动买卖。
+     * 第三步：无论AI确认与否，都只落地成"待确认"状态，绝不自动买卖；同时无条件写一条
+     * 决策日志（AI确认的、存疑的都记），供你事后复盘系统的判断合不合理。
      * 只有AI也认可时才推送打扰式通知；AI存疑的静默更新到候选池，用户打开App自己看。
      */
-    private void handleVerified(WatchlistManager.WatchlistItem item, String actionKey, double price,
-                                 LocalAIAgent.VerifyResult vr) {
-        WatchlistManager.get().markPending(item.code, actionKey, price, vr.confirmed, vr.reason);
+    private void handleVerified(WatchlistManager.WatchlistItem item, String actionKey,
+                                 TradingRuleEngine.RuleResult result, RealtimeQuoteManager.Quote quote,
+                                 Position pos, LocalAIAgent.VerifyResult vr) {
+        WatchlistManager.get().markPending(item.code, actionKey, result.triggerPrice, vr.confirmed, vr.reason);
 
         String actionLabel = "BUY_STARTER".equals(actionKey) ? "建议买入底仓"
                 : "ADD_POSITION".equals(actionKey) ? "建议加仓" : "建议止损";
 
+        // 决策日志：无论AI确认与否都记，方便事后复盘系统当时的判断是否合理
+        try {
+            boolean holding = pos != null && pos.getQuantity() > 0;
+            DecisionLogger.get().logDecision(item.name, item.code, holding,
+                    holding ? pos.getAvgCost() : 0, quote.price,
+                    actionLabel, result.note, vr.confirmed, vr.reason);
+        } catch (Exception e) {
+            Log.e(TAG, "写决策日志失败", e);
+        }
+
         if (vr.confirmed) {
-            fireAlert(item.code, item.name, actionLabel, vr.reason, price);
+            fireAlert(item.code, item.name, actionLabel, vr.reason, result.triggerPrice);
         } else {
             Log.i(TAG, "AI对该候选信号存疑，不推送通知，仅静默记录: " + item.code + " " + vr.reason);
         }
-        if (sListener != null) sListener.onSignalTriggered(item.code, item.name, actionLabel, vr.reason, price);
+        if (sListener != null) sListener.onSignalTriggered(item.code, item.name, actionLabel, vr.reason, result.triggerPrice);
     }
 
     // ══════════════════════════════════════════

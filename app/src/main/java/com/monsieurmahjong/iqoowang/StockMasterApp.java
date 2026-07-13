@@ -52,6 +52,10 @@ public class StockMasterApp extends Application {
         com.monsieurmahjong.iqoowang.util.WisdomManager.init(this);
         Log.i(TAG, "WisdomManager initialized");
 
+        // 初始化决策日志（每次规则+AI判断都记录到本地文件，供事后复盘）
+        com.monsieurmahjong.iqoowang.util.DecisionLogger.init(this);
+        Log.i(TAG, "DecisionLogger initialized");
+
         // 注册每日收盘快照 WorkManager（15:05 后触发）
         scheduleDailySnapshot();
 

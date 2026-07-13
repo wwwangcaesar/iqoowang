@@ -923,13 +923,47 @@ public class MarketDataManager {
     }
 
     /** 获取股票名称 */
-    private String getStockName(String code) {
+    public String getStockName(String code) {
         Cursor c = mDb.rawQuery("SELECT stock_name FROM stock_list_cache WHERE stock_code=?",
                 new String[]{code});
         String name = null;
         if (c.moveToFirst()) name = c.getString(0);
         c.close();
         return name;
+    }
+
+    /**
+     * 根据用户输入（股票代码或名称，可以不完整）查找匹配的股票。
+     * 优先精确代码匹配，次之名称包含匹配。用于聊天时识别用户提到的股票，
+     * 自动去取它的实时行情注入到AI提示词里，避免AI因为没数据而笼统回答"数据不足"。
+     */
+    public static class StockMatch { public String code, name; }
+
+    public StockMatch findStockByQuery(String query) {
+        if (query == null || query.trim().isEmpty()) return null;
+        String q = query.trim();
+        // 优先完全代码匹配
+        Cursor c = mDb.rawQuery("SELECT stock_code, stock_name FROM stock_list_cache WHERE stock_code=?",
+                new String[]{q});
+        try {
+            if (c.moveToFirst()) {
+                StockMatch m = new StockMatch();
+                m.code = c.getString(0); m.name = c.getString(1);
+                return m;
+            }
+        } finally { c.close(); }
+
+        // 名称包含匹配（比如用户说"太极集团"，存的可能是"太极集团"或带后缀）
+        Cursor c2 = mDb.rawQuery("SELECT stock_code, stock_name FROM stock_list_cache WHERE stock_name LIKE ? LIMIT 1",
+                new String[]{"%" + q + "%"});
+        try {
+            if (c2.moveToFirst()) {
+                StockMatch m = new StockMatch();
+                m.code = c2.getString(0); m.name = c2.getString(1);
+                return m;
+            }
+        } finally { c2.close(); }
+        return null;
     }
 
     /** 清理N天前的旧数据 */
