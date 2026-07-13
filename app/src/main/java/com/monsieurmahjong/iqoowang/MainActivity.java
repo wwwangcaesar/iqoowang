@@ -211,20 +211,18 @@ public class MainActivity extends Activity {
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         Window window = getWindow();
 
-        // 延伸到状态栏 + 导航栏
         window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
         window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
         window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_NAVIGATION);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            window.setStatusBarColor(Color.TRANSPARENT);
+            window.setStatusBarColor(Color.parseColor("#070d1a"));
             window.setNavigationBarColor(Color.parseColor("#070d1a"));
         }
 
-        // 内容延伸到状态栏下方
+        // ✅ 修改：只保留 LAYOUT_STABLE，去掉 LAYOUT_FULLSCREEN
         View decorView = window.getDecorView();
-        int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
+        int flags = View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
         decorView.setSystemUiVisibility(flags);
 
         // iQOO 11s 刘海屏适配（Android 9+）
