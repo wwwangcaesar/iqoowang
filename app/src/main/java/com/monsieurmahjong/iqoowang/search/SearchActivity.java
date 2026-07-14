@@ -16,6 +16,7 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
@@ -32,8 +33,10 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /**
  * 全局聚合搜索：可搜索当前数据库全部字段（分类名、备注等），
@@ -64,6 +67,10 @@ public class SearchActivity extends AppCompatActivity {
     private TextView chipDateRange;
     private TextView chipAmountRange;
 
+    // 多选批量改分类
+    private TextView tvBatchEditCategory;
+    private TextView tvCancelSelect;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -77,6 +84,11 @@ public class SearchActivity extends AppCompatActivity {
         rvResults = findViewById(R.id.rv_search_results);
         tvSummary = findViewById(R.id.tv_result_summary);
         tvEmpty = findViewById(R.id.tv_empty);
+        tvBatchEditCategory = findViewById(R.id.tv_batch_edit_category);
+        tvCancelSelect = findViewById(R.id.tv_cancel_select);
+
+        tvBatchEditCategory.setOnClickListener(v -> showBatchCategoryDialog());
+        tvCancelSelect.setOnClickListener(v -> adapter.exitMultiSelectMode());
 
         rvResults.setLayoutManager(new LinearLayoutManager(this));
         adapter = new ResultAdapter();
@@ -90,6 +102,48 @@ public class SearchActivity extends AppCompatActivity {
 
         buildFilterChips();
         performSearch();
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (adapter != null && adapter.isMultiSelectMode()) {
+            adapter.exitMultiSelectMode();
+        } else {
+            super.onBackPressed();
+        }
+    }
+
+    /** 批量修改选中项的分类：弹出已有分类列表，点选即翻写并刷新 */
+    private void showBatchCategoryDialog() {
+        Set<Long> ids = adapter.getSelectedIds();
+        if (ids.isEmpty()) return;
+
+        new Thread(() -> {
+            List<String> categories = db.expenseDao().getAllCategoryNamesSync();
+            runOnUiThread(() -> {
+                if (categories.isEmpty()) {
+                    Toast.makeText(this, "暂无可选分类", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+                CharSequence[] items = categories.toArray(new CharSequence[0]);
+                new AlertDialog.Builder(this)
+                        .setTitle("批量改为…（已选 " + ids.size() + " 项）")
+                        .setItems(items, (dialog, which) -> applyBatchCategory(new ArrayList<>(ids), categories.get(which)))
+                        .setNegativeButton("取消", null)
+                        .show();
+            });
+        }).start();
+    }
+
+    private void applyBatchCategory(List<Long> ids, String newCategory) {
+        new Thread(() -> {
+            db.expenseDao().updateCategoryForIds(ids, newCategory);
+            runOnUiThread(() -> {
+                Toast.makeText(this, "已将 " + ids.size() + " 笔记录改为「" + newCategory + "」", Toast.LENGTH_SHORT).show();
+                adapter.exitMultiSelectMode();
+                performSearch();
+            });
+        }).start();
     }
 
     private void scheduleSearch() {
@@ -325,10 +379,59 @@ public class SearchActivity extends AppCompatActivity {
 
     private class ResultAdapter extends RecyclerView.Adapter<ResultAdapter.VH> {
         private List<Expense> data = new ArrayList<>();
+        private final Set<Long> selectedIds = new LinkedHashSet<>();
+        private boolean multiSelectMode = false;
 
         void setData(List<Expense> newData) {
             data = newData;
+            // 搜索结果变化时，清理掉已不存在于新结果中的选中项，避免脸选中一个看不到的记录
+            if (!selectedIds.isEmpty()) {
+                Set<Long> validIds = new LinkedHashSet<>();
+                for (Expense e : data) if (selectedIds.contains(e.getId())) validIds.add(e.getId());
+                selectedIds.clear();
+                selectedIds.addAll(validIds);
+                if (selectedIds.isEmpty()) multiSelectMode = false;
+                updateSelectionBar();
+            }
             notifyDataSetChanged();
+        }
+
+        boolean isMultiSelectMode() { return multiSelectMode; }
+        Set<Long> getSelectedIds() { return selectedIds; }
+
+        void enterMultiSelectMode(long firstId) {
+            multiSelectMode = true;
+            selectedIds.add(firstId);
+            notifyDataSetChanged();
+            updateSelectionBar();
+        }
+
+        void toggleSelection(long id) {
+            if (selectedIds.contains(id)) selectedIds.remove(id);
+            else selectedIds.add(id);
+            if (selectedIds.isEmpty()) multiSelectMode = false;
+            notifyDataSetChanged();
+            updateSelectionBar();
+        }
+
+        void exitMultiSelectMode() {
+            multiSelectMode = false;
+            selectedIds.clear();
+            notifyDataSetChanged();
+            updateSelectionBar();
+        }
+
+        private void updateSelectionBar() {
+            boolean active = multiSelectMode && !selectedIds.isEmpty();
+            tvBatchEditCategory.setVisibility(active ? View.VISIBLE : View.GONE);
+            tvCancelSelect.setVisibility(active ? View.VISIBLE : View.GONE);
+            if (active) {
+                tvSummary.setText("已选择 " + selectedIds.size() + " 项");
+            } else {
+                long totalCents = 0;
+                for (Expense e : data) totalCents += e.getAmount();
+                tvSummary.setText(String.format(Locale.getDefault(), "共 %d 笔，合计 ¥ %.2f", data.size(), totalCents / 100.0));
+            }
         }
 
         @NonNull
@@ -351,9 +454,31 @@ public class SearchActivity extends AppCompatActivity {
 
             holder.tvAmount.setText(String.format(Locale.getDefault(), "¥ %.2f", e.getAmount() / 100.0));
 
-            // 点击条目 → 弹出修改记录 BottomSheet（复用 DayDetailActivity 同款弹窗），保存后刷新搜索结果
-            holder.itemView.setOnClickListener(v ->
-                    EditExpenseDialog.show(SearchActivity.this, db, e, SearchActivity.this::performSearch));
+            boolean selected = selectedIds.contains(e.getId());
+            holder.tvSelectCheck.setVisibility(selected ? View.VISIBLE : View.GONE);
+            if (holder.itemView instanceof com.google.android.material.card.MaterialCardView) {
+                com.google.android.material.card.MaterialCardView card =
+                        (com.google.android.material.card.MaterialCardView) holder.itemView;
+                card.setStrokeWidth(selected ? dp2px(2) : 0);
+                card.setStrokeColor(androidx.core.content.ContextCompat.getColor(SearchActivity.this, R.color.primary));
+            }
+
+            // 普通点击：多选模式下切换选中状态；非多选模式下弹出修改 BottomSheet
+            holder.itemView.setOnClickListener(v -> {
+                if (multiSelectMode) {
+                    toggleSelection(e.getId());
+                } else {
+                    EditExpenseDialog.show(SearchActivity.this, db, e, SearchActivity.this::performSearch);
+                }
+            });
+
+            // 长按：进入多选模式，并选中当前项
+            holder.itemView.setOnLongClickListener(v -> {
+                if (!multiSelectMode) {
+                    enterMultiSelectMode(e.getId());
+                }
+                return true;
+            });
         }
 
         @Override
@@ -361,13 +486,14 @@ public class SearchActivity extends AppCompatActivity {
 
         class VH extends RecyclerView.ViewHolder {
             ImageView ivIcon;
-            TextView tvCategory, tvMeta, tvAmount;
+            TextView tvCategory, tvMeta, tvAmount, tvSelectCheck;
             VH(@NonNull View itemView) {
                 super(itemView);
                 ivIcon = itemView.findViewById(R.id.iv_result_icon);
                 tvCategory = itemView.findViewById(R.id.tv_result_category);
                 tvMeta = itemView.findViewById(R.id.tv_result_meta);
                 tvAmount = itemView.findViewById(R.id.tv_result_amount);
+                tvSelectCheck = itemView.findViewById(R.id.tv_select_check);
             }
         }
     }

@@ -102,6 +102,9 @@ public interface ExpenseDao {
             "ORDER BY timestamp DESC")
     List<Expense> searchExpensesSync(String keyword, String category, Long startTime, Long endTime, Long minAmount, Long maxAmount);
 
+    @Query("UPDATE expense_table SET categoryName = :newCategory WHERE id IN (:ids)")
+    void updateCategoryForIds(List<Long> ids, String newCategory);
+
     // 全局搜索分类筛选项：取库内已出现过的全部分类名
     @Query("SELECT DISTINCT categoryName FROM expense_table WHERE categoryName IS NOT NULL ORDER BY categoryName ASC")
     List<String> getAllCategoryNamesSync();

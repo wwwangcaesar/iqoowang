@@ -80,15 +80,44 @@
             android:orientation="horizontal" />
     </HorizontalScrollView>
 
-    <TextView
-        android:id="@+id/tv_result_summary"
+    <LinearLayout
+        android:id="@+id/result_summary_row"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="14dp"
-        android:text="共 0 笔，合计 ¥ 0.00"
-        android:textColor="@color/on_surface_variant"
-        android:textSize="@dimen/label_sm"
-        app:layout_constraintTop_toBottomOf="@id/hsv_filters" />
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        app:layout_constraintTop_toBottomOf="@id/hsv_filters">
+
+        <TextView
+            android:id="@+id/tv_result_summary"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="共 0 笔，合计 ¥ 0.00"
+            android:textColor="@color/on_surface_variant"
+            android:textSize="@dimen/label_sm" />
+
+        <TextView
+            android:id="@+id/tv_batch_edit_category"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="16dp"
+            android:text="批量改分类"
+            android:textColor="@color/primary"
+            android:textSize="@dimen/label_sm"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tv_cancel_select"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="取消"
+            android:textColor="@color/on_surface_variant"
+            android:textSize="@dimen/label_sm"
+            android:visibility="gone" />
+    </LinearLayout>
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rv_search_results"
@@ -98,7 +127,7 @@
         android:clipToPadding="false"
         android:paddingBottom="24dp"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/tv_result_summary" />
+        app:layout_constraintTop_toBottomOf="@id/result_summary_row" />
 
     <TextView
         android:id="@+id/tv_empty"

@@ -58,6 +58,11 @@ public class HistoryFragment extends Fragment {
     private MaterialCardView cardBudget;
     private ValueAnimator budgetWarningAnimator;
 
+    // 明智消费提示：缓存本次命中的全部文案，点击卡片可随机切换到另一条
+    private final List<String> cachedTips = new ArrayList<>();
+    private int currentTipIndex = -1;
+    private final java.util.Random tipRandom = new java.util.Random();
+
     private AppDatabase db;
     private static final String PREFS_NAME = "SereneLedgerConfig";
     private static final String KEY_MONTHLY_BUDGET = "monthly_budget_cents";
@@ -90,6 +95,12 @@ public class HistoryFragment extends Fragment {
         linearProgress = view.findViewById(R.id.linearProgress);
         transactionListContainer = view.findViewById(R.id.transaction_list);
         tvSmartTip = view.findViewById(R.id.tv_smart_tip);
+
+        // 点击明智消费提示卡片：在本次命中的全部文案中随机切换一条（不会重新查库）
+        View cardTip = view.findViewById(R.id.card_tip);
+        if (cardTip != null) {
+            cardTip.setOnClickListener(v -> showRandomTip());
+        }
 
         db = AppDatabase.getDatabase(requireContext());
         ImageView iv_avatar = view.findViewById(R.id.iv_avatar);
@@ -310,22 +321,178 @@ public class HistoryFragment extends Fragment {
     }
 
     /**
-     * 异步计算“明智消费提示”文案，替代原先写死的静态文案。
+     * 异步计算“明智消费提示”文案集合，替代原先写死的静态文案。
      * 完全基于金额/分类/时间等结构化字段做规则对比，不解析备注文本，
      * 避免因备注内容不规范导致误判。只读查询，不修改任何历史数据。
      */
     private void refreshSmartTip() {
         if (!isAdded() || getContext() == null || tvSmartTip == null) return;
         new Thread(() -> {
-            String tip = computeSmartTip();
+            List<String> tips = computeSmartTips();
             if (getActivity() == null) return;
             getActivity().runOnUiThread(() -> {
-                if (tvSmartTip != null) tvSmartTip.setText(tip);
+                cachedTips.clear();
+                cachedTips.addAll(tips);
+                currentTipIndex = cachedTips.isEmpty() ? -1 : tipRandom.nextInt(cachedTips.size());
+                if (tvSmartTip != null && currentTipIndex >= 0) {
+                    tvSmartTip.setText(cachedTips.get(currentTipIndex));
+                }
             });
         }).start();
     }
 
-    private String computeSmartTip() {
+    /** 点击提示卡片：从本次命中的全部文案中随机换一条（只要有不同选项就不重复上一条），带个小淡入淡出提示已切换 */
+    private void showRandomTip() {
+        if (tvSmartTip == null || cachedTips.isEmpty()) return;
+        if (cachedTips.size() == 1) {
+            currentTipIndex = 0;
+        } else {
+            int next;
+            do {
+                next = tipRandom.nextInt(cachedTips.size());
+            } while (next == currentTipIndex);
+            currentTipIndex = next;
+        }
+
+        tvSmartTip.animate().alpha(0f).setDuration(120).withEndAction(() -> {
+            tvSmartTip.setText(cachedTips.get(currentTipIndex));
+            tvSmartTip.animate().alpha(1f).setDuration(180).start();
+        }).start();
+    }
+
+    /**
+     * 计算当前周期内所有命中的提示文案（不再只取第一条），供点击卡片时随机切换。
+     * 若一条都没命中，返回包含典底文案的列表。
+     */
+    private List<String> computeSmartTips() {
+        List<String> tips = new ArrayList<>();
+
+        Calendar cal = Calendar.getInstance();
+        int todayDay = cal.get(Calendar.DAY_OF_MONTH);
+        int daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH);
+
+        cal.set(Calendar.DAY_OF_MONTH, 1);
+        cal.set(Calendar.HOUR_OF_DAY, 0);
+        cal.set(Calendar.MINUTE, 0);
+        cal.set(Calendar.SECOND, 0);
+        cal.set(Calendar.MILLISECOND, 0);
+        long startOfMonth = cal.getTimeInMillis();
+
+        cal.add(Calendar.MONTH, 1);
+        long endOfMonth = cal.getTimeInMillis() - 1;
+
+        cal.setTimeInMillis(startOfMonth);
+        cal.add(Calendar.MILLISECOND, -1);
+        long prevMonthEnd = cal.getTimeInMillis();
+        cal.set(Calendar.DAY_OF_MONTH, 1);
+        long prevMonthStart = cal.getTimeInMillis();
+
+        List<Expense> currentMonthExpenses = db.expenseDao().getExpensesInRangeSync(startOfMonth, endOfMonth);
+        List<Expense> prevMonthExpenses = db.expenseDao().getExpensesInRangeSync(prevMonthStart, prevMonthEnd);
+        if (currentMonthExpenses == null) currentMonthExpenses = new ArrayList<>();
+        if (prevMonthExpenses == null) prevMonthExpenses = new ArrayList<>();
+
+        // 数据量太少，任何对比都没有统计意义，直接返回单条兵底文案
+        if (currentMonthExpenses.size() < 3) {
+            tips.add("本月记账刚刚开始，多记几笔之后就能看到更准确的消费分析啦～");
+            return tips;
+        }
+
+        long totalMonthCents = 0;
+        Map<String, Long> categoryTotals = new HashMap<>();
+        String todayStr = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
+        long todayCents = 0;
+        long weekendCents = 0;
+
+        Calendar ec = Calendar.getInstance();
+        for (Expense e : currentMonthExpenses) {
+            long amount = e.getAmount();
+            totalMonthCents += amount;
+
+            String cat = e.getCategoryName() != null ? e.getCategoryName() : "其他";
+            categoryTotals.put(cat, categoryTotals.getOrDefault(cat, 0L) + amount);
+
+            if (todayStr.equals(e.getDate_str())) {
+                todayCents += amount;
+            }
+
+            ec.setTimeInMillis(e.getTimestamp());
+            int dow = ec.get(Calendar.DAY_OF_WEEK);
+            if (dow == Calendar.SATURDAY || dow == Calendar.SUNDAY) {
+                weekendCents += amount;
+            }
+        }
+
+        Map<String, Long> prevCategoryTotals = new HashMap<>();
+        for (Expense e : prevMonthExpenses) {
+            String cat = e.getCategoryName() != null ? e.getCategoryName() : "其他";
+            prevCategoryTotals.put(cat, prevCategoryTotals.getOrDefault(cat, 0L) + e.getAmount());
+        }
+
+        android.content.SharedPreferences sp = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        long monthlyBudget = sp.getLong(KEY_MONTHLY_BUDGET, 500000L);
+
+        // 规则1：本月已超预算
+        if (monthlyBudget > 0 && totalMonthCents > monthlyBudget) {
+            long overCents = totalMonthCents - monthlyBudget;
+            int remainDays = Math.max(daysInMonth - todayDay, 0);
+            tips.add(String.format(Locale.getDefault(), "本月已超出预算 ¥%.2f，接下来 %d 天建议控制一下非必要支出。", overCents / 100.0, remainDays));
+        }
+
+        // 规则2/3：消费节奏 vs 时间进度对比（提前预警 / 表扬结余）
+        if (monthlyBudget > 0 && todayDay > 0) {
+            double timeRatio = (double) todayDay / daysInMonth;
+            double spendRatio = (double) totalMonthCents / monthlyBudget;
+            if (spendRatio - timeRatio > 0.15) {
+                long projectedCents = (long) (totalMonthCents / timeRatio);
+                tips.add(String.format(Locale.getDefault(), "按当前节奏，本月预计总支出约 ¥%.0f，可能会超出预算，建议适当控制。", projectedCents / 100.0));
+            } else if (timeRatio - spendRatio > 0.15 && totalMonthCents > 0) {
+                long remainCents = monthlyBudget - totalMonthCents;
+                tips.add(String.format(Locale.getDefault(), "本月消费节奏低于预算进度，预计能结余 ¥%.0f 左右，继续保持！", remainCents / 100.0));
+            }
+        }
+
+        // 规则4：主要分类环比变化明显（增幅或降幅 ≥ 20%）
+        List<Map.Entry<String, Long>> sortedCategories = new ArrayList<>(categoryTotals.entrySet());
+        Collections.sort(sortedCategories, (a, b) -> Long.compare(b.getValue(), a.getValue()));
+        if (!sortedCategories.isEmpty()) {
+            String topCategory = sortedCategories.get(0).getKey();
+            long topAmount = sortedCategories.get(0).getValue();
+            long prevAmount = prevCategoryTotals.getOrDefault(topCategory, 0L);
+            if (prevAmount > 0) {
+                long diff = topAmount - prevAmount;
+                int pct = (int) Math.abs((diff * 100) / prevAmount);
+                if (pct >= 20) {
+                    if (diff > 0) {
+                        tips.add(String.format(Locale.getDefault(), "「%s」支出比上月增加了 %d%%，是本月涨幅最明显的分类。", topCategory, pct));
+                    } else {
+                        tips.add(String.format(Locale.getDefault(), "「%s」支出比上月降低了 %d%%，继续保持！", topCategory, pct));
+                    }
+                }
+            }
+        }
+
+        // 规则5：今日消费明显高于本月日均
+        if (todayDay > 0) {
+            long dailyAvgCents = totalMonthCents / todayDay;
+            if (dailyAvgCents > 0 && todayCents > dailyAvgCents * 2) {
+                tips.add(String.format(Locale.getDefault(), "今天已消费 ¥%.2f，明显高于本月日均 ¥%.2f，留意一下是否有临时大额支出。", todayCents / 100.0, dailyAvgCents / 100.0));
+            }
+        }
+
+        // 规则6：周末消费占比偏高
+        if (totalMonthCents > 0) {
+            double weekendShare = (double) weekendCents / totalMonthCents;
+            if (weekendShare > 0.45) {
+                tips.add("本月接近一半的支出集中在周末，安排聚餐、娱乐时可以适当留意一下预算。");
+            }
+        }
+
+        if (tips.isEmpty()) {
+            tips.add("本月消费记录规律，继续保持良好的记账习惯！");
+        }
+        return tips;
+    }
         Calendar cal = Calendar.getInstance();
         int todayDay = cal.get(Calendar.DAY_OF_MONTH);
         int daysInMonth = cal.getActualMaximum(Calendar.DAY_OF_MONTH);

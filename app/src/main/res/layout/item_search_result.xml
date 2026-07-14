@@ -60,5 +60,21 @@
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent" />
 
+        <!-- 多选模式下的选中标记，默认隐藏 -->
+        <TextView
+            android:id="@+id/tv_select_check"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:background="@drawable/bg_round_12dp"
+            android:backgroundTint="@color/primary"
+            android:gravity="center"
+            android:text="✓"
+            android:textColor="#FFFFFF"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:visibility="gone"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
     </androidx.constraintlayout.widget.ConstraintLayout>
 </com.google.android.material.card.MaterialCardView>
