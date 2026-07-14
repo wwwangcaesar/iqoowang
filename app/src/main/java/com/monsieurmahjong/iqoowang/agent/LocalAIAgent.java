@@ -562,15 +562,27 @@ public class LocalAIAgent {
     private String buildChatPrompt(String message, String historyJson) throws Exception {
         StringBuilder sb = new StringBuilder();
         sb.append(getCorePersona());
-        // 只有看起来真的在问股票/交易相关问题时，才把公式+操盘手经验这一大段塞进去，
-        // 日常打招呼这类消息跳过，prefill量小很多，回复明显更快
-        boolean needKnowledge = looksTradingRelated(message);
+
+        // 识别消息里有没有提到具体股票（代码或名称），有的话自动去拉实时数据注入，
+        // 不然AI压根没数据，只能诚实地说"数据不足"——这不是AI在偷懒，是我们没给它数据
+        com.monsieurmahjong.iqoowang.util.MarketDataManager.StockMatch mentioned = null;
+        try {
+            mentioned = com.monsieurmahjong.iqoowang.util.MarketDataManager.get().findStockMentionedIn(message);
+        } catch (Exception ignored) {}
+
+        // 只有看起来真的在问股票/交易相关问题（或者提到了具体股票）时，才把公式+操盘手经验
+        // 这一大段塞进去，日常打招呼这类消息跳过，prefill量小很多，回复明显更快
+        boolean needKnowledge = looksTradingRelated(message) || mentioned != null;
         if (needKnowledge) {
             sb.append(getTradingKnowledge());
             // 只有涉及交易判断时才接上大盘背景，问候语不需要
             try {
                 sb.append("【当前大盘】").append(com.monsieurmahjong.iqoowang.util.MarketIndexManager.get().getMarketSummaryText()).append("\n\n");
             } catch (Exception ignored) {}
+        }
+
+        if (mentioned != null) {
+            sb.append(buildStockDataBlock(mentioned.code, mentioned.name));
         }
 
         if (historyJson != null && !historyJson.isEmpty()) {
@@ -588,6 +600,70 @@ public class LocalAIAgent {
         return sb.toString();
     }
 
+    /**
+     * 阻塞式拉取单支股票实时行情——聊天场景下在后台线程调用，短超时（RealtimeQuoteManager
+     * 本身连接2秒/读取3秒），不会长时间卡住对话。
+     */
+    private com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote fetchQuoteBlocking(String code, long timeoutMs) {
+        final com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote[] result =
+                new com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote[1];
+        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+        com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.get().fetchBatch(
+                java.util.Collections.singletonList(code), (quotes, failed) -> {
+                    result[0] = quotes.get(code);
+                    latch.countDown();
+                });
+        try { latch.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS); } catch (InterruptedException ignored) {}
+        return result[0];
+    }
+
+    /**
+     * 聊天时识别到用户提到某支股票后，自动组装的"实时数据块"：现价/持仓状态/历史交易/
+     * 候选池状态全部塞进去，AI才有依据回答，而不是干巴巴一句"数据不足"。
+     */
+    private String buildStockDataBlock(String code, String name) {
+        StringBuilder sb = new StringBuilder();
+        try {
+            com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote q = fetchQuoteBlocking(code, 4000);
+            sb.append("\n【实时数据 - ").append(name).append("(").append(code).append(")】\n");
+            if (q != null) {
+                sb.append(String.format(Locale.CHINA,
+                        "现价¥%.2f 今开¥%.2f 最高¥%.2f 最低¥%.2f 涨跌幅%.2f%%\n",
+                        q.price, q.open, q.high, q.low, q.changePct));
+            } else {
+                sb.append("实时行情获取失败（可能网络问题），下面信息仅供参考\n");
+            }
+
+            String trend = mCtxBuilder.buildRecentTrend(code);
+            if (!trend.isEmpty()) sb.append("近期走势：").append(trend).append("\n");
+
+            com.monsieurmahjong.iqoowang.dao.Position pos =
+                    com.monsieurmahjong.iqoowang.util.DatabaseManager.get().getPositionByCode(code);
+            if (pos != null && pos.getQuantity() > 0) {
+                double pnlPct = (q != null && pos.getAvgCost() > 0)
+                        ? (q.price - pos.getAvgCost()) / pos.getAvgCost() * 100 : 0;
+                sb.append(String.format(Locale.CHINA, "持仓状态：持仓中，成本价¥%.2f，%s%.2f%%\n",
+                        pos.getAvgCost(), pnlPct >= 0 ? "浮盈" : "浮亏", Math.abs(pnlPct)));
+            } else {
+                sb.append("持仓状态：未持仓\n");
+            }
+
+            String histNote = mCtxBuilder.buildStockHistoryNote(code);
+            if (!histNote.isEmpty()) sb.append("历史交易：").append(histNote).append("\n");
+
+            com.monsieurmahjong.iqoowang.util.WatchlistManager.WatchlistItem item =
+                    com.monsieurmahjong.iqoowang.util.WatchlistManager.get().getByCode(code);
+            if (item != null) {
+                sb.append("候选池状态：").append(item.status);
+                if (item.lastNote != null && !item.lastNote.isEmpty()) sb.append("（").append(item.lastNote).append("）");
+                sb.append("\n");
+            }
+        } catch (Exception e) {
+            sb.append("（获取实时数据时出错：").append(e.getMessage()).append("）\n");
+        }
+        return sb.toString();
+    }
+
     private String getSystemPrompt() {
         return getCorePersona() + getTradingKnowledge();
     }
@@ -596,7 +672,8 @@ public class LocalAIAgent {
     private String getCorePersona() {
         return "你是JarvTrader，专为A股操盘设计的本地AI，完全离线运行在用户手机上，数据不出设备。\n" +
                 "操盘手风格：直接、简洁、有明确操作建议，不说废话。自由问答不超过200字。\n" +
-                "绝不编造未提供的具体数字，没有依据就说\"数据不足\"。\n\n";
+                "\"数据不足\"只用于确实缺少具体股票行情数字的情况；如果用户问你自己有什么技能/规则/" +
+                "学过什么话术，直接从下面给你的公式、经验、已学话术里如实列出，不要用\"数据不足\"敷衍。\n\n";
     }
 
     /** 详细交易知识（公式+操盘手经验），只在真正论及股票/交易的场景下注入，避免日常对话也要prefill这一大段 */
@@ -648,7 +725,8 @@ public class LocalAIAgent {
     private boolean looksTradingRelated(String message) {
         if (message == null) return false;
         String[] kw = {"股", "买", "卖", "止损", "挂单", "信号", "量比", "均线", "仓位", "SAR", "sar",
-                "EMA", "ema", "大盘", "涨停", "跌停", "市值", "K线", "k线", "分时", "收盘", "开盘"};
+                "EMA", "ema", "大盘", "涨停", "跌停", "市值", "K线", "k线", "分时", "收盘", "开盘",
+                "规则", "话术", "技能", "学会", "擅长", "进化", "能力", "会什么", "懂什么"};
         for (String k : kw) if (message.contains(k)) return true;
         return message.matches(".*\\d{6}.*"); // 提到了看起来像股票代码的6位数字
     }

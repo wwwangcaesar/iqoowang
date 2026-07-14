@@ -821,6 +821,14 @@
       </div>
       <div style="padding:0 14px 12px;display:flex;gap:8px;align-items:center;">
         <button onclick="testNotification()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--accent-cyan);background:transparent;color:var(--accent-cyan);font-size:11px;">🔔 测试通知(10秒后到)</button>
+        <button onclick="toggleDecisionLog()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--text-sub);background:transparent;color:var(--text-sub);font-size:11px;">📝 决策日志</button>
+      </div>
+      <div id="decisionLogPanel" style="display:none;padding:0 12px 12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <select id="decisionLogDateSelect" onchange="loadDecisionLog(this.value)" style="background:var(--bg-card2);color:var(--text-prime);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;flex:1;margin-right:8px;"></select>
+          <span id="decisionLogPath" style="font-size:9px;color:var(--text-dim);"></span>
+        </div>
+        <pre id="decisionLogContent" style="background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:10px;color:var(--text-sub);line-height:1.6;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;font-family:var(--font-mono);">还没有日志</pre>
       </div>
       <div id="watchlistContainer" style="padding:0 12px 12px;"></div>
     </div>

@@ -613,6 +613,30 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         return arr.toString();
     }
 
+    /** 今天的决策日志内容（无需切到文件管理器，App内直接看） */
+    @JavascriptInterface
+    public String getTodayDecisionLog() {
+        return DecisionLogger.get().getTodayLogContent();
+    }
+
+    /** 指定日期（yyyy-MM-dd）的决策日志内容 */
+    @JavascriptInterface
+    public String getDecisionLog(String dayStr) {
+        return DecisionLogger.get().getLogContent(dayStr);
+    }
+
+    /** 有日志的日期列表（新→旧），供前端做日期选择 */
+    @JavascriptInterface
+    public String getDecisionLogDates() {
+        return new org.json.JSONArray(java.util.Arrays.asList(DecisionLogger.get().listLogDates())).toString();
+    }
+
+    /** 日志文件实际存放路径，也可以用文件管理器/USB直接去导出 */
+    @JavascriptInterface
+    public String getDecisionLogDirPath() {
+        return DecisionLogger.get().getLogDirPath();
+    }
+
     // ══════════════════════════════════════════════
     // 工具接口
     // ══════════════════════════════════════════════

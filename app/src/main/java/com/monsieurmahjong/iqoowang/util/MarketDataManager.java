@@ -966,6 +966,34 @@ public class MarketDataManager {
         return null;
     }
 
+    /**
+     * 从一段自然语言文本（比如聊天消息"分析下太极集团"）里识别提到了哪支股票。
+     * 优先看有没有直接6位数字代码，没有则扫存量股票名称看哪个是这段文本的子串（取最长名称匹配，
+     * 避免"中国"这种短名字误命中一大堆）。用于聊天时自动识别并注入实时数据，避免AI因没数据
+     * 而笼统回答"数据不足"。
+     */
+    public StockMatch findStockMentionedIn(String message) {
+        if (message == null || message.trim().isEmpty()) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\d{6}").matcher(message);
+        if (m.find()) {
+            StockMatch byCode = findStockByQuery(m.group());
+            if (byCode != null) return byCode;
+        }
+        Cursor c = mDb.rawQuery(
+                "SELECT stock_code, stock_name FROM stock_list_cache " +
+                "WHERE stock_name IS NOT NULL AND length(stock_name)>=2 AND instr(?, stock_name)>0 " +
+                "ORDER BY length(stock_name) DESC LIMIT 1",
+                new String[]{message});
+        try {
+            if (c.moveToFirst()) {
+                StockMatch mm = new StockMatch();
+                mm.code = c.getString(0); mm.name = c.getString(1);
+                return mm;
+            }
+        } finally { c.close(); }
+        return null;
+    }
+
     /** 清理N天前的旧数据 */
     public void cleanOldData(int keepDays) {
         Calendar cal = Calendar.getInstance();
