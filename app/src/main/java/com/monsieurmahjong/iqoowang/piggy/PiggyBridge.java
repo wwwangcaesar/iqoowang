@@ -101,6 +101,12 @@ public class PiggyBridge {
         prefs.edit().putLong(KEY_SAVED_CENTS, saved).apply();
     }
 
+    /** 清空已存金额（归零），目标名称/金额/期限不受影响；用于自动结余入罐算错时重置 */
+    @JavascriptInterface
+    public void resetSaved() {
+        prefs.edit().putLong(KEY_SAVED_CENTS, 0L).apply();
+    }
+
     /** 切换储蓄罐皮肤风格："reward"（治愈）或 "cyber"（赛博朋克） */
     @JavascriptInterface
     public void setStyle(String style) {

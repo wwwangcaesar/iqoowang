@@ -247,6 +247,10 @@
   .sheet-cancel{ background:var(--track); color:var(--sub); }
   .sheet-save{ background:linear-gradient(135deg,var(--primary),var(--primary-2)); color:#fff; }
   body.cyber .sheet-save{ color:#050716; }
+
+  /* 清空已存金额：次要、低调的破坏性操作入口，放在保存/取消下方，避免误触 */
+  .danger-link{ text-align:center; margin-top:16px; font-size:12px; color:#D34848; font-weight:600; opacity:.85; }
+  body.cyber .danger-link{ color:var(--accent); }
 </style>
 </head>
 <body>
@@ -275,7 +279,7 @@
   <div class="stage">
     <div class="stage-glow"></div>
     <div class="shock" id="shock"></div>
-    <div class="piggy-wrap">
+    <div class="piggy-wrap" onclick="replayCoinPour()">
       <svg class="piggy" id="piggy" viewBox="0 0 200 200">
         <defs>
           <clipPath id="piggyBellyClip">
@@ -398,6 +402,7 @@
         <button class="sheet-cancel" onclick="closeSheet()">取消</button>
         <button class="sheet-save" onclick="saveGoal()">保存目标</button>
       </div>
+      <div class="danger-link" onclick="confirmClearSaved()">清空已存金额（自动存入算错了可以在这里重置）</div>
     </div>
   </div>
 
@@ -512,6 +517,57 @@ function saveGoal(){
   render();
   closeSheet();
   if(window.PiggyBridge && PiggyBridge.saveGoal) PiggyBridge.saveGoal(name, Math.round(target*100), days, state.createdAt);
+}
+
+/* ════════════════════════════════════════════════════════════
+   点猪重播存钱动画：不改变已存金额，只是把当前罐内金币清空重新倒一遍，
+   图一乐、也方便反复观看这个动效
+   ════════════════════════════════════════════════════════════ */
+let replaying = false;
+function replayCoinPour(){
+  if(replaying) return; // 防止连点导致金币重叠刷屏
+  const wantCoins = coinsForPct(paceInfo().actualPct);
+  if(wantCoins <= 0){
+    // 罐子还是空的，重播没有意义，给个小提示反馈即可
+    const piggy = document.getElementById('piggy');
+    piggy.classList.remove('wobble'); void piggy.offsetWidth; piggy.classList.add('wobble');
+    return;
+  }
+  replaying = true;
+
+  // 清空当前罐内金币视图（只清视觉，不动 state.saved / 不联网、不改数据）
+  document.getElementById('coinPileGroup').innerHTML = '';
+  columnHeights = new Array(COL_COUNT).fill(0);
+  pileCoinCount = 0;
+
+  const piggy = document.getElementById('piggy');
+  piggy.classList.remove('wobble'); void piggy.offsetWidth; piggy.classList.add('wobble');
+
+  dropCoins(wantCoins, state.theme==='cyber' ? 70 : 95);
+
+  const totalDur = wantCoins * (state.theme==='cyber' ? 70 : 95) + 700;
+  setTimeout(()=>{ replaying = false; }, totalDur);
+}
+
+/* ════════════════════════════════════════════════════════════
+   清空已存金额：自动结算算错了 / 想重新开始时使用
+   只重置"已存金额"，目标名称/金额/期限不受影响
+   ════════════════════════════════════════════════════════════ */
+function confirmClearSaved(){
+  if(confirm('确定要清空已存入的金额吗？这个操作不能撤销。')){
+    clearSavedAmount();
+  }
+}
+function clearSavedAmount(){
+  state.saved = 0;
+  render();
+  document.getElementById('coinPileGroup').innerHTML = '';
+  columnHeights = new Array(COL_COUNT).fill(0);
+  pileCoinCount = 0;
+
+  if(window.PiggyBridge && PiggyBridge.resetSaved) PiggyBridge.resetSaved();
+  closeSheet();
+  showMilestone('已清空存入金额');
 }
 
 /* ════════════════════════════════════════════════════════════
