@@ -831,13 +831,20 @@ public class MarketDataManager {
         return codes;
     }
 
-    /** 获取某只股票的缓存K线（按日期升序） */
+    /** 获取某只股票的缓存K线（按日期升序，返回最新的 limit 条）
+     *
+     * 【重要修复】之前用"ORDER BY trade_date ASC LIMIT ?"，当缓存总条数超过limit时
+     * （比如保留了365天历史，而只要最近5条做止损判断），会取到最早的limit条而不是最新的！
+     * 导致实时监控的"前一交易日参考价"取到一年前的旧数据，选股公式也有同样风险。
+     * 现在改用 DESC 取最新 limit 条，再在Java里反转回升序，保持对外契约不变（调用方
+     * 都预期 bars.get(bars.size()-1) 是最新一天）。
+     */
     public List<KlineBar> getCachedKline(String code, int limit) {
         List<KlineBar> bars = new ArrayList<>();
         Cursor c = mDb.rawQuery(
                 "SELECT trade_date, open, close, high, low, volume, amount, " +
                 "change_pct, turn_rate, amplitude, change_amt " +
-                "FROM kline_cache WHERE stock_code=? ORDER BY trade_date ASC LIMIT ?",
+                "FROM kline_cache WHERE stock_code=? ORDER BY trade_date DESC LIMIT ?",
                 new String[]{code, String.valueOf(limit)});
         while (c.moveToNext()) {
             KlineBar bar = new KlineBar();
@@ -855,6 +862,7 @@ public class MarketDataManager {
             bars.add(bar);
         }
         c.close();
+        Collections.reverse(bars); // DESC取出来的是新->旧，反转成旧->新，恢复升序契约
         return bars;
     }
 
