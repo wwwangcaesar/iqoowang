@@ -1241,6 +1241,32 @@ function testNotification() {
   Android.testNotificationDelayed(10);
 }
 
+// ══ 决策日志 ══
+let _decisionLogOpen = false;
+
+function toggleDecisionLog() {
+  _decisionLogOpen = !_decisionLogOpen;
+  const panel = document.getElementById('decisionLogPanel');
+  panel.style.display = _decisionLogOpen ? 'block' : 'none';
+  if (_decisionLogOpen && IS_ANDROID) {
+    try {
+      const dates = JSON.parse(Android.getDecisionLogDates() || '[]');
+      const sel = document.getElementById('decisionLogDateSelect');
+      const today = new Date().toISOString().slice(0, 10);
+      const allDates = dates.includes(today) ? dates : [today, ...dates];
+      sel.innerHTML = allDates.map(d => `<option value="${d}">${d}${d === today ? '（今天）' : ''}</option>`).join('');
+      document.getElementById('decisionLogPath').textContent = Android.getDecisionLogDirPath();
+      loadDecisionLog(today);
+    } catch (e) { console.error('[DecisionLog] 初始化失败', e); }
+  }
+}
+
+function loadDecisionLog(dayStr) {
+  if (!IS_ANDROID) return;
+  const content = Android.getDecisionLog(dayStr) || '';
+  document.getElementById('decisionLogContent').textContent = content || '这一天还没有决策记录';
+}
+
 function toggleMonitor() {
   if (!IS_ANDROID) { showToast('实时监控需要在App中运行'); return; }
   const btn = document.getElementById('monitorToggleBtn');
