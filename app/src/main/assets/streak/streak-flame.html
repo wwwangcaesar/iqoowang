@@ -43,14 +43,22 @@
     background:radial-gradient(circle, rgba(255,180,60,.0) 0%, rgba(255,180,60,0) 100%);
     filter:blur(4px); transition:background 1s ease;
   }
-  .flame-glow.lit{ background:radial-gradient(circle, rgba(255,190,70,.55) 0%, rgba(255,140,40,.18) 55%, transparent 75%); animation:glowPulse 2.6s ease-in-out infinite; }
+  .flame-glow.lit{ animation:glowPulse 2.6s ease-in-out infinite; }
   @keyframes glowPulse{ 0%,100%{ transform:scale(.95); opacity:.85;} 50%{ transform:scale(1.08); opacity:1;} }
 
   .flame-wrap{ position:relative; width:150px; height:190px; }
   .flame-svg{ width:100%; height:100%; transform-origin:50% 92%; }
-  .flame-svg .layer{ transition:fill 1.1s ease; }
-  .flame-svg .core{ transition:fill 1.1s ease, opacity .8s ease; opacity:0; }
-  .flame-wrap.lit .core{ opacity:1; }
+  /* 每一层火焰的颜色现在由 JS 按连续天数对应的"火焰阶级"直接写 fill 属性，
+     不再写死灰色/白热两种状态 —— 这也修复了之前"打卡后火焰一直显示灰色"的问题 */
+  .flame-layer{ transition:fill 1s ease, opacity .5s ease; transform-box:fill-box; }
+
+  /* 呼吸感：点亮状态下持续轻微缩放，比 idle 摆动更明显一点，像真的在呼吸 */
+  .flame-wrap.lit{ animation:breathePulse 2.8s ease-in-out infinite; }
+  @keyframes breathePulse{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.045);} }
+
+  /* 臻彩阶（第13阶）：整层火焰持续过一遍色相，呈现炫目全息感 */
+  .flame-layers.prismatic{ animation:hueSpin 3.2s linear infinite; }
+  @keyframes hueSpin{ 0%{ filter:hue-rotate(0deg) saturate(1.3);} 100%{ filter:hue-rotate(360deg) saturate(1.3);} }
 
   .flame-wrap.idle-sway .flame-svg{ animation:sway 2.4s ease-in-out infinite; }
   @keyframes sway{
@@ -75,6 +83,7 @@
 
   .face{ opacity:0; transition:opacity .6s ease .5s; }
   .flame-wrap.lit .face{ opacity:1; }
+  .tier-label{ text-align:center; font-size:11px; color:var(--sub); margin-top:2px; letter-spacing:1px; min-height:14px; }
 
   canvas#fx{ position:fixed; inset:0; pointer-events:none; z-index:30; }
 
@@ -135,9 +144,15 @@
     <div class="flame-glow" id="flameGlow"></div>
     <div class="flame-wrap idle-sway" id="flameWrap">
       <svg class="flame-svg" viewBox="0 0 150 190">
-        <path class="layer outer" fill="var(--gray1)" d="M75 10c22 30-14 40-14 66a30 30 0 1060 0c14 16 14 42-2 62a58 58 0 11-78-84c8-16 20-30 34-44z"/>
-        <path class="layer mid" fill="var(--gray2)" d="M78 46c12 18-8 24-8 42a19 19 0 1038 0c8 10 8 26-2 38a37 37 0 11-50-52c6-10 14-20 22-28z"/>
-        <path class="core" fill="var(--white-hot)" d="M80 92c5 8-3 11-3 19a9 9 0 1018 0c4 5 4 12-1 18a17.5 17.5 0 11-24-25c3-5 6-9 10-12z"/>
+        <g class="flame-layers" id="flameLayers">
+          <path class="flame-layer" data-idx="0" fill="var(--gray1)" d="M75 10c22 30-14 40-14 66a30 30 0 1060 0c14 16 14 42-2 62a58 58 0 11-78-84c8-16 20-30 34-44z"/>
+          <path class="flame-layer" data-idx="1" fill="var(--gray1)" transform="translate(75,178) scale(0.84) translate(-75,-178)" d="M75 10c22 30-14 40-14 66a30 30 0 1060 0c14 16 14 42-2 62a58 58 0 11-78-84c8-16 20-30 34-44z"/>
+          <path class="flame-layer" data-idx="2" fill="var(--gray2)" transform="translate(75,178) scale(0.68) translate(-75,-178)" d="M75 10c22 30-14 40-14 66a30 30 0 1060 0c14 16 14 42-2 62a58 58 0 11-78-84c8-16 20-30 34-44z"/>
+          <path class="flame-layer" data-idx="3" fill="var(--gray2)" transform="translate(75,178) scale(0.53) translate(-75,-178)" d="M75 10c22 30-14 40-14 66a30 30 0 1060 0c14 16 14 42-2 62a58 58 0 11-78-84c8-16 20-30 34-44z"/>
+          <path class="flame-layer" data-idx="4" fill="var(--white-hot)" transform="translate(75,178) scale(0.40) translate(-75,-178)" d="M75 10c22 30-14 40-14 66a30 30 0 1060 0c14 16 14 42-2 62a58 58 0 11-78-84c8-16 20-30 34-44z"/>
+          <path class="flame-layer" data-idx="5" fill="var(--white-hot)" transform="translate(75,178) scale(0.29) translate(-75,-178)" d="M75 10c22 30-14 40-14 66a30 30 0 1060 0c14 16 14 42-2 62a58 58 0 11-78-84c8-16 20-30 34-44z"/>
+          <path class="flame-layer" data-idx="6" fill="var(--white-hot)" transform="translate(75,178) scale(0.19) translate(-75,-178)" d="M75 10c22 30-14 40-14 66a30 30 0 1060 0c14 16 14 42-2 62a58 58 0 11-78-84c8-16 20-30 34-44z"/>
+        </g>
         <g class="face">
           <circle cx="66" cy="118" r="4" fill="#5A3416"/>
           <circle cx="88" cy="118" r="4" fill="#5A3416"/>
@@ -150,12 +165,13 @@
   <div class="count-zone">
     <div class="count-num" id="countNum">12</div>
     <div class="count-label">已连续打卡天数</div>
+    <div class="tier-label" id="tierLabel"></div>
   </div>
 
   <div class="status-card">
     <div>
       <div class="status-text" id="statusText">今天还没打卡哦</div>
-      <div class="status-sub" id="statusSub">记一笔账，火苗就会亮起来</div>
+      <div class="status-sub" id="statusSub">点一下按钮，为今天点亮这团火</div>
     </div>
     <button class="checkin-btn" id="checkinBtn" onclick="checkIn()">点亮打卡</button>
   </div>
@@ -173,6 +189,80 @@
    window.StreakBridge.close()
    ════════════════════════════════════════════════════════════ */
 let state = { streak:12, checkedToday:false, week:[true,true,false,true,true,true,false] };
+
+/* ════════════════════════════════════════════════════════════
+   火焰"阶级"系统：连续打卡天数越多，火焰颜色越绚丽、层数越多（3层→7层）
+   灰色只在"今天还没打卡"时出现；只要点亮了，就按 streak 天数换算阶级显示对应颜色。
+   ════════════════════════════════════════════════════════════ */
+const GRAY_TIER = { name:'', layers:3, mode:'solid', edge:'#C7C1B8', hot:'#A9A294', glow:'rgba(180,176,168,0)' };
+const FLAME_TIERS = [
+  { minDays:1,   name:'淡黄火苗', layers:3, mode:'solid', edge:'#FFE9A8', hot:'#FFFBEF', glow:'rgba(255,220,140,.55)' },
+  { minDays:3,   name:'淡红火苗', layers:3, mode:'solid', edge:'#FF9F80', hot:'#FFE3D2', glow:'rgba(255,140,100,.5)' },
+  { minDays:7,   name:'深红火苗', layers:4, mode:'solid', edge:'#D6291F', hot:'#FF8A5C', glow:'rgba(214,41,31,.5)' },
+  { minDays:14,  name:'粉红火苗', layers:4, mode:'solid', edge:'#FF6FA8', hot:'#FFD3E8', glow:'rgba(255,111,168,.5)' },
+  { minDays:21,  name:'淡青火苗', layers:4, mode:'solid', edge:'#5FE0CC', hot:'#DFFFF7', glow:'rgba(95,224,204,.5)' },
+  { minDays:30,  name:'深青火苗', layers:5, mode:'solid', edge:'#0D8F86', hot:'#5EE9D8', glow:'rgba(13,143,134,.5)' },
+  { minDays:50,  name:'淡蓝火苗', layers:5, mode:'solid', edge:'#6FA8FF', hot:'#DCEAFF', glow:'rgba(111,168,255,.5)' },
+  { minDays:70,  name:'深蓝火苗', layers:5, mode:'solid', edge:'#1E3FE0', hot:'#7C97FF', glow:'rgba(30,63,224,.5)' },
+  { minDays:100, name:'淡黑火苗', layers:6, mode:'solid', edge:'#4A4A58', hot:'#9A9AB0', glow:'rgba(120,110,200,.4)' },
+  { minDays:150, name:'深黑火苗', layers:6, mode:'solid', edge:'#0B0B10', hot:'#3C3C4C', glow:'rgba(90,60,180,.45)' },
+  { minDays:200, name:'五彩火苗', layers:6, mode:'rainbow', palette:['#FF5B5B','#FFB25B','#FFF35B','#5BFFA0','#5B9CFF'], glow:'rgba(255,255,255,.5)' },
+  { minDays:300, name:'七彩火苗', layers:7, mode:'rainbow', palette:['#FF5B5B','#FF9E5B','#FFF35B','#5BFF7A','#5BE0FF','#7A5BFF','#FF5BD6'], glow:'rgba(255,255,255,.55)' },
+  { minDays:365, name:'臻彩火苗', layers:7, mode:'prismatic', glow:'rgba(255,255,255,.6)' }
+];
+
+function getFlameTier(days){
+  let tier = FLAME_TIERS[0];
+  for(const t of FLAME_TIERS){ if(days >= t.minDays) tier = t; }
+  return tier;
+}
+
+function hexToRgb(hex){ hex=hex.replace('#',''); return [parseInt(hex.substr(0,2),16),parseInt(hex.substr(2,2),16),parseInt(hex.substr(4,2),16)]; }
+function lerpColor(c1,c2,t){
+  const a=hexToRgb(c1), b=hexToRgb(c2);
+  const r=[a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+  return '#'+r.map(v=>Math.round(Math.max(0,Math.min(255,v))).toString(16).padStart(2,'0')).join('');
+}
+
+/** 按当前 streak/打卡状态，重绘火焰层数、每层颜色、光晕颜色、阶级名 */
+function applyFlameVisual(){
+  const tier = state.checkedToday ? getFlameTier(state.streak) : GRAY_TIER;
+  const layerEls = document.querySelectorAll('.flame-layer');
+  const n = tier.layers;
+
+  layerEls.forEach((el, i)=>{
+    if(i >= n){ el.style.opacity = '0'; return; }
+    el.style.opacity = '1';
+    let color;
+    if(tier.mode === 'rainbow'){
+      color = tier.palette[i % tier.palette.length];
+    } else if(tier.mode === 'prismatic'){
+      color = '#FF3355'; // 基础色，实际炫彩效果由 hueSpin 动画持续旋转色相产生
+    } else {
+      const t = n>1 ? i/(n-1) : 1; // 0=最外层(edge色) → 1=最内层(hot色)
+      color = lerpColor(tier.edge, tier.hot, t);
+    }
+    el.setAttribute('fill', color);
+  });
+
+  document.getElementById('flameLayers').classList.toggle('prismatic', tier.mode === 'prismatic');
+
+  const glow = document.getElementById('flameGlow');
+  glow.style.background = state.checkedToday
+    ? `radial-gradient(circle, ${tier.glow} 0%, rgba(255,255,255,0) 55%, transparent 75%)`
+    : 'radial-gradient(circle, rgba(255,180,60,0) 0%, transparent 100%)';
+
+  // 深黑/臻彩等偏暗背景下，把表情换成浅色，保证在深色火焰上依然看得清
+  const isDarkTier = state.checkedToday && (tier.name==='深黑火苗' || tier.name==='淡黑火苗');
+  document.querySelectorAll('.face circle, .face path').forEach(el=>{
+    if(el.tagName==='circle') el.setAttribute('fill', isDarkTier ? '#F0E9FF' : '#5A3416');
+    else el.setAttribute('stroke', isDarkTier ? '#F0E9FF' : '#5A3416');
+  });
+
+  const label = document.getElementById('tierLabel');
+  if(label) label.textContent = state.checkedToday ? tier.name : '';
+}
+
 
 const weekLabels=['一','二','三','四','五','六','日'];
 
@@ -209,6 +299,7 @@ function renderBase(){
     document.getElementById('statusSub').textContent = '点一下按钮，为今天点亮这团火';
     btn.textContent = '点亮打卡'; btn.disabled = false;
   }
+  applyFlameVisual();
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -295,9 +386,14 @@ function checkIn(){
   }, 300);
 
   setTimeout(()=>{
+    const oldTier = getFlameTier(state.streak); // 累加前的阶级，用来判断这次打卡是否跨入新阶级
+
     state.streak += 1;
     state.checkedToday = true;
     if(state.week.length) state.week[state.week.length-1] = true;
+
+    const newTier = getFlameTier(state.streak);
+    const evolved = newTier.name !== oldTier.name;
 
     countNum.textContent = state.streak;
     countNum.classList.add('lit');
@@ -311,11 +407,12 @@ function checkIn(){
     btn.textContent = '已完成';
 
     renderWeek();
+    applyFlameVisual();
 
     const c = flameCenter();
-    spawnConfetti(c.x, c.y-20, 46);
+    spawnConfetti(c.x, c.y-20, evolved ? 70 : 46);
 
-    showToast(milestoneText(state.streak));
+    showToast(evolved ? `🔥 火苗进化成了${newTier.name}！` : milestoneText(state.streak));
 
     if(window.StreakBridge && StreakBridge.checkIn) StreakBridge.checkIn();
 
