@@ -2,6 +2,7 @@ package com.monsieurmahjong.iqoowang.view;
 
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.BlurMaskFilter;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -9,12 +10,16 @@ import android.graphics.LinearGradient;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PathMeasure;
+import android.graphics.PorterDuff;
+import android.graphics.PorterDuffColorFilter;
 import android.graphics.RadialGradient;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Shader;
 import android.graphics.SweepGradient;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.widget.FrameLayout;
 
@@ -30,18 +35,31 @@ import android.widget.FrameLayout;
  *  ⑥ 跑马灯光点（PathMeasure 沿圆角矩形路径运动的彗星）
  *
  * 颜色与 CyberpunkBgView 通过 CyberpunkColorSync 实时同步。
+ *
+ * ── 性能重写说明 ──
+ * 这个 View 是 QuickLogActivity 里包着金额输入框 EditText 的容器（FrameLayout），
+ * 原实现的 drawRunningLight() 彗星尾迹每帧要为 28 个尾迹点各创建一个新
+ * BlurMaskFilter（每帧 28 次分配），加上头部/白芯又是 2 次，
+ * 再叠加 setLayerType(LAYER_TYPE_SOFTWARE) 强制软件光栅化——
+ * 这是导致"跑马灯很卡、打字也卡"最主要的原因（和 EditText 同一棵 View 树，
+ * 抢占同一条主线程）。
+ * 现在改用一张预渲染柔光贴图 + ColorFilter 染色 + 缩放代替实时模糊，
+ * 尾迹步数也从 28 降到 14（视觉差异极小，开销减半），
+ * 动画帧率从 16ms(~60fps) 降到 33ms(~30fps) 并用真实帧间隔驱动速度，
+ * 不再假设固定帧长。
  */
 public class NeonCardView extends FrameLayout
         implements CyberpunkColorSync.ColorListener {
 
-    // ── 动画参数 ─────────────────────────────────────────
-    /** 呼吸相位，与 CyberpunkBgView 独立但周期相同 */
-    private float breathPhase   = (float)(Math.random() * Math.PI * 2); // 随机初相，避免完全同步
-    private final float BREATH_SPD   = 0.018f;   // ~5s / 周期
+    private static final float BASE_FRAME_MS = 16f;
+    private static final long  TICK_INTERVAL_MS = 33L;
 
-    /** 跑马灯位置 0..1 沿路径百分比 */
+    // ── 动画参数 ─────────────────────────────────────────
+    private float breathPhase   = (float)(Math.random() * Math.PI * 2);
+    private final float BREATH_SPD   = 0.018f;
+
     private float runPos        = 0f;
-    private final float RUN_SPD = 0.0038f;       // ~4.4s / 圈
+    private final float RUN_SPD = 0.0038f;
 
     // ── 颜色状态 ─────────────────────────────────────────
     private int  liveColor = CyberpunkColorSync.getCurrentColor();
@@ -57,10 +75,21 @@ public class NeonCardView extends FrameLayout
     private       float       pathLen     = 0f;
     private final float[]     pmPos       = new float[2];
 
+    // ── 预渲染柔光贴图（取代逐帧 BlurMaskFilter） ──────────
+    private Bitmap glowBitmap;
+    private static final int GLOW_BMP_SIZE = 64;
+    private final Rect  glowSrc = new Rect(0, 0, GLOW_BMP_SIZE, GLOW_BMP_SIZE);
+    private final RectF glowDst = new RectF();
+
+    // ── 彗星尾迹步数：28 → 14，配合贴图方案视觉差异很小，开销减半 ──
+    private static final int TAIL_STEPS = 14;
+    private static final float TAIL_SPAN = 0.1f;
+
     // ── 动画循环 ─────────────────────────────────────────
     private final Handler  handler = new Handler(Looper.getMainLooper());
     private       Runnable loop;
     private       boolean  running = false;
+    private       long     lastTickTime = 0L;
 
     // ── 构造 ─────────────────────────────────────────────
     public NeonCardView(Context c)                        { super(c); init(); }
@@ -68,9 +97,33 @@ public class NeonCardView extends FrameLayout
     public NeonCardView(Context c, AttributeSet a, int d) { super(c, a, d); init(); }
 
     private void init() {
-        setWillNotDraw(false);              // 让 onDraw 生效
-        setLayerType(LAYER_TYPE_SOFTWARE, null);
+        setWillNotDraw(false);
+        // 不再强制软件层：柔光效果已用预渲染贴图实现，硬件加速可以正常绘制，
+        // 这一项本身就是导致输入框跟着卡顿的主要原因之一
         cornerR = dp(20);
+        glowBitmap = createGlowBitmap(GLOW_BMP_SIZE);
+    }
+
+    /** 一次性生成白色柔光圆点贴图，后续用 ColorFilter 染成任意颜色复用 */
+    private static Bitmap createGlowBitmap(int size) {
+        Bitmap bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(bmp);
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        p.setColor(Color.WHITE);
+        p.setMaskFilter(new BlurMaskFilter(size * 0.26f, BlurMaskFilter.Blur.NORMAL));
+        c.drawCircle(size / 2f, size / 2f, size * 0.22f, p);
+        return bmp;
+    }
+
+    /** 用柔光贴图画一个发光点，取代 BlurMaskFilter 实时模糊 */
+    private void drawGlowDot(Canvas canvas, float cx, float cy, float radius, int color, int alpha) {
+        float half = radius * 2.6f;
+        glowDst.set(cx - half, cy - half, cx + half, cy + half);
+        paint.setColorFilter(new PorterDuffColorFilter(color, PorterDuff.Mode.SRC_IN));
+        paint.setAlpha(Math.max(0, Math.min(255, alpha)));
+        canvas.drawBitmap(glowBitmap, glowSrc, glowDst, paint);
+        paint.setColorFilter(null);
+        paint.setAlpha(255);
     }
 
     // ── 生命周期 ─────────────────────────────────────────
@@ -98,12 +151,17 @@ public class NeonCardView extends FrameLayout
     private void startAnim() {
         if (running) return;
         running = true;
-        loop    = new Runnable() {
+        lastTickTime = SystemClock.uptimeMillis();
+        loop = new Runnable() {
             @Override public void run() {
                 if (!running) return;
-                tick();
+                long now = SystemClock.uptimeMillis();
+                float dt = (now - lastTickTime) / BASE_FRAME_MS;
+                lastTickTime = now;
+                if (dt > 6f) dt = 1f; // 防止切前后台造成的大跳变
+                tick(dt);
                 invalidate();
-                handler.postDelayed(this, 16);
+                handler.postDelayed(this, TICK_INTERVAL_MS);
             }
         };
         handler.post(loop);
@@ -114,10 +172,10 @@ public class NeonCardView extends FrameLayout
         handler.removeCallbacks(loop);
     }
 
-    private void tick() {
-        breathPhase += BREATH_SPD;
+    private void tick(float dt) {
+        breathPhase += BREATH_SPD * dt;
         if (breathPhase > (float)(Math.PI * 2)) breathPhase -= (float)(Math.PI * 2);
-        runPos += RUN_SPD;
+        runPos += RUN_SPD * dt;
         if (runPos >= 1f) runPos -= 1f;
     }
 
@@ -162,14 +220,12 @@ public class NeonCardView extends FrameLayout
     //  ① 深色玻璃背景
     // ─────────────────────────────────────────────────────
     private void drawGlassBackground(Canvas canvas) {
-        // 主体：深色玻璃
         paint.setStyle(Paint.Style.FILL);
         paint.setColor(0xEE0A0820);
         paint.setShader(null);
         paint.setMaskFilter(null);
         canvas.drawRoundRect(bounds, cornerR, cornerR, paint);
 
-        // 顶部玻璃高光：上方约 40% 区域覆盖一层极淡白色渐变
         float midY = bounds.height() * 0.38f;
         paint.setShader(new LinearGradient(
                 0, 0, 0, midY,
@@ -184,18 +240,16 @@ public class NeonCardView extends FrameLayout
     }
 
     // ─────────────────────────────────────────────────────
-    //  ② 内部呼吸环境光（极淡，衬托整体布局的氛围感）
+    //  ② 内部呼吸环境光
     // ─────────────────────────────────────────────────────
     private void drawBreathingGlow(Canvas canvas) {
-        // 呼吸曲线：sin 0..1，alpha 极低，仅做氛围
-        float breath = (float)(Math.sin(breathPhase) * 0.5 + 0.5);   // 0..1
+        float breath = (float)(Math.sin(breathPhase) * 0.5 + 0.5);
 
         int R = (liveColor >> 16) & 0xFF;
         int G = (liveColor >> 8)  & 0xFF;
         int B =  liveColor        & 0xFF;
 
-        // 径向渐变：从卡片中心向外辐射，控制 alpha 使其非常克制
-        float aCenter = 0.15f + 0.09f * breath;   // 最亮 0.15，最暗 0.06
+        float aCenter = 0.15f + 0.09f * breath;
         float radius  = Math.max(bounds.width(), bounds.height()) * 0.75f;
 
         paint.setStyle(Paint.Style.FILL);
@@ -210,7 +264,6 @@ public class NeonCardView extends FrameLayout
                 new float[]{ 0f, 0.55f, 1f },
                 Shader.TileMode.CLAMP));
 
-        // 限制在卡片圆角矩形内绘制，不溢出
         canvas.save();
         canvas.clipPath(borderPath);
         canvas.drawRoundRect(bounds, cornerR, cornerR, paint);
@@ -222,14 +275,9 @@ public class NeonCardView extends FrameLayout
     //  ③ 静态渐变描边（底色边框，极淡）
     // ─────────────────────────────────────────────────────
     private void drawStaticBorder(Canvas canvas) {
-        int R = (liveColor >> 16) & 0xFF;
-        int G = (liveColor >> 8)  & 0xFF;
-        int B =  liveColor        & 0xFF;
-
         float breath = (float)(Math.sin(breathPhase) * 0.5 + 0.5);
-        int borderAlpha = (int)((0.15f + 0.20f * breath) * 255);   // 随呼吸微亮
+        int borderAlpha = (int)((0.15f + 0.20f * breath) * 255);
 
-        // 扫描渐变描边（SweepGradient 让边框颜色从 liveColor 过渡到互补色）
         int compColor = complementCyberpunk(liveColor);
         paint.setStyle(Paint.Style.STROKE);
         paint.setStrokeWidth(dp(1.5f));
@@ -245,64 +293,48 @@ public class NeonCardView extends FrameLayout
     }
 
     // ─────────────────────────────────────────────────────
-    //  ④ 跑马灯彗星（沿 borderPath 行进）
+    //  ④ 跑马灯彗星（沿 borderPath 行进，改用预渲染柔光贴图）
     // ─────────────────────────────────────────────────────
     private void drawRunningLight(Canvas canvas) {
         int R = (liveColor >> 16) & 0xFF;
         int G = (liveColor >> 8)  & 0xFF;
         int B =  liveColor        & 0xFF;
+        int liveRgb = Color.rgb(R, G, B);
 
         // ── 彗星尾迹（由远到近，逐渐变亮变大）──────────
-        int tailSteps = 28;
-        float tailSpan = 0.1f;   // 彗星尾占路径的比例
-
-        for (int i = tailSteps; i >= 1; i--) {
-            float t = runPos - (tailSpan * i / tailSteps);
+        for (int i = TAIL_STEPS; i >= 1; i--) {
+            float t = runPos - (TAIL_SPAN * i / TAIL_STEPS);
             if (t < 0) t += 1f;
             pm.getPosTan(t * pathLen, pmPos, null);
 
-            float progress = 1f - (float) i / tailSteps;   // 0(尾)→1(头)
+            float progress = 1f - (float) i / TAIL_STEPS;
             float sz       = dp(1.0f) + dp(3.0f) * progress * progress;
             int   alpha    = (int)(progress * progress * 160);
 
-            paint.setStyle(Paint.Style.FILL);
-            paint.setColor(Color.argb(alpha, R, G, B));
-            paint.setMaskFilter(new BlurMaskFilter(sz * 1.8f, BlurMaskFilter.Blur.NORMAL));
-            canvas.drawCircle(pmPos[0], pmPos[1], sz * 0.5f, paint);
+            drawGlowDot(canvas, pmPos[0], pmPos[1], sz, liveRgb, alpha);
         }
 
-        // ── 彗星头部：亮白芯 + 颜色光晕 ────────────────
+        // ── 彗星头部：颜色光晕 + 白芯 + 极亮白点 ────────
         pm.getPosTan(runPos * pathLen, pmPos, null);
 
-        // 颜色光晕
-        paint.setColor(Color.argb(220, R, G, B));
-        paint.setMaskFilter(new BlurMaskFilter(dp(8), BlurMaskFilter.Blur.NORMAL));
-        canvas.drawCircle(pmPos[0], pmPos[1], dp(4), paint);
+        drawGlowDot(canvas, pmPos[0], pmPos[1], dp(4), liveRgb, 220);
+        drawGlowDot(canvas, pmPos[0], pmPos[1], dp(2.5f), Color.WHITE, 230);
 
-        // 白芯
-        paint.setColor(Color.WHITE);
-        paint.setMaskFilter(new BlurMaskFilter(dp(3), BlurMaskFilter.Blur.NORMAL));
-        canvas.drawCircle(pmPos[0], pmPos[1], dp(2.5f), paint);
-
-        // 极亮白点（最中心）
+        paint.setColorFilter(null);
         paint.setMaskFilter(null);
         paint.setColor(Color.WHITE);
-        canvas.drawCircle(pmPos[0], pmPos[1], dp(1.2f), paint);
-
         paint.setAlpha(255);
+        canvas.drawCircle(pmPos[0], pmPos[1], dp(1.2f), paint);
     }
 
     // ─────────────────────────────────────────────────────
     //  工具
     // ─────────────────────────────────────────────────────
 
-    /** 取颜色的赛博朋克互补色（用于渐变描边更丰富） */
     private static int complementCyberpunk(int color) {
-        // 简单地将 RGB 互换两个通道，产生互补感
         int r = (color >> 16) & 0xFF;
         int g = (color >> 8)  & 0xFF;
         int b =  color        & 0xFF;
-        // 偏移 180° hue（近似）
         return Color.rgb(b, r, g);
     }
 
