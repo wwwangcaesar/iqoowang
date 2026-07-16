@@ -47,6 +47,24 @@
   @keyframes glowPulse{ 0%,100%{ transform:scale(.95); opacity:.85;} 50%{ transform:scale(1.08); opacity:1;} }
 
   .flame-wrap{ position:relative; width:150px; height:190px; }
+  .flame-poke-wrap{ position:relative; width:150px; height:190px; cursor:pointer; }
+  .flame-poke-wrap.poked{ animation:pokeBump .22s cubic-bezier(.34,1.56,.64,1); }
+  @keyframes pokeBump{
+    0%{ transform:scale(1) rotate(0deg); }
+    40%{ transform:scale(var(--poke-scale,1.14)) rotate(var(--poke-rot,-3deg)); }
+    100%{ transform:scale(1) rotate(0deg); }
+  }
+  .combo-text{
+    position:absolute; top:18%; left:50%; transform:translate(-50%,-50%) scale(.6); opacity:0;
+    font-size:24px; font-weight:900; color:#FF8A3D; pointer-events:none; z-index:5;
+    text-shadow:0 2px 10px rgba(255,140,60,.45);
+  }
+  .combo-text.show{ animation:comboPop .5s cubic-bezier(.34,1.56,.64,1); }
+  @keyframes comboPop{
+    0%{ opacity:0; transform:translate(-50%,-40%) scale(.4); }
+    30%{ opacity:1; transform:translate(-50%,-58%) scale(1.18); }
+    100%{ opacity:0; transform:translate(-50%,-78%) scale(1); }
+  }
   .flame-svg{ width:100%; height:100%; transform-origin:50% 92%; }
   /* 每一层火焰的颜色现在由 JS 按连续天数对应的"火焰阶级"直接写 fill 属性，
      不再写死灰色/白热两种状态 —— 这也修复了之前"打卡后火焰一直显示灰色"的问题 */
@@ -142,7 +160,9 @@
 
   <div class="stage">
     <div class="flame-glow" id="flameGlow"></div>
-    <div class="flame-wrap idle-sway" id="flameWrap">
+    <div class="combo-text" id="comboText"></div>
+    <div class="flame-poke-wrap" id="flamePokeWrap" onclick="pokeFlame(event)">
+      <div class="flame-wrap idle-sway" id="flameWrap">
       <svg class="flame-svg" viewBox="0 0 150 190">
         <g class="flame-layers" id="flameLayers">
           <path class="flame-layer" data-idx="0" fill="var(--gray1)" d="M75 10c22 30-14 40-14 66a30 30 0 1060 0c14 16 14 42-2 62a58 58 0 11-78-84c8-16 20-30 34-44z"/>
@@ -159,6 +179,7 @@
           <path d="M68 132 Q77 140 86 132" stroke="#5A3416" stroke-width="3" fill="none" stroke-linecap="round"/>
         </g>
       </svg>
+    </div>
     </div>
   </div>
 
@@ -359,6 +380,105 @@ function tick(){
   requestAnimationFrame(tick);
 }
 tick();
+
+/* ════════════════════════════════════════════════════════════
+   点击火苗互动：单次点击也有反馈（跳一下 + 火星 + 声音），
+   连续快速点击会累积连击数，连击越高反馈越强烈，达到里程碑弹提示。
+   纯装饰性互动，不产生任何数据变化，和"点亮打卡"按钮完全独立。
+   ════════════════════════════════════════════════════════════ */
+let pokeCombo = 0;
+let pokeComboTimer = null;
+let lastPokeAt = 0;
+
+let audioCtxPoke = null;
+function ensureAudioPoke(){
+  if(!audioCtxPoke){
+    try{ audioCtxPoke = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return; }
+  }
+  if(audioCtxPoke && audioCtxPoke.state === 'suspended') audioCtxPoke.resume();
+}
+function playPokeSound(combo){
+  if(!audioCtxPoke) return;
+  const t0 = audioCtxPoke.currentTime;
+  const osc = audioCtxPoke.createOscillator();
+  const gain = audioCtxPoke.createGain();
+  const base = 300 + Math.min(420, combo*22);
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(base, t0);
+  osc.frequency.exponentialRampToValueAtTime(Math.max(90, base*0.5), t0+0.09);
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.exponentialRampToValueAtTime(0.13, t0+0.006);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0+0.12);
+  osc.connect(gain); gain.connect(audioCtxPoke.destination);
+  osc.start(t0); osc.stop(t0+0.14);
+}
+
+/** 按当前火焰阶级取一组配色，给戳一下的火星用；未打卡时是灰白色火星 */
+function pokeSparkColors(){
+  if(!state.checkedToday) return ['#C7C1B8','#EDEAE4'];
+  const tier = getFlameTier(state.streak);
+  if(tier.mode === 'rainbow') return tier.palette;
+  if(tier.mode === 'prismatic') return ['#FF5B5B','#5BE0FF','#FFD75B','#B35BFF','#5BFFA0'];
+  return [tier.edge, tier.hot];
+}
+
+function spawnPokeSparks(cx, cy, count, combo){
+  const colors = pokeSparkColors();
+  for(let i=0;i<count;i++){
+    const ang = Math.random()*Math.PI*2;
+    const speed = 1.8 + Math.random()*2.6 + Math.min(2.4, combo*0.15);
+    particles.push({
+      x:cx, y:cy, vx:Math.cos(ang)*speed, vy:Math.sin(ang)*speed - 1,
+      life:1, decay:0.022+Math.random()*0.014, r:2+Math.random()*2.2,
+      color: colors[i % colors.length], type:'spark'
+    });
+  }
+}
+
+function comboColor(combo){
+  if(combo>=20) return '#FF2FD0';
+  if(combo>=10) return '#FF3B2E';
+  if(combo>=5)  return '#FF8A3D';
+  return '#FFC93C';
+}
+
+function showComboText(combo){
+  if(combo < 2) return; // 单次点击不刷 combo 数字，只有连续快速点击才显示
+  const el = document.getElementById('comboText');
+  el.textContent = 'x' + combo;
+  el.style.color = comboColor(combo);
+  el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+}
+
+function pokeFlame(evt){
+  if(evt) evt.stopPropagation();
+  ensureAudioPoke();
+
+  const now = performance.now();
+  const rapid = (now - lastPokeAt) < 600; // 600ms 内算连续快速点击
+  lastPokeAt = now;
+  pokeCombo = rapid ? pokeCombo + 1 : 1;
+
+  clearTimeout(pokeComboTimer);
+  pokeComboTimer = setTimeout(()=>{ pokeCombo = 0; }, 700);
+
+  // 跳一下的幅度随连击数增加，做出"越戳越兴奋"的感觉（有上限，不会跳飞）
+  const wrap = document.getElementById('flamePokeWrap');
+  const intensity = Math.min(1, 0.35 + pokeCombo*0.1);
+  wrap.style.setProperty('--poke-scale', (1 + intensity*0.16).toFixed(3));
+  wrap.style.setProperty('--poke-rot', ((Math.random()>0.5?1:-1) * (2 + intensity*3)).toFixed(1) + 'deg');
+  wrap.classList.remove('poked'); void wrap.offsetWidth; wrap.classList.add('poked');
+
+  const c = flameCenter();
+  const sparkCount = Math.min(20, 4 + pokeCombo*2);
+  spawnPokeSparks(c.x, c.y, sparkCount, pokeCombo);
+  playPokeSound(pokeCombo);
+  showComboText(pokeCombo);
+
+  if(pokeCombo === 5)       showToast('🔥 手速不错！');
+  else if(pokeCombo === 10) showToast('🔥🔥 火焰要炸了！');
+  else if(pokeCombo >= 20 && pokeCombo % 10 === 0) showToast('🔥🔥🔥 传说级连击！');
+}
 
 /* ════════════════════════════════════════════════════════════
    打卡序列：灰 → 橙 → 金 → 白芯，Glow，happy bounce，数字弹跳，
