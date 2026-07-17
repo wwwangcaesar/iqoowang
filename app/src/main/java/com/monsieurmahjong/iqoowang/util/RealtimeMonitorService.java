@@ -235,7 +235,7 @@ public class RealtimeMonitorService extends Service {
                         Log.w(TAG, "AI验证暂时不可用(" + msg + ")，仍展示规则引擎原始判断供用户参考");
                         LocalAIAgent.VerifyResult vr = new LocalAIAgent.VerifyResult();
                         vr.confirmed = true; // AI打不通不代表信号无效，交给用户自己看规则引擎原始依据判断
-                        vr.reason = "本轮AI复核暂时不可用，以下是规则引擎的原始判断：" + result.note;
+                        vr.reason = "AI本轮未能完成验证（原因：" + msg + "），以下是规则引擎的原始判断：" + result.note;
                         handleVerified(item, actionKey, result, quote, pos, vr);
                     }
                 });

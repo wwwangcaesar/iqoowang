@@ -42,6 +42,11 @@ public class LocalAIAgent {
     private final ExecutorService   mExecutor;
     private final Handler           mMainHandler;
     private final AtomicBoolean     mInferring = new AtomicBoolean(false);
+    private volatile long mInferringSince = 0L;
+    /** 推理锁看门狗超时——超过这个时长还没释放锁，视为上一次推理异常挂起（比如原生库
+     *  崩溃导致onFinish回调根本没触发），强制解锁重试，避免一次卡死导致之后所有AI调用
+     *  永久性地弹"AI正在思考中" */
+    private static final long INFER_WATCHDOG_MS = 45_000;
 
     // Agent 进化状态
     private int mLevel = 1;
@@ -205,12 +210,32 @@ public class LocalAIAgent {
         void onError(String msg);
     }
 
+    /**
+     * 获取推理锁——比直接用 mInferring.getAndSet(true) 多一层看门狗：如果上一次推理
+     * 声称"正在进行"但已经卡住超过 INFER_WATCHDOG_MS 还没释放锁，就强制解锁重新开始，
+     * 避免一次意外挂起（原生库崩溃/异常导致onFinish回调没被调用）永久卡死后续所有AI调用。
+     */
+    private boolean tryAcquireInferLock() {
+        if (mInferring.compareAndSet(false, true)) {
+            mInferringSince = System.currentTimeMillis();
+            return true;
+        }
+        long stuckMs = System.currentTimeMillis() - mInferringSince;
+        if (stuckMs > INFER_WATCHDOG_MS) {
+            Log.w(TAG, "推理锁已卡死" + (stuckMs / 1000) + "秒（超过看门狗阈值"
+                    + (INFER_WATCHDOG_MS / 1000) + "秒），强制解锁重试");
+            mInferringSince = System.currentTimeMillis();
+            return true;
+        }
+        return false;
+    }
+
     // ──────────────────────────────────────────
     // 选股结果分析
     // ──────────────────────────────────────────
 
     public void analyzeScreenResult(String screenResultJson, AICallback cb) {
-        if (mInferring.getAndSet(true)) {
+        if (!tryAcquireInferLock()) {
             cb.onError("AI正在思考中，请稍后");
             return;
         }
@@ -273,7 +298,7 @@ public class LocalAIAgent {
     // ──────────────────────────────────────────
 
     public void chat(String message, String historyJson, AICallback cb) {
-        if (mInferring.getAndSet(true)) {
+        if (!tryAcquireInferLock()) {
             cb.onError("AI正在思考中，请稍后");
             return;
         }
@@ -313,7 +338,7 @@ public class LocalAIAgent {
     public void verifySignal(String code, String name, String action, String ruleNote,
                               com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote quote,
                               AICallback cb) {
-        if (mInferring.getAndSet(true)) {
+        if (!tryAcquireInferLock()) {
             cb.onError("AI正在思考中，请稍后");
             return;
         }
@@ -406,7 +431,7 @@ public class LocalAIAgent {
             cb.onError("话术内容不能为空");
             return;
         }
-        if (mInferring.getAndSet(true)) {
+        if (!tryAcquireInferLock()) {
             cb.onError("AI正在思考中，请稍后再教学");
             return;
         }
@@ -503,6 +528,7 @@ public class LocalAIAgent {
                     // 重新流式输出
                     mExecutor.execute(() -> {
                         mInferring.set(true);
+                        mInferringSince = System.currentTimeMillis();
                         streamToCallback(fallback, cb);
                     });
                     return;
