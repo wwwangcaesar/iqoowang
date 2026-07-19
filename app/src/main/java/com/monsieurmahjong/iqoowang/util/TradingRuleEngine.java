@@ -50,12 +50,20 @@ public class TradingRuleEngine {
         public double prevClose, prevLow;
         public String prevDate;
         public boolean hasData;
+        /** 【关键安全阀】缓存里最新一条的日期明显早于预期的最近交易日，
+         * 说明数据已经陈旧。这个字段不依赖任何其他地方的陈旧检测是否正确——
+         * 即便上游某个环节又出现类似 bug，这里也会独立拦下来，绝不让过期数据流入买卖判断。 */
+        public boolean isStale;
+        public String expectedDate;
     }
 
     /**
      * 取"距今最近一个已收盘交易日"的收盘价/最低价作为参照。
      * 直接用 MarketDataManager 里缓存的日K最后一条——由于日K是收盘后统一下载的，
      * 交易时段内缓存里的最新一条天然就是"昨天"（不会包含今天还没走完的这一根）。
+     *
+     * 【安全阀】取到数据后会比对日期是否真的是预期的最近交易日，不是就标记 isStale，
+     * evaluate() 会直接拒绝用这份数据产生任何买卖信号。
      */
     public PrevDayRef getPrevDayRef(String code) {
         PrevDayRef ref = new PrevDayRef();
@@ -67,6 +75,9 @@ public class TradingRuleEngine {
             ref.prevLow = last.low;
             ref.prevDate = last.date;
             ref.hasData = true;
+
+            ref.expectedDate = MarketDataManager.get().computeExpectedTradeDate();
+            ref.isStale = ref.prevDate == null || ref.prevDate.compareTo(ref.expectedDate) < 0;
         } catch (Exception ignored) {}
         return ref;
     }
@@ -85,6 +96,12 @@ public class TradingRuleEngine {
         RuleResult result = new RuleResult();
         if (quote == null || !prevDay.hasData) {
             result.note = "行情或前一日参考价缺失，本轮跳过判断";
+            return result;
+        }
+        if (prevDay.isStale) {
+            result.note = String.format(Locale.CHINA,
+                    "【安全拦截】参考数据已陈旧（缓存最新：%s，预期最近交易日：%s），拒绝产生任何买卖信号，请先重新下载数据",
+                    prevDay.prevDate, prevDay.expectedDate);
             return result;
         }
 

@@ -148,13 +148,21 @@ public class MarketIndexManager {
             Log.i(TAG, "指数刷新" + (done ? "完成" : "超时(使用现有缓存)"));
         } catch (InterruptedException ignored) {}
 
-        // 只要至少有一条指数数据落地，就标记今天已更新，避免反复重试拖慢每次选股
-        if (hasAnyDataToday()) setLastUpdateDate(mDateFmt.format(new Date()));
+        // 【修复】之前只要表里有任意历史数据就标记为"今天已更新"，如果三大指数当天全部下载失败但之前有旧数据，
+        // 会被错误标记为新鲜，之后一整天都不会再重试。现在改为真正核对缓存里最新一条的日期，
+        // 只有真的拿到了新数据才算"今天已更新"。
+        String latest = getLatestIndexTradeDate();
+        if (latest != null && latest.equals(mDateFmt.format(new Date()))) {
+            setLastUpdateDate(mDateFmt.format(new Date()));
+        } else {
+            Log.w(TAG, "指数数据仍未更新到今天（最新：" + latest + "），下次调用会再次尝试重新下载");
+        }
     }
 
-    private boolean hasAnyDataToday() {
-        Cursor c = mDb.rawQuery("SELECT COUNT(*) FROM index_kline", null);
-        try { return c.moveToFirst() && c.getInt(0) > 0; } finally { c.close(); }
+    private String getLatestIndexTradeDate() {
+        Cursor c = mDb.rawQuery("SELECT MAX(trade_date) FROM index_kline", null);
+        try { if (c.moveToFirst() && !c.isNull(0)) return c.getString(0); } finally { c.close(); }
+        return null;
     }
 
     private void saveIndexBars(String code, String name, List<EastMoneyApi.KlineBar> bars) {

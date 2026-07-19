@@ -57,6 +57,8 @@ public class RealtimeMonitorService extends Service {
     private long mIntervalMs = DEFAULT_INTERVAL_MS;
     private final TradingRuleEngine mEngine = new TradingRuleEngine();
     private int mTickCount = 0;
+    /** 防止陈旧数据拦截的警告每轮都写日志刷屏，同一支股票同一次服务运行期间只记一次 */
+    private final Set<String> mStaleWarnedCodes = new HashSet<>();
 
     /** App在前台时，StockBridge 注册自己进来，接收信号事件实时推给WebView */
     public interface Listener {
@@ -209,6 +211,11 @@ public class RealtimeMonitorService extends Service {
 
         if (result.action == TradingRuleEngine.Action.NONE) {
             WatchlistManager.get().updateNote(item.code, result.note);
+            if (result.note != null && result.note.contains("安全拦截") && mStaleWarnedCodes.add(item.code)) {
+                Log.w(TAG, "【陈旧数据拦截】" + item.name + "(" + item.code + ") " + result.note);
+                try { DecisionLogger.get().logNote(item.name + "(" + item.code + ") " + result.note); }
+                catch (Exception e) { Log.e(TAG, "写陈旧警告日志失败", e); }
+            }
             return;
         }
 

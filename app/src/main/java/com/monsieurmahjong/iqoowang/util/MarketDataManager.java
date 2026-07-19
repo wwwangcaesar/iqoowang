@@ -213,7 +213,7 @@ public class MarketDataManager {
      * 否则往前回溯到上一个工作日。不考虑法定节假日（节假日那天本来就不会有新数据，
      * 对时比较会先行判定为"陈旧"，前端提醒文案中要写清楚这只是提醒不是报错，避免误导）。
      */
-    private String computeExpectedTradeDate() {
+    public String computeExpectedTradeDate() {
         Calendar cal = Calendar.getInstance();
         int hour = cal.get(Calendar.HOUR_OF_DAY);
         boolean afterClose = hour >= 15;
