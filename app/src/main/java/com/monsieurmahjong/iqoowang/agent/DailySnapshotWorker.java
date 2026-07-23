@@ -9,11 +9,9 @@ import androidx.work.Worker;
 import androidx.work.WorkerParameters;
 
 
-import com.monsieurmahjong.iqoowang.dao.Position;
 import com.monsieurmahjong.iqoowang.util.DatabaseManager;
 
 import java.util.Calendar;
-import java.util.List;
 
 /**
  * 每日资产快照 Worker
@@ -23,6 +21,11 @@ import java.util.List;
  *
  * 说明：WorkManager 不保证精确到分钟，只保证24小时内执行一次。
  * 实际触发时间由系统调度，通常在充电/空闲状态下执行。
+ *
+ * 【修复说明】之前这里从 SharedPreferences 读 "cash"，但 WebView 端从来没有真正写过
+ * 这个key（一直是内存里假算，重启就丢），导致每日快照永远记成初始10万，跟真实交易
+ * 完全对不上。现在改为直接调用 DatabaseManager.saveDailySnapshot()（无参版本），
+ * 现金/总资产由 Java 端根据完整交易流水自己推算，不再依赖任何外部传入的数值。
  */
 public class DailySnapshotWorker extends Worker {
 
@@ -47,30 +50,10 @@ public class DailySnapshotWorker extends Worker {
             }
 
             DatabaseManager db = DatabaseManager.get();
+            db.saveDailySnapshot();
 
-            // 计算当前总资产
-            // 注意：cash 由前端维护，这里从 SharedPreferences 读取
-            // WebView 会在交易后通过 Android.savePrefs("cash", value) 保存
-            String cashStr = getApplicationContext()
-                    .getSharedPreferences("sm_prefs", Context.MODE_PRIVATE)
-                    .getString("cash", "100000");
-
-            double cash = Double.parseDouble(cashStr);
-
-            // 累计持仓市值
-            List<Position> positions = db.getAllPositions();
-            double posValue = 0;
-            for (Position p : positions) {
-                posValue += p.getCurrentPrice() * p.getQuantity();
-            }
-
-            double totalAsset = cash + posValue;
-
-            // 写入 GreenDAO
-            db.saveDailySnapshot(cash, totalAsset);
-
-            Log.i(TAG, String.format("Snapshot saved: total=%.2f cash=%.2f pos=%.2f",
-                    totalAsset, cash, posValue));
+            Log.i(TAG, String.format("Snapshot saved: total=%.2f cash=%.2f",
+                    db.getTotalAssetValue(), db.getCashBalance()));
 
             return Result.success();
 

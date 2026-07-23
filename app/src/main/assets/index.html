@@ -985,6 +985,7 @@
       <button class="qty-btn" onclick="changeQty(1)">+</button>
     </div>
     <div class="modal-row"><div class="modal-key">预计金额</div><div class="modal-val c-gold" id="modalAmount">--</div></div>
+    <div class="modal-row"><div class="modal-key">预计手续费</div><div class="modal-val" id="modalFee" style="color:var(--text-sub);font-size:12px;">--</div></div>
     <div class="modal-row"><div class="modal-key">可用资金</div><div class="modal-val" id="modalCash">--</div></div>
     <button class="modal-confirm" id="modalConfirmBtn" onclick="confirmTrade()">确认买入</button>
     <button onclick="closeModal()" style="width:100%;padding:10px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--text-sub);font-size:13px;cursor:pointer;margin-top:6px;">取消</button>
@@ -1927,7 +1928,28 @@ function updateModalAmount() {
   document.getElementById('qtyVal').textContent = STATE.tradeQty;
   document.getElementById('qtyShares').textContent = shares;
   document.getElementById('modalAmount').textContent = `¥${amount.toFixed(2)}`;
-  document.getElementById('modalCash').textContent = `¥${STATE.cash.toFixed(2)}`;
+
+  const feeEl = document.getElementById('modalFee');
+  if (feeEl) {
+    if (IS_ANDROID) {
+      const direction = t.isSell ? 'SELL' : 'BUY';
+      const fee = Android.estimateFee(price, shares, direction, t.code);
+      feeEl.textContent = `¥${fee.toFixed(2)}`;
+    } else {
+      feeEl.textContent = '（H5预览模式不计手续费）';
+    }
+  }
+
+  if (IS_ANDROID) {
+    try {
+      const acc = JSON.parse(Android.getAccountSummary());
+      document.getElementById('modalCash').textContent = `¥${acc.cash.toFixed(2)}`;
+    } catch (e) {
+      document.getElementById('modalCash').textContent = `¥${STATE.cash.toFixed(2)}`;
+    }
+  } else {
+    document.getElementById('modalCash').textContent = `¥${STATE.cash.toFixed(2)}`;
+  }
 }
 
 function confirmTrade() {
@@ -1935,11 +1957,46 @@ function confirmTrade() {
   if (!t) return;
   const price = t.latestClose || t.currentPrice || t.price || t.cost;
   const shares = STATE.tradeQty * 100;
-  const amount = price * shares;
   const direction = t.isSell ? 'SELL' : 'BUY';
 
-  if (!t.isSell && amount > STATE.cash) { showToast('❌ 资金不足'); return; }
+  if (IS_ANDROID) {
+    const tradeShares = t.isSell
+        ? Math.min(shares, (STATE.positions[t.code]?.qty || 0))
+        : shares;
+    const id = Android.recordTrade(
+        t.code, t.name, direction, price, tradeShares,
+        t.signal || 'MANUAL', t.score || 0
+    );
+    if (id < 0) {
+      showToast(direction === 'BUY' ? '❌ 资金不足，买入失败' : '❌ 卖出失败，请检查持仓');
+      return;
+    }
+    Android.vibrate(direction === 'BUY' ? 30 : 50);
+    addThinkLine(direction === 'BUY' ? 'info' : 'good',
+        `[TRD] ${direction === 'BUY' ? '买入' : '卖出'} ${t.name} ${tradeShares}股 @¥${price.toFixed(2)}`);
+    showToast(`✅ 已${direction === 'BUY' ? '买入' : '卖出'} ${t.name} ${tradeShares}股`);
 
+    try {
+      const posJson = Android.getPositions();
+      STATE.positions = {};
+      if (posJson && posJson !== '[]') {
+        JSON.parse(posJson).forEach(p => {
+          STATE.positions[p.code] = {
+            name: p.name, cost: p.avgCost, qty: p.qty,
+            currentPrice: p.currentPrice, date: p.openDate, board: p.board,
+            floatPnl: p.floatPnl, floatPnlPct: p.floatPnlPct,
+          };
+        });
+      }
+    } catch (e) { console.error('[Trade] reload positions failed', e); }
+    refreshAccountSummary();
+    renderPositions();
+    closeModal();
+    return;
+  }
+
+  const amount = price * shares;
+  if (!t.isSell && amount > STATE.cash) { showToast('❌ 资金不足'); return; }
   if (t.isSell) {
     const pos = STATE.positions[t.code];
     if (!pos) { showToast('持仓不存在'); return; }
@@ -1951,8 +2008,7 @@ function confirmTrade() {
     STATE.decisions++;
     if (pnl > 0) STATE.wins++;
     evolveAgent(pnl > 0 ? 8 : 3);
-    addThinkLine(pnl > 0 ? 'good' : 'bad',
-      `[TRD] 卖出 ${t.name} ${actualShares}股，盈亏 ${pnl>=0?'+':''}${pnl.toFixed(0)}元`);
+    addThinkLine(pnl > 0 ? 'good' : 'bad', `[TRD] 卖出 ${t.name} ${actualShares}股，盈亏 ${pnl>=0?'+':''}${pnl.toFixed(0)}元`);
     showToast(`✅ 已卖出 ${t.name} ${actualShares}股`);
   } else {
     STATE.cash -= amount;
@@ -1973,26 +2029,7 @@ function confirmTrade() {
     addThinkLine('info', `[TRD] 买入 ${t.name} ${shares}股 @¥${price.toFixed(2)}`);
     showToast(`✅ 已买入 ${t.name} ${shares}股`);
   }
-
-  // ── 持久化到GreenDAO（Android）或localStorage（H5）──
-  const total = STATE.cash + Object.values(STATE.positions)
-      .reduce((s,p) => s + (p.currentPrice||p.cost) * p.qty, 0);
-
-  if (IS_ANDROID) {
-    const tradeShares = t.isSell
-        ? Math.min(shares, (STATE.positions[t.code]?.qty || 0) + shares)
-        : shares;
-    Android.recordTrade(
-      t.code, t.name, direction, price, tradeShares,
-      t.signal || 'MANUAL', t.score || 0,
-      STATE.cash, total
-    );
-    // 震动反馈
-    Android.vibrate(direction === 'BUY' ? 30 : 50);
-  } else {
-    saveState();
-  }
-
+  saveState();
   updateAssetDisplay();
   renderPositions();
   closeModal();
@@ -3064,6 +3101,7 @@ function openSellModal(code){
 // 资产显示（精简）
 // ═══════════════════════════════════════════════════════════
 function updateAssetDisplay(){
+  if (IS_ANDROID) { refreshAccountSummary(); return; }
   let posVal=0,floatPnl=0;
   for(const pos of Object.values(STATE.positions)){
     const p=pos.currentPrice||pos.cost;
@@ -3089,7 +3127,54 @@ function updateAssetDisplay(){
   const wr=document.getElementById('winRate');
   if(wr&&STATE.decisions>0)wr.textContent=(STATE.wins/STATE.decisions*100).toFixed(0)+'%';
 }
+// 账户数据统一从Java端拉取展示，不再本地造假
+function refreshAccountSummary() {
+  if (!IS_ANDROID) return;
+  try {
+    const acc = JSON.parse(Android.getAccountSummary());
+    STATE.account = acc;
+    const fmt = v => Math.abs(v) >= 10000 ? (v/10000).toFixed(2) + '万' : v.toFixed(0);
 
+    const elTotal = document.getElementById('totalAsset');
+    if (elTotal) elTotal.textContent = fmt(acc.totalAsset);
+    const elCash = document.getElementById('cashVal');
+    if (elCash) elCash.textContent = fmt(acc.cash);
+
+    // 首页"浮动盈亏"卡片：用今日盈亏（相对昨天收盘），不是持仓浮盈
+    const elFloat = document.getElementById('floatPnl');
+    if (elFloat) {
+      elFloat.textContent = (acc.todayPnl >= 0 ? '+' : '') + fmt(Math.abs(acc.todayPnl));
+      elFloat.className = acc.todayPnl >= 0 ? 'c-up' : 'c-down';
+    }
+    // 持仓页"今日盈亏"
+    const elToday = document.getElementById('todayPnlDisp');
+    if (elToday) {
+      elToday.textContent = (acc.todayPnl >= 0 ? '+' : '') + Math.round(Math.abs(acc.todayPnl)).toLocaleString();
+      elToday.className = acc.todayPnl >= 0 ? 'c-up' : 'c-down';
+    }
+    // 持仓页"总盈亏"：相对初始10万本金，含已实现+浮动，不会因为卖飞就消失归零
+    const elTotalPnl = document.getElementById('totalPnlDisp');
+    if (elTotalPnl) {
+      elTotalPnl.textContent = (acc.totalPnl >= 0 ? '+' : '') + Math.round(Math.abs(acc.totalPnl)).toLocaleString();
+      elTotalPnl.className = acc.totalPnl >= 0 ? 'c-up' : 'c-down';
+    }
+    const elHold = document.getElementById('holdCount');
+    if (elHold) elHold.textContent = acc.positionCount;
+  } catch (e) { console.error('[Account] refresh failed', e); }
+}
+
+// 首页默认股票：优先展示持仓里浮盈最高的股票，没有持仓才退回大盘指数
+function pickDefaultHomeStock() {
+  const positions = Object.entries(STATE.positions);
+  if (!positions.length) return null;
+  let best = null, bestPnl = -Infinity;
+  for (const [code, pos] of positions) {
+    const curP = pos.currentPrice || pos.cost;
+    const pnl = (curP - pos.cost) * pos.qty;
+    if (pnl > bestPnl) { bestPnl = pnl; best = { code, name: pos.name }; }
+  }
+  return best;
+}
 // AI模型加载完成回调（由Java轮询触发）
 window.onAIModelReady = function(statusJson) {
   try {
@@ -3422,16 +3507,21 @@ setTimeout(()=>{
   bindKlineGestures();
   if(IS_ANDROID){
     addThinkLine('sys','[SYS] iQOO 11s · 真实行情 + 本地AI');
-    Android.fetchKline('000001','日K',120);
-    Android.fetchQuote('000001');
     try{
       const posJson=Android.getPositions();
       if(posJson&&posJson!=='[]') window.initPositions(posJson);
-      const stats=JSON.parse(Android.getStats());
-      STATE.decisions=stats.decisions||0;
-      STATE.wins=Math.round((stats.winRate||0)*STATE.decisions);
-      updateAssetDisplay();
     }catch(e){}
+
+    const defaultStock = pickDefaultHomeStock();
+    const defCode = defaultStock ? defaultStock.code : '000001';
+    const defName = defaultStock ? defaultStock.name : '上证指数';
+    STATE.currentKlineCode = defCode;
+    STATE.currentKlineName = defName;
+    document.getElementById('klineStockLabel').textContent = defName;
+    const ctTitle = document.getElementById('klineCardTitle');
+    if (ctTitle) ctTitle.textContent = defName + ' K线';
+    Android.fetchKline(defCode, '日K', 120);
+    Android.fetchQuote(defCode);
     // 显示AI状态到思考流
     try{
       const ag=JSON.parse(Android.getAgentStatus());
@@ -3444,8 +3534,9 @@ setTimeout(()=>{
     // 启动AI状态轮询（模型在后台加载，完成后自动更新思考流）
     Android.startAIStatusPolling();
     initDownloadStatus();
-    updateDetailPanel({code:'000001',name:'上证指数',
+    updateDetailPanel({code:defCode,name:defName,
       price:0,preClose:0,open:0,high:0,low:0,changePct:0,change:0});
+    if (defaultStock) refreshStockNews(defCode, defName);
   }else{
     drawKline();
     updateDetailPanel({code:'000001',name:'上证指数',

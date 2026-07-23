@@ -26,9 +26,15 @@ import java.util.Locale;
  * GreenDAO 数据库管理器（单例）
  *
  * 集成三张表：
- *   TradeRecord  — 每笔买卖记录
+ *   TradeRecord  — 每笔买卖记录（含真实手续费）
  *   Position     — 当前持仓（唯一索引 stockCode）
  *   DailyAsset   — 每日资产快照
+ *
+ * 【重要架构说明】现金余额/总资产/总盈亏，现在完全由 Java 端根据持久化的交易记录
+ * 自行推算，不再接受 WebView 传入的数值——之前的实现是 WebView 端在内存里维护一个
+ * cash 变量，每次App重启都会重置回初始10万，且从未真正写回本地存储，导致"上周五买
+ * 了5万股票，今天看可用资金还是10万"这种问题。现在 Java 端才是唯一的真相来源，
+ * WebView 只负责展示，不再自己计算/缓存这些数字。
  *
  * 用法：
  *   DatabaseManager.init(context);
@@ -39,6 +45,9 @@ public class DatabaseManager {
     private static final String TAG = "DatabaseManager";
     private static final String DB_NAME = "stockmaster.db";
     private static final int    DB_VERSION = 1;
+
+    /** 模拟账户初始资金 */
+    public static final double INITIAL_CAPITAL = 100000.0;
 
     private static DatabaseManager sInstance;
 
@@ -79,11 +88,41 @@ public class DatabaseManager {
     }
 
     // ──────────────────────────────────────────
+    // 手续费计算（模拟A股真实费率）
+    // ──────────────────────────────────────────
+
+    /** 佣金费率：万分之三（多数券商目前的普遍水平），双边收取，最低5元 */
+    private static final double COMMISSION_RATE = 0.0003;
+    private static final double COMMISSION_MIN = 5.0;
+    /** 印花税：卖出单边千分之0.5（2023年8月28日起下调后的现行税率） */
+    private static final double STAMP_TAX_RATE = 0.0005;
+    /** 过户费：沪市（6开头）双边收取万分之0.1，深市不收 */
+    private static final double TRANSFER_FEE_RATE = 0.00001;
+
+    private double calcCommission(double amount) {
+        return Math.max(amount * COMMISSION_RATE, COMMISSION_MIN);
+    }
+
+    private double calcStampTax(double amount, String direction) {
+        return "SELL".equals(direction) ? amount * STAMP_TAX_RATE : 0;
+    }
+
+    private double calcTransferFee(double amount, String code) {
+        return (code != null && code.startsWith("6")) ? amount * TRANSFER_FEE_RATE : 0;
+    }
+
+    /** 计算某笔交易的总手续费（佣金+印花税+过户费） */
+    public double calcTotalFee(double amount, String direction, String code) {
+        return calcCommission(amount) + calcStampTax(amount, direction) + calcTransferFee(amount, code);
+    }
+
+    // ──────────────────────────────────────────
     // 交易记录
     // ──────────────────────────────────────────
 
     /**
-     * 记录一笔交易，同时更新持仓和日资产快照
+     * 记录一笔交易，同时更新持仓、扣减/增加现金（通过手续费真实模拟）、保存当日快照。
+     * 现金/总资产/盈亏全部由本方法内部根据持久化数据推算，不再依赖调用方传入。
      *
      * @param code      股票代码
      * @param name      股票名称
@@ -92,22 +131,28 @@ public class DatabaseManager {
      * @param quantity  成交股数
      * @param signalType 信号类型
      * @param aiScore   AI评分
-     * @param cash      交易后现金余额（由WebView传入）
-     * @param totalAsset 交易后总资产
+     * @return 交易记录id；资金不足时返回-1，不会写入任何数据
      */
     public long insertTrade(String code, String name, String direction,
                             double price, int quantity,
-                            String signalType, int aiScore,
-                            double cash, double totalAsset) {
+                            String signalType, int aiScore) {
         double amount = price * quantity;
-        double commission = amount * 0.0003; // 万三
-        double realizedPnl = 0;
+        double fee = calcTotalFee(amount, direction, code);
 
-        // 计算已实现盈亏（卖出时）
+        if ("BUY".equals(direction)) {
+            double cashBefore = getCashBalance();
+            if (amount + fee > cashBefore + 0.01) { // 容差0.01元避免浮点误差
+                Log.w(TAG, "资金不足，拒绝买入: 需要¥" + (amount + fee) + " 可用¥" + cashBefore);
+                return -1;
+            }
+        }
+
+        double realizedPnl = 0;
         if ("SELL".equals(direction)) {
             Position pos = getPositionByCode(code);
             if (pos != null) {
-                realizedPnl = (price - pos.getAvgCost()) * quantity;
+                // 已实现盈亏 = 卖出净所得(已扣手续费) - 按均价计算的成本（均价里已经折算了买入时的手续费）
+                realizedPnl = (amount - fee) - pos.getAvgCost() * quantity;
             }
         }
 
@@ -118,7 +163,7 @@ public class DatabaseManager {
         record.setPrice(price);
         record.setQuantity(quantity);
         record.setAmount(amount);
-        record.setCommission(commission);
+        record.setCommission(fee); // 字段名沿用commission，实际存的是三项手续费合计
         record.setTradeTime(System.currentTimeMillis());
         record.setTradeDate(mDateFmt.format(new Date()));
         record.setRealizedPnl(realizedPnl);
@@ -126,13 +171,14 @@ public class DatabaseManager {
         record.setAiScore(aiScore);
 
         long id = mDaoSession.getTradeRecordDao().insert(record);
-        Log.d(TAG, "Trade inserted id=" + id + " " + direction + " " + code + " x" + quantity + " @" + price);
+        Log.d(TAG, "Trade inserted id=" + id + " " + direction + " " + code + " x" + quantity
+                + " @" + price + " fee=" + fee);
 
-        // 同步更新持仓
-        updatePositionAfterTrade(code, name, direction, price, quantity);
+        // 同步更新持仓（均价折算买入手续费）
+        updatePositionAfterTrade(code, name, direction, price, quantity, fee);
 
-        // 保存日快照
-        saveDailySnapshot(cash, totalAsset);
+        // 保存日快照（用Java端自己推算出的现金/总资产，不再依赖外部传入）
+        saveDailySnapshot();
 
         return id;
     }
@@ -163,7 +209,7 @@ public class DatabaseManager {
                 .list();
     }
 
-    /** 统计总盈亏 */
+    /** 统计总已实现盈亏（只算卖出平仓部分，不含当前持仓的浮动盈亏） */
     public double getTotalRealizedPnl() {
         List<TradeRecord> sells = mDaoSession.getTradeRecordDao()
                 .queryBuilder()
@@ -187,11 +233,97 @@ public class DatabaseManager {
     }
 
     // ──────────────────────────────────────────
+    // 账户资金（唯一真相来源——完全从交易流水推算，不依赖任何外部传入/缓存）
+    // ──────────────────────────────────────────
+
+    /**
+     * 当前可用现金余额 = 初始资金 - 全部买入净支出(含手续费) + 全部卖出净所得(扣手续费)。
+     * 每次都从完整交易流水重新算一遍，保证不管App重启多少次、SharedPreferences有没有
+     * 正常写入，这个数字永远和真实交易历史一致，不会出现"重启就变回10万"的问题。
+     */
+    public double getCashBalance() {
+        double cash = INITIAL_CAPITAL;
+        for (TradeRecord t : queryAllTrades()) {
+            double amount = t.getAmount();
+            double fee = t.getCommission(); // 该笔交易的手续费合计
+            if ("BUY".equals(t.getDirection())) {
+                cash -= (amount + fee);
+            } else if ("SELL".equals(t.getDirection())) {
+                cash += (amount - fee);
+            }
+        }
+        return cash;
+    }
+
+    /** 当前全部持仓的市值合计（按各持仓最新价） */
+    public double getPositionsMarketValue() {
+        double value = 0;
+        for (Position p : getAllPositions()) {
+            value += p.getCurrentPrice() * p.getQuantity();
+        }
+        return value;
+    }
+
+    /** 总资产 = 现金 + 持仓市值 */
+    public double getTotalAssetValue() {
+        return getCashBalance() + getPositionsMarketValue();
+    }
+
+    /** 总盈亏（相对初始资金，含已实现+浮动） */
+    public double getTotalPnl() {
+        return getTotalAssetValue() - INITIAL_CAPITAL;
+    }
+
+    public double getTotalPnlPct() {
+        return getTotalPnl() / INITIAL_CAPITAL * 100;
+    }
+
+    /**
+     * 今日盈亏 = 当前总资产 - 昨天收盘时的总资产快照。
+     * 找不到"昨天"的快照（比如刚用没几天）时，跟初始资金比。
+     */
+    public double getTodayPnl() {
+        String today = mDateFmt.format(new Date());
+        List<DailyAsset> prevSnaps = mDaoSession.getDailyAssetDao()
+                .queryBuilder()
+                .where(DailyAssetDao.Properties.TradeDate.notEq(today))
+                .orderDesc(DailyAssetDao.Properties.TradeDate)
+                .limit(1).list();
+        double baseline = prevSnaps.isEmpty() ? INITIAL_CAPITAL : prevSnaps.get(0).getTotalAsset();
+        return getTotalAssetValue() - baseline;
+    }
+
+    /**
+     * 一次性打包账户核心数据，供WebView启动/交易后统一刷新展示，
+     * 避免前端自己拼凑造成和Java端不一致。
+     */
+    public String getAccountSummaryJson() {
+        JSONObject obj = new JSONObject();
+        try {
+            double cash = getCashBalance();
+            double posValue = getPositionsMarketValue();
+            double total = cash + posValue;
+            double totalPnl = total - INITIAL_CAPITAL;
+            obj.put("cash", cash);
+            obj.put("positionsValue", posValue);
+            obj.put("totalAsset", total);
+            obj.put("totalPnl", totalPnl);
+            obj.put("totalPnlPct", totalPnl / INITIAL_CAPITAL * 100);
+            obj.put("todayPnl", getTodayPnl());
+            obj.put("initialCapital", INITIAL_CAPITAL);
+            obj.put("positionCount", getAllPositions().size());
+        } catch (Exception e) {
+            Log.e(TAG, "getAccountSummaryJson", e);
+        }
+        return obj.toString();
+    }
+
+    // ──────────────────────────────────────────
     // 持仓管理
     // ──────────────────────────────────────────
 
     private void updatePositionAfterTrade(String code, String name,
-                                          String direction, double price, int qty) {
+                                          String direction, double price, int qty, double fee) {
         PositionDao dao = mDaoSession.getPositionDao();
         Position pos = getPositionByCode(code);
 
@@ -201,7 +333,8 @@ public class DatabaseManager {
                 pos.setStockCode(code);
                 pos.setStockName(name);
                 pos.setQuantity(qty);
-                pos.setAvgCost(price);
+                // 均价把买入手续费折算进成本，更贴近真实持仓成本
+                pos.setAvgCost((price * qty + fee) / qty);
                 pos.setCurrentPrice(price);
                 pos.setOpenDate(mDateFmt.format(new Date()));
                 pos.setBoard(code.startsWith("6") ? "sh" : "sz");
@@ -209,8 +342,8 @@ public class DatabaseManager {
                 recalcPnl(pos);
                 dao.insert(pos);
             } else {
-                // 计算新均价
-                double newAvg = (pos.getAvgCost() * pos.getQuantity() + price * qty)
+                // 计算新均价（含本次买入的手续费）
+                double newAvg = (pos.getAvgCost() * pos.getQuantity() + price * qty + fee)
                         / (pos.getQuantity() + qty);
                 pos.setAvgCost(newAvg);
                 pos.setQuantity(pos.getQuantity() + qty);
@@ -282,7 +415,14 @@ public class DatabaseManager {
     // 每日资产快照
     // ──────────────────────────────────────────
 
-    public void saveDailySnapshot(double cash, double totalAsset) {
+    /**
+     * 保存当日资产快照——现金/总资产完全由Java端自己推算（getCashBalance/
+     * getTotalAssetValue），不再需要调用方传入，避免SharedPreferences没写对导致
+     * 快照记录了错误的现金数字。
+     */
+    public void saveDailySnapshot() {
+        double cash = getCashBalance();
+        double totalAsset = getTotalAssetValue();
         String today = mDateFmt.format(new Date());
         DailyAssetDao dao = mDaoSession.getDailyAssetDao();
 
@@ -291,20 +431,18 @@ public class DatabaseManager {
                 .where(DailyAssetDao.Properties.TradeDate.eq(today))
                 .limit(1).list();
 
-        // 取昨日资产算日盈亏
-        double prevAsset = 100000;
+        // 取最近一个不是今天的快照算日盈亏
         List<DailyAsset> prev = dao.queryBuilder()
+                .where(DailyAssetDao.Properties.TradeDate.notEq(today))
                 .orderDesc(DailyAssetDao.Properties.TradeDate)
-                .limit(2).list();
-        if (prev.size() >= 2) prevAsset = prev.get(1).getTotalAsset();
-        else if (!prev.isEmpty() && !prev.get(0).getTradeDate().equals(today))
-            prevAsset = prev.get(0).getTotalAsset();
+                .limit(1).list();
+        double prevAsset = prev.isEmpty() ? INITIAL_CAPITAL : prev.get(0).getTotalAsset();
 
         double posValue = totalAsset - cash;
         double dailyPnl = totalAsset - prevAsset;
         double dailyPct = prevAsset > 0 ? dailyPnl / prevAsset * 100 : 0;
-        double totalPnl = totalAsset - 100000;
-        double totalPct = totalPnl / 100000 * 100;
+        double totalPnl = totalAsset - INITIAL_CAPITAL;
+        double totalPct = totalPnl / INITIAL_CAPITAL * 100;
 
         DailyAsset snap;
         if (!existing.isEmpty()) {
@@ -373,6 +511,7 @@ public class DatabaseManager {
                 obj.put("price", t.getPrice());
                 obj.put("qty", t.getQuantity());
                 obj.put("amount", t.getAmount());
+                obj.put("fee", t.getCommission());
                 obj.put("pnl", t.getRealizedPnl());
                 obj.put("signal", t.getSignalType());
                 obj.put("score", t.getAiScore());

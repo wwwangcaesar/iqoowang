@@ -193,29 +193,35 @@ public class StockBridge implements RealtimeMonitorService.Listener {
     // ══════════════════════════════════════════════
 
     /**
-     * 记录交易（买入/卖出）
-     * JS调用：Android.recordTrade(code,name,dir,price,qty,signal,score,cash,total)
-     * 返回：交易ID（long）
+     * JS调用：Android.recordTrade(code,name,dir,price,qty,signal,score)
+     * 不再需要WebView传cash/total——Java端insertTrade内部会根据完整交易流水自己算，
+     * 这样才不会出现"重启App现金又变回10万"的问题。
+     * 返回交易记录id；资金不足或出错返回 -1。
      */
     @JavascriptInterface
     public long recordTrade(String code, String name, String direction,
-                            double price, int quantity,
-                            String signalType, int aiScore,
-                            double cash, double totalAsset) {
+                            double price, int quantity, String signalType, int aiScore) {
         try {
-            long id = mDb.insertTrade(code, name, direction, price, quantity,
-                    signalType, aiScore, cash, totalAsset);
-            // 持久化现金余额供 DailySnapshotWorker 读取
-            mContext.getSharedPreferences("sm_prefs", Context.MODE_PRIVATE)
-                    .edit()
-                    .putString("cash", String.valueOf(cash))
-                    .putString("total_asset", String.valueOf(totalAsset))
-                    .apply();
-            return id;
+            return mDb.insertTrade(code, name, direction, price, quantity, signalType, aiScore);
         } catch (Exception e) {
             Log.e(TAG, "recordTrade error", e);
             return -1;
         }
+    }
+    /** 账户核心数据（现金/总资产/总盈亏/今日盈亏），WebView启动和每次交易后都要刷新这个 */
+    @JavascriptInterface
+    public String getAccountSummary() {
+        return mDb.getAccountSummaryJson();
+    }
+
+    /**
+     * 预估手续费（买卖弹窗展示用），跟Java端insertTrade用的是同一套公式(mDb.calcTotalFee)，
+     * 保证展示的预估值和实际扣款完全一致。
+     */
+    @JavascriptInterface
+    public double estimateFee(double price, int quantity, String direction, String code) {
+        double amount = price * quantity;
+        return mDb.calcTotalFee(amount, direction, code);
     }
 
     /**
