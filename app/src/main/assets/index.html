@@ -772,6 +772,11 @@
         <div class="exclude-tag active" id="tagST"><div class="dot"></div>ST股</div>
       </div>
 
+      <div style="padding:10px 14px 0; display:flex; align-items:center; gap:8px;">
+        <input type="checkbox" id="requireXianRenZhiLu" style="width:16px;height:16px;accent-color:var(--accent-cyan);flex-shrink:0;">
+        <label for="requireXianRenZhiLu" style="font-size:11px;color:var(--text-sub);">叠加仙人指路形态检测（上影线≥实体×2 且当日量≥5日均量×放量倍数，不修改上面的通达信公式，只是另加一道门槛）</label>
+      </div>
+
       <button class="scan-btn" onclick="runScreener()" id="scanBtn">
         <span id="scanBtnText">⚡ 运行选股</span>
         <div class="scan-ripple" id="scanRipple"></div>
@@ -822,6 +827,7 @@
       <div style="padding:0 14px 12px;display:flex;gap:8px;align-items:center;">
         <button onclick="testNotification()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--accent-cyan);background:transparent;color:var(--accent-cyan);font-size:11px;">🔔 测试通知(10秒后到)</button>
         <button onclick="toggleDecisionLog()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--text-sub);background:transparent;color:var(--text-sub);font-size:11px;">📝 决策日志</button>
+        <button onclick="toggleConfigPanel()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--accent-gold);background:transparent;color:var(--accent-gold);font-size:11px;">⚙️ 参数配置</button>
       </div>
       <div id="decisionLogPanel" style="display:none;padding:0 12px 12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -829,6 +835,16 @@
           <span id="decisionLogPath" style="font-size:9px;color:var(--text-dim);"></span>
         </div>
         <pre id="decisionLogContent" style="background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:10px;color:var(--text-sub);line-height:1.6;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;font-family:var(--font-mono);">还没有日志</pre>
+      </div>
+      <div id="configPanel" style="display:none;padding:0 12px 12px;">
+        <div style="font-size:9px;color:var(--text-dim);margin-bottom:6px;">
+          调整规则引擎用的判断阈值，保存后立即生效（不用重启App），也会记住下次启动。改动前建议先了解每项含义，盲目调整可能导致信号变得过于灵敏或迟钝。
+        </div>
+        <div id="configFieldsBox" style="max-height:360px;overflow-y:auto;"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <button onclick="resetTradingConfig()" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--text-sub);background:transparent;color:var(--text-sub);font-size:11px;">恢复默认</button>
+          <button onclick="saveTradingConfig()" style="flex:2;padding:8px;border-radius:6px;border:none;background:var(--accent-gold);color:var(--bg-deep);font-size:12px;font-weight:600;">保存并生效</button>
+        </div>
       </div>
       <div id="watchlistContainer" style="padding:0 12px 12px;"></div>
     </div>
@@ -1004,6 +1020,7 @@ const IS_ANDROID = typeof Android !== 'undefined';
 const STATE = {
   cash: 100000,
   positions: {},    // 由Java层持仓数据初始化
+  watchlistItems: [], // 最新一次候选池数据，供持仓页交叉引用监控状态
   history: [],
   assetHistory: [],
   screenResults: [],
@@ -1048,6 +1065,8 @@ window.initPositions = function(jsonStr) {
         name: p.name, cost: p.avgCost, qty: p.qty,
         currentPrice: p.currentPrice, date: p.openDate, board: p.board,
         floatPnl: p.floatPnl, floatPnlPct: p.floatPnlPct,
+        sellableQty: (p.sellableQty !== undefined ? p.sellableQty : p.qty),
+        lockedQty: (p.lockedQty || 0),
       };
     });
     updateAssetDisplay();
@@ -1268,6 +1287,103 @@ function loadDecisionLog(dayStr) {
   document.getElementById('decisionLogContent').textContent = content || '这一天还没有决策记录';
 }
 
+let _configPanelOpen = false;
+
+/** 交易规则参数配置字段清单，和TradingRuleConfig.java字段一一对应。
+ *  percent类型在界面上按百分比展示（乘100），保存时再除回100，避免用户输入"0.3"这种不直观的写法。 */
+const TRADING_CONFIG_FIELDS = [
+  { group: '放量确认', key: 'volumeRatioThreshold', label: '量比倍数阈值', type: 'number', step: 0.1, hint: '现价成交量需达到N日均量的多少倍才算放量确认' },
+  { group: '放量确认', key: 'volumeMaDays', label: '均量天数', type: 'int', step: 1, hint: '"N日均量"用最近几天计算' },
+  { group: '放量确认', key: 'earlyWindowVolumeMultiplier', label: '开盘/收盘窗口放量倍数', type: 'number', step: 0.1, hint: '开盘/收盘窗口内，量比阈值再乘这个倍数，门槛更高' },
+  { group: '放量确认', key: 'earlyWindowMinutes', label: '开盘窗口(分钟)', type: 'int', step: 5 },
+  { group: '放量确认', key: 'lateWindowMinutes', label: '收盘前窗口(分钟)', type: 'int', step: 5 },
+  { group: '买入确认', key: 'vwapConfirmMinutes', label: '站稳VWAP确认(分钟)', type: 'int', step: 1, hint: '底仓信号需要连续站上分时均价多少分钟' },
+  { group: '买入确认', key: 'fullConfirmMinutes', label: '满仓确认(分钟)', type: 'int', step: 1, hint: '满仓信号需要连续站稳VWAP多少分钟，通常比底仓更长更严格' },
+  { group: '买入确认', key: 'shadowEatRatio', label: '吃影线比例', type: 'percent', step: 5, hint: '现价需回补选股当天长上影线的百分之多少才算满仓条件之一' },
+  { group: '买入确认', key: 'starterPositionPct', label: '底仓建议仓位', type: 'percent', step: 5 },
+  { group: '买入确认', key: 'addHalfPositionPct', label: '加仓建议比例', type: 'percent', step: 5 },
+  { group: '止损止盈', key: 'peakRetraceRatio', label: '峰值回撤预警比例', type: 'percent', step: 5, hint: '当日涨幅从最高点回撤到峰值的百分之多少时触发一级预警' },
+  { group: '止损止盈', key: 'divergenceBodyMaxRatio', label: '分歧K线实体占比上限', type: 'percent', step: 5, hint: 'K线实体(开收差)占振幅比例低于此值，判定为滞涨/十字星' },
+  { group: '止损止盈', key: 'divergenceMidMode', label: '分歧K线中点算法', type: 'select', options: [['KLINE_MID','K线本身(高+低)/2'], ['RETRACE_MID','峰值涨幅回撤50%价位']] },
+  { group: '止损止盈', key: 'sellObserveMinutes', label: '缩量跌破观察(分钟)', type: 'int', step: 1 },
+  { group: '止损止盈', key: 'stopNotifyMinutesBeforeClose', label: '止损收盘前推送窗口(分钟)', type: 'int', step: 5 },
+  { group: '涨跌停幅度', key: 'mainboardLimitPct', label: '主板(含ST)', type: 'percent', step: 1 },
+  { group: '涨跌停幅度', key: 'gemStarLimitPct', label: '创业板/科创板', type: 'percent', step: 1 },
+  { group: '涨跌停幅度', key: 'bjExchangeLimitPct', label: '北交所', type: 'percent', step: 1 },
+];
+
+function toggleConfigPanel() {
+  _configPanelOpen = !_configPanelOpen;
+  document.getElementById('configPanel').style.display = _configPanelOpen ? 'block' : 'none';
+  if (_configPanelOpen) loadTradingConfig();
+}
+
+function loadTradingConfig() {
+  if (!IS_ANDROID) { showToast('参数配置需要在App中运行'); return; }
+  try {
+    STATE.tradingConfig = JSON.parse(Android.getTradingConfig() || '{}');
+    renderConfigFields();
+  } catch (e) { console.error('[Config] 加载失败', e); }
+}
+
+function renderConfigFields() {
+  const cfg = STATE.tradingConfig || {};
+  const groups = [];
+  TRADING_CONFIG_FIELDS.forEach(f => {
+    let g = groups.find(x => x.name === f.group);
+    if (!g) { g = { name: f.group, fields: [] }; groups.push(g); }
+    g.fields.push(f);
+  });
+  let html = '';
+  groups.forEach(g => {
+    html += `<div style="font-size:10px;color:var(--accent-gold);margin:10px 0 4px;">${g.name}</div>`;
+    g.fields.forEach(f => {
+      const raw = cfg[f.key];
+      let inputHtml;
+      if (f.type === 'select') {
+        inputHtml = `<select id="cfg_${f.key}" style="background:var(--bg-card2);color:var(--text-prime);border:1px solid var(--border);border-radius:6px;padding:6px;font-size:11px;">` +
+          f.options.map(o => `<option value="${o[0]}" ${o[0] === raw ? 'selected' : ''}>${o[1]}</option>`).join('') +
+          `</select>`;
+      } else {
+        const dispVal = f.type === 'percent' ? (raw != null ? Math.round(raw * 1000) / 10 : '') : raw;
+        inputHtml = `<div style="display:flex;align-items:center;gap:3px;">` +
+          `<input id="cfg_${f.key}" type="number" step="${f.step}" value="${dispVal}" ` +
+          `style="width:66px;background:var(--bg-card2);color:var(--text-prime);border:1px solid var(--border);border-radius:6px;padding:6px;font-size:11px;text-align:right;">` +
+          (f.type === 'percent' ? `<span style="font-size:11px;color:var(--text-dim);">%</span>` : '') +
+          `</div>`;
+      }
+      html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid var(--border);gap:8px;">` +
+        `<div style="flex:1;min-width:0;"><div style="font-size:11px;color:var(--text-prime);">${f.label}</div>` +
+        (f.hint ? `<div style="font-size:9px;color:var(--text-dim);margin-top:1px;">${f.hint}</div>` : '') +
+        `</div>${inputHtml}</div>`;
+    });
+  });
+  document.getElementById('configFieldsBox').innerHTML = html;
+}
+
+function saveTradingConfig() {
+  if (!IS_ANDROID) { showToast('参数配置需要在App中运行'); return; }
+  const updates = {};
+  TRADING_CONFIG_FIELDS.forEach(f => {
+    const el = document.getElementById('cfg_' + f.key);
+    if (!el) return;
+    if (f.type === 'select') { updates[f.key] = el.value; return; }
+    const v = parseFloat(el.value);
+    if (isNaN(v)) return;
+    updates[f.key] = f.type === 'percent' ? v / 100 : (f.type === 'int' ? Math.round(v) : v);
+  });
+  const ok = Android.saveTradingConfig(JSON.stringify(updates));
+  showToast(ok ? '✅ 参数已保存并立即生效' : '❌ 保存失败');
+  if (ok) loadTradingConfig();
+}
+
+function resetTradingConfig() {
+  if (!IS_ANDROID) { showToast('参数配置需要在App中运行'); return; }
+  const ok = Android.resetTradingConfig();
+  showToast(ok ? '✅ 已恢复内置默认参数' : '❌ 恢复失败');
+  if (ok) loadTradingConfig();
+}
+
 function toggleMonitor() {
   if (!IS_ANDROID) { showToast('实时监控需要在App中运行'); return; }
   const btn = document.getElementById('monitorToggleBtn');
@@ -1291,6 +1407,7 @@ function loadWatchlist() {
   if (!IS_ANDROID) return;
   try {
     const items = JSON.parse(Android.getActiveWatchlist() || '[]');
+    STATE.watchlistItems = items;
     renderWatchlist(items);
   } catch (e) { console.error('[Watchlist] 加载失败', e); }
 }
@@ -1299,12 +1416,15 @@ const WATCHLIST_STATUS_LABEL = {
   WATCHING: { text: '观察中', color: 'var(--accent-gold)' },
   STARTER:  { text: '已建底仓', color: 'var(--up-red)' },
   ADDED:    { text: '已加仓', color: 'var(--up-red)' },
+  FULL:     { text: '已满仓', color: 'var(--up-red)' },
   PENDING_STARTER: { text: '待确认·买入底仓', color: 'var(--accent-cyan)' },
   PENDING_ADD:     { text: '待确认·加仓', color: 'var(--accent-cyan)' },
+  PENDING_FULL:    { text: '待确认·满仓', color: 'var(--accent-cyan)' },
+  PENDING_WARN:    { text: '待确认·抛压预警', color: 'var(--accent-gold)' },
   PENDING_STOP:    { text: '待确认·止损', color: 'var(--down-green)' },
 };
 
-const PENDING_STATUSES = ['PENDING_STARTER', 'PENDING_ADD', 'PENDING_STOP'];
+const PENDING_STATUSES = ['PENDING_STARTER', 'PENDING_ADD', 'PENDING_FULL', 'PENDING_WARN', 'PENDING_STOP'];
 
 function renderWatchlist(items) {
   const box = document.getElementById('watchlistContainer');
@@ -1335,6 +1455,14 @@ function renderWatchlist(items) {
       </div>`;
     }
 
+    const metricsRow = (it.waterLine || it.vwap || it.volRatio)
+      ? `<div style="display:flex;gap:10px;margin-top:3px;font-size:9px;color:var(--text-dim);">
+          ${it.waterLine ? `<span>水线¥${it.waterLine.toFixed(2)}</span>` : ''}
+          ${it.vwap ? `<span>VWAP¥${it.vwap.toFixed(2)}</span>` : ''}
+          ${it.volRatio ? `<span>量比${it.volRatio.toFixed(2)}x</span>` : ''}
+        </div>`
+      : '';
+
     return `
     <div style="padding:8px 10px;margin-top:8px;background:var(--bg-card2);border-radius:8px;border:1px solid var(--border);">
       <div style="display:flex;justify-content:space-between;align-items:center;">
@@ -1345,6 +1473,7 @@ function renderWatchlist(items) {
         </span>
       </div>
       <div style="font-size:10px;color:var(--text-sub);margin-top:4px;line-height:1.5;">${it.lastNote || ('day1入池 · 评分' + it.score + ' · ' + (it.signal||''))}</div>
+      ${metricsRow}
     </div>`;
   }).join('');
 }
@@ -1371,9 +1500,24 @@ function dismissWatchlistSignal(code) {
 
 window.onMonitorTick = function(watchCount, posCount, timeStr) {
   document.getElementById('monitorTickStatus').textContent =
-      `观察${watchCount}支 · 持仓${posCount}支 · ${timeStr}`;
+      `观察${watchCount}支 · 持仓${posCount}支 · ${timeStr}` + formatCloseCountdown();
   loadWatchlist();
 };
+
+/** 交易日收盘前30分钟倒计时文本——纯前端用设备时间计算，不需要新增Java接口。
+ *  不在收盘前30分钟窗口内时返回空字符串，不影响现有状态文本。
+ *  对应操盘手经验终版.md：二级止损信号只在收盘前30分钟内推送，这里给用户一个可见的倒计时提醒。 */
+function formatCloseCountdown() {
+  const now = new Date();
+  const day = now.getDay();
+  if (day === 0 || day === 6) return '';
+  const minutesNow = now.getHours() * 60 + now.getMinutes();
+  const afternoonOpen = 13 * 60, afternoonClose = 15 * 60;
+  if (minutesNow < afternoonOpen || minutesNow > afternoonClose) return '';
+  const toClose = afternoonClose - minutesNow;
+  if (toClose > 30) return '';
+  return ` · 🕔距收盘${toClose}分钟（二级止损信号进入推送窗口）`;
+}
 
 window.onSignalTriggered = function(jsonStr) {
   try {
@@ -1458,7 +1602,7 @@ window.onAppPause = function() {
 // ══ 模型下载提示══
 window.showModelTip = function(path) {
   addThinkLine('warn', `[AI ] 模型未找到，降级为专家规则模式`);
-  addThinkLine('info', `[AI ] 如需完整AI，请将 Qwen2.5-1.5B-MNN 放至:`);
+  addThinkLine('info', `[AI ] 需要将模型文件放至下面目录（文件夹名必须完全一致）：`);
   addThinkLine('info', `      ${path}`);
 };
 
@@ -1723,6 +1867,14 @@ function runScreener() {
     excludeKC:  document.getElementById('tagKC').classList.contains('active'),
     excludeLT:  document.getElementById('tagLT').classList.contains('active'),
     excludeST:  document.getElementById('tagST').classList.contains('active'),
+    // 【修复】Android端 StockBridge.runRealScreener 读的是 exCY/exKC/exLT/exST 这几个键名，
+    // 和上面H5模拟模式用的excludeCY/excludeKC/excludeLT/excludeST不一样。之前没同步，
+    // 导致真实选股时这几个排除开关永远走Java端optBoolean的默认值true，用户怎么点都无效。
+    exCY: document.getElementById('tagCY').classList.contains('active'),
+    exKC: document.getElementById('tagKC').classList.contains('active'),
+    exLT: document.getElementById('tagLT').classList.contains('active'),
+    exST: document.getElementById('tagST').classList.contains('active'),
+    requireXianRenZhiLu: document.getElementById('requireXianRenZhiLu').checked,
     boardFilter: document.getElementById('boardFilter').value,
   });
 
@@ -1960,13 +2112,23 @@ function confirmTrade() {
   const direction = t.isSell ? 'SELL' : 'BUY';
 
   if (IS_ANDROID) {
+    const posNow = STATE.positions[t.code];
+    const sellableNow = posNow ? (posNow.sellableQty !== undefined ? posNow.sellableQty : posNow.qty) : 0;
     const tradeShares = t.isSell
-        ? Math.min(shares, (STATE.positions[t.code]?.qty || 0))
+        ? Math.min(shares, sellableNow)
         : shares;
+    if (t.isSell && tradeShares <= 0) {
+      showToast('❌ 该持仓当日买入部分尚未过T+1，暂无可卖股数');
+      return;
+    }
     const id = Android.recordTrade(
         t.code, t.name, direction, price, tradeShares,
         t.signal || 'MANUAL', t.score || 0
     );
+    if (id === -2) {
+      showToast('❌ T+1限制：这部分份额今日买入，需下一交易日起才可卖出');
+      return;
+    }
     if (id < 0) {
       showToast(direction === 'BUY' ? '❌ 资金不足，买入失败' : '❌ 卖出失败，请检查持仓');
       return;
@@ -1985,6 +2147,8 @@ function confirmTrade() {
             name: p.name, cost: p.avgCost, qty: p.qty,
             currentPrice: p.currentPrice, date: p.openDate, board: p.board,
             floatPnl: p.floatPnl, floatPnlPct: p.floatPnlPct,
+            sellableQty: (p.sellableQty !== undefined ? p.sellableQty : p.qty),
+            lockedQty: (p.lockedQty || 0),
           };
         });
       }
@@ -2643,6 +2807,17 @@ function renderPositions() {
     const pnlPct = (curP - pos.cost) / pos.cost * 100;
     const isUp = pnl >= 0;
     const progressPct = Math.min(100, Math.max(0, 50 + pnlPct * 2));
+    const wl = STATE.watchlistItems.find(w => w.code === code);
+    const monitorRow = wl
+      ? (() => {
+          const lbl = WATCHLIST_STATUS_LABEL[wl.status] || { text: wl.status, color: 'var(--text-sub)' };
+          const noteText = PENDING_STATUSES.includes(wl.status) ? (wl.pendingReason || '') : (wl.lastNote || '');
+          return `<div style="margin-top:4px;padding-top:4px;border-top:1px dashed var(--border);display:flex;align-items:center;gap:6px;">
+              <span style="color:${lbl.color};font-size:9px;border:1px solid ${lbl.color};border-radius:6px;padding:0 5px;flex-shrink:0;">监控·${lbl.text}</span>
+              <span style="color:var(--text-dim);font-size:9px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${noteText}</span>
+            </div>`;
+        })()
+      : '';
     return `
       <div class="position-item" onclick="openSellModal('${code}')">
         <div class="pos-top">
@@ -2660,6 +2835,8 @@ function renderPositions() {
           <div class="pos-item"><div class="pos-item-label">成本价</div><div class="pos-item-val">¥${pos.cost.toFixed(2)}</div></div>
           <div class="pos-item"><div class="pos-item-label">现价</div><div class="pos-item-val ${isUp?'c-up':'c-down'}">¥${curP.toFixed(2)}</div></div>
         </div>
+        ${pos.lockedQty > 0 ? `<div style="font-size:9px;color:var(--accent-gold);margin-top:3px;">🔒 其中${pos.lockedQty}股为今日买入，T+1前不可卖（可卖${pos.sellableQty}股）</div>` : ''}
+        ${monitorRow}
         <div class="pos-progress"><div class="pos-progress-fill" style="width:${progressPct}%;background:${isUp?'var(--up-red)':'var(--down-green)'}"></div></div>
         <div style="text-align:right;font-size:9px;color:var(--text-dim);margin-top:3px;">点击卖出</div>
       </div>
@@ -3080,17 +3257,23 @@ function openSellModal(code){
   if(!pos){showToast('持仓不存在');return;}
   const curP=pos.currentPrice||pos.cost;
   const pnl=(curP-pos.cost)*pos.qty;
+  const sellableQty=(pos.sellableQty!==undefined?pos.sellableQty:pos.qty);
   STATE.tradeTarget={...pos,code,isSell:true,latestClose:curP,price:curP};
-  STATE.tradeQty=Math.max(1,Math.floor(pos.qty/100));
+  STATE.tradeQty=sellableQty>=100?Math.floor(sellableQty/100):1;
   document.getElementById('modalTitle').textContent='模拟卖出';
   document.getElementById('modalStockName').textContent=pos.name;
   document.getElementById('modalPrice').textContent=`¥${curP.toFixed(2)}`;
   const pnlStr=pnl>=0?`盈利 +¥${pnl.toFixed(0)}`:`亏损 -¥${Math.abs(pnl).toFixed(0)}`;
   document.getElementById('modalScore').textContent=pnlStr;
   document.getElementById('modalScore').style.color=pnl>=0?'var(--up-red)':'var(--down-green)';
-  document.getElementById('modalAdvice').textContent=
-    pnl>=0?`持仓盈利${((curP-pos.cost)/pos.cost*100).toFixed(2)}%，可分批减仓`
+  let advice=pnl>=0?`持仓盈利${((curP-pos.cost)/pos.cost*100).toFixed(2)}%，可分批减仓`
            :'持仓亏损，跌破SAR请止损出局';
+  if (pos.lockedQty > 0) {
+    advice += sellableQty > 0
+      ? `；🔒${pos.lockedQty}股为今日买入，T+1前不可卖，本次最多可卖${sellableQty}股`
+      : `；🔒全部${pos.qty}股均为今日买入，T+1前不可卖出`;
+  }
+  document.getElementById('modalAdvice').textContent = advice;
   document.getElementById('modalConfirmBtn').className='modal-confirm sell';
   document.getElementById('modalConfirmBtn').textContent='确认卖出';
   updateModalAmount();
@@ -3179,12 +3362,12 @@ function pickDefaultHomeStock() {
 window.onAIModelReady = function(statusJson) {
   try {
     const ag = JSON.parse(statusJson);
-    addThinkLine('good', '[AI ] ✅ Qwen2.5-1.5B-INT4 加载完成！');
+    addThinkLine('good', `[AI ] ✅ ${ag.modelName || '本地模型'} 加载完成！`);
     addThinkLine('good', '[AI ] 本地推理就绪，约 20-40 tok/s');
     // 更新AI大脑页面状态
     const levelNames = ['','初级分析师','量化研究员','策略交易员','风控专家','资深操盘手','宗师级操盘手'];
     const el = document.getElementById('agentLevelText');
-    if (el) el.textContent = `Level ${ag.level} · ${levelNames[ag.level]||''} · Qwen2.5已就绪`;
+    if (el) el.textContent = `Level ${ag.level} · ${levelNames[ag.level]||''} · ${ag.modelName || '本地模型'}已就绪`;
   } catch(e) {}
 };
 
@@ -3332,7 +3515,7 @@ function showAIStatusInThinkStream(ag) {
   addThinkLine('info', `[AI ] jni=${ag.jniLoaded} llm=${ag.llmReady} engine=${ag.modelName}`);
 
   if (ag.llmReady) {
-    addThinkLine('good', '[AI ] ✅ Qwen2.5-1.5B-INT4 加载成功');
+    addThinkLine('good', `[AI ] ✅ ${ag.modelName || '本地模型'} 加载成功`);
     addThinkLine('good', '[AI ] 推理就绪，约 20-40 tok/s');
     return;
   }

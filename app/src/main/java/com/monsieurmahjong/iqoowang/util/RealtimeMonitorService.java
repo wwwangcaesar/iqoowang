@@ -25,23 +25,12 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * RealtimeMonitorService — 实时监控前台服务
  *
- * 按设定间隔（默认60秒，可调30秒）轮询候选池 + 真实持仓的实时行情和分时数据，跑：
- *   1. TradingRuleEngine（确定性规则引擎）做候选信号初筛——快、零成本、100%可复现
- *   2. 命中候选信号后，转 LocalAIAgent 做二次验证——结合已学话术+真实数据判断
- *      靠不靠谱，并生成小白能看懂的理由
- *   3. 无论AI是否认可，都落地成"待确认"状态，绝不自动买卖——真正要不要操作，
- *      必须用户在App里手动点确认，AI和规则引擎都只是"建议"，不能替用户下决定
- *   4. 每一次规则命中信号（无论AI确认与否）都写一条决策日志到本地文件，供事后复盘
- *
- * 【重要】真实持仓（Position表，你在持仓页实际买入的股票）会在每轮开始时自动同步进
- * 候选池并标记为"已建底仓"状态——这样"是否该止损"、"是否该加仓"这两条规则才会覆盖到
- * 它们，而不是只监控day1筛选出来但还没买的候选股。
- *
- * 前台服务是为了保证锁屏/切后台时监控不中断。
+ * 流程：规则引擎(Layer1) → AI复核(Layer2) → 仅双通过才推送+待确认 → 完整决策日志
  */
 public class RealtimeMonitorService extends Service {
 
@@ -57,10 +46,31 @@ public class RealtimeMonitorService extends Service {
     private long mIntervalMs = DEFAULT_INTERVAL_MS;
     private final TradingRuleEngine mEngine = new TradingRuleEngine();
     private int mTickCount = 0;
-    /** 防止陈旧数据拦截的警告每轮都写日志刷屏，同一支股票同一次服务运行期间只记一次 */
     private final Set<String> mStaleWarnedCodes = new HashSet<>();
+    /** AI复核外层超时——比LocalAIAgent内部看门狗(45秒)稍长一点，给内部机制先机会处理；
+     *  但一定得比默认tick间隔(60秒)短，避免多轮tick堆叠。即使本地模型JNI层面彻底卡死
+     *  （既不触发onToken也不触发onFinish），这次信号评估也会有明确的“超时不推送”结论
+     *  写进决策日志，而不是静默消失。 */
+    private static final long AI_VERIFY_TIMEOUT_MS = 50_000;
 
-    /** App在前台时，StockBridge 注册自己进来，接收信号事件实时推给WebView */
+    /** 待AI复核队列的一条记录——规则引擎命中后不直接抢锁，而是先进这个队列，
+     *  由下面的单流水线处理器按实际推理速度持续消费，不再跟tick的60秒周期绑定。 */
+    private static class PendingVerify {
+        WatchlistManager.WatchlistItem item;
+        String actionKey;
+        TradingRuleEngine.RuleResult result;
+        RealtimeQuoteManager.Quote quote;
+        Position pos;
+        long queuedAt;
+    }
+    /** 按股票代码去重的待复核队列：同一支股票有新数据时直接覆盖旧条目，保持原排队位置不变（
+     *  先排队的先处理，不插队）。LinkedHashMap保证插入顺序。
+     *  排队多久都不丢弃——哪怕等了很久才轮到，真正发起AI复核前会先用最新行情重新跑一遍规则引擎，
+     *  确认信号依然成立才继续——宁可慢一点，也要保证AI看到的是当下真实有效的行情，
+     *  而不是排队那一刻的旧快照。 */
+    private final java.util.LinkedHashMap<String, PendingVerify> mVerifyQueue = new java.util.LinkedHashMap<>();
+    private volatile boolean mVerifyProcessing = false;
+
     public interface Listener {
         void onSignalTriggered(String code, String name, String action, String note, double price);
         void onTick(int watchCount, int posCount, String timeStr);
@@ -109,10 +119,6 @@ public class RealtimeMonitorService extends Service {
     @Override
     public IBinder onBind(Intent intent) { return null; }
 
-    // ══════════════════════════════════════════
-    // 轮询主循环
-    // ══════════════════════════════════════════
-
     private final Runnable mTick = new Runnable() {
         @Override
         public void run() {
@@ -124,10 +130,24 @@ public class RealtimeMonitorService extends Service {
 
     private void doTick() {
         mTickCount++;
-        List<Position> positions = DatabaseManager.get().getAllPositions();
 
-        // 真实持仓自动同步进候选池（标记为已建底仓），这样止损/加仓规则才会覆盖到它们，
-        // 不只是day1筛选出来但还没买的候选股
+        if (!isWithinTradingHours()) {
+            // 非交易时段（晚上/凌晨/周末）：不拉行情、不跑规则评估、不发通知。行情根本没变，
+            // 拉了也只是重复收盘那一刻的旧快照，白白消耗网络和电量。只更新一下监控面板
+            // 的状态文案，让用户知道监控是正常待命而不是挂了，等下一个交易时段自然恢复。
+            NotificationManager nm = getSystemService(NotificationManager.class);
+            nm.notify(NOTIFICATION_ID, buildNotification("监控待命中",
+                    "非交易时段（9:30-11:30, 13:00-15:00），已暂停拉取行情"));
+            String timeStr = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.CHINA).format(new java.util.Date());
+            if (sListener != null) {
+                int watchCount = WatchlistManager.get().getActiveWatchlist().size();
+                int posCount = DatabaseManager.get().getAllPositions().size();
+                sListener.onTick(watchCount, posCount, timeStr + "（非交易时段，已暂停）");
+            }
+            return;
+        }
+
+        List<Position> positions = DatabaseManager.get().getAllPositions();
         syncPositionsIntoWatchlist(positions);
 
         List<WatchlistManager.WatchlistItem> watchItems = WatchlistManager.get().getActiveWatchlist();
@@ -146,39 +166,35 @@ public class RealtimeMonitorService extends Service {
         RealtimeQuoteManager.get().fetchBatch(codes, (quotes, failed) -> {
             if (!failed.isEmpty()) Log.w(TAG, "本轮" + failed.size() + "支行情获取失败: " + failed);
 
+            AtomicInteger pending = new AtomicInteger(watchItems.size());
             for (WatchlistManager.WatchlistItem item : watchItems) {
-                // 已经在"待确认"状态的跳过，等用户处理完这一条再评估下一轮，避免同一支股票信号刷屏
-                if (isPendingStatus(item.status)) continue;
-
-                RealtimeQuoteManager.Quote q = quotes.get(item.code);
-                if (q == null) continue;
-
-                if (WatchlistManager.STATUS_WATCHING.equals(item.status)) {
-                    // 买入判断需要分时数据，单独异步取（不阻塞其它股票的判断）
-                    RealtimeQuoteManager.get().fetchMinuteLine(item.code, new RealtimeQuoteManager.MinuteCallback() {
-                        @Override
-                        public void onResult(String code, List<RealtimeQuoteManager.MinutePoint> points) {
-                            evaluateAndAct(item, q, points);
-                        }
-                        @Override
-                        public void onError(String code, String msg) {
-                            Log.w(TAG, "分时数据获取失败 " + code + ": " + msg);
-                            evaluateAndAct(item, q, null);
-                        }
-                    });
-                } else {
-                    evaluateAndAct(item, q, null);
+                if (isPendingStatus(item.status)) {
+                    pending.decrementAndGet();
+                    continue;
                 }
+                RealtimeQuoteManager.Quote q = quotes.get(item.code);
+                if (q == null) {
+                    pending.decrementAndGet();
+                    continue;
+                }
+                // 所有状态均需分时数据（VWAP/量比/止损追踪）
+                RealtimeQuoteManager.get().fetchMinuteLine(item.code, new RealtimeQuoteManager.MinuteCallback() {
+                    @Override
+                    public void onResult(String code, List<RealtimeQuoteManager.MinutePoint> points) {
+                        evaluateAndAct(item, q, points);
+                        pending.decrementAndGet();
+                    }
+                    @Override
+                    public void onError(String code, String msg) {
+                        Log.w(TAG, "分时数据获取失败 " + code + ": " + msg);
+                        evaluateAndAct(item, q, null);
+                        pending.decrementAndGet();
+                    }
+                });
             }
         });
     }
 
-    /**
-     * 把真实持仓（Position表）同步进候选池：不存在就新建并标记为"已建底仓"；
-     * 之前是WATCHING/STOPPED/MANUAL_REMOVED状态的（比如止损卖飞后又重新买回来了）
-     * 也会被"复活"成STARTER；已经是STARTER/ADDED/待确认状态的不动，避免打断正在
-     * 进行的AI验证流程。
-     */
     private void syncPositionsIntoWatchlist(List<Position> positions) {
         for (Position p : positions) {
             if (p.getQuantity() <= 0) continue;
@@ -197,91 +213,215 @@ public class RealtimeMonitorService extends Service {
     private boolean isPendingStatus(String status) {
         return WatchlistManager.STATUS_PENDING_STARTER.equals(status)
                 || WatchlistManager.STATUS_PENDING_ADD.equals(status)
+                || WatchlistManager.STATUS_PENDING_FULL.equals(status)
+                || WatchlistManager.STATUS_PENDING_WARN.equals(status)
                 || WatchlistManager.STATUS_PENDING_STOP.equals(status);
     }
 
     /**
-     * 第一步：规则引擎候选初筛。命中就转AI二次验证，不在这里直接改变持仓状态——
-     * 规则引擎的判断只是"看起来符合条件"，靠不靠谱还得AI结合话术和实际数据看一遍。
+     * 沪深A股常规交易时段：9:30-11:30、13:00-15:00（午休时段自然排除在外），周一到周五。
+     * 不考虑法定节假日——节假日当天本来也不会有新行情变化，顶多白白拉几次和昨天一样的快照，
+     * 不会误报，但如果后续想更严谨可以接入交易日历。
      */
+    private boolean isWithinTradingHours() {
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        int dow = cal.get(java.util.Calendar.DAY_OF_WEEK);
+        if (dow == java.util.Calendar.SATURDAY || dow == java.util.Calendar.SUNDAY) return false;
+        int minutesNow = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + cal.get(java.util.Calendar.MINUTE);
+        boolean morning = minutesNow >= 9 * 60 + 30 && minutesNow <= 11 * 60 + 30;
+        boolean afternoon = minutesNow >= 13 * 60 && minutesNow <= 15 * 60;
+        return morning || afternoon;
+    }
+
     private void evaluateAndAct(WatchlistManager.WatchlistItem item, RealtimeQuoteManager.Quote quote,
                                  List<RealtimeQuoteManager.MinutePoint> minutePoints) {
         TradingRuleEngine.PrevDayRef prevDay = mEngine.getPrevDayRef(item.code);
-        TradingRuleEngine.RuleResult result = mEngine.evaluate(item.status, quote, minutePoints, prevDay);
+        TradingRuleEngine.DivergenceState trackState = WatchlistManager.get().loadTrackState(item);
+        TradingRuleEngine.PatternRef pattern = WatchlistManager.get().loadPatternRef(item);
+        TradingRuleEngine.RuleResult result = mEngine.evaluate(
+                item.code, item.status, quote, minutePoints, prevDay, trackState, pattern);
+
+        if (result.stateUpdate != null) {
+            WatchlistManager.get().saveTrackState(item.code, result.stateUpdate);
+        }
+        if (result.waterLine > 0) {
+            WatchlistManager.get().updateLiveMetrics(item.code, result.waterLine, result.vwap, result.volRatio);
+        }
+
+        Position pos = DatabaseManager.get().getPositionByCode(item.code);
+        boolean holding = pos != null && pos.getQuantity() > 0;
+        double holdCost = holding ? pos.getAvgCost() : 0;
 
         if (result.action == TradingRuleEngine.Action.NONE) {
             WatchlistManager.get().updateNote(item.code, result.note);
             if (result.note != null && result.note.contains("安全拦截") && mStaleWarnedCodes.add(item.code)) {
                 Log.w(TAG, "【陈旧数据拦截】" + item.name + "(" + item.code + ") " + result.note);
-                try { DecisionLogger.get().logNote(item.name + "(" + item.code + ") " + result.note); }
-                catch (Exception e) { Log.e(TAG, "写陈旧警告日志失败", e); }
+                DecisionLogger.get().logNote(item.name + "(" + item.code + ") " + result.note);
             }
             return;
         }
 
-        String actionKey = result.action.name(); // BUY_STARTER / ADD_POSITION / STOP_LOSS
-        Log.i(TAG, "【规则候选信号】" + item.name + "(" + item.code + ") " + actionKey
-                + " " + result.note + "，转AI二次验证");
+        // T+1同日保护：卖出类信号需让用户/AI清楚知道持仓里有多少股当日不可卖（对应操盘手经验终版.md 5.2节“真正的风险场景”）
+        boolean isSellAction = result.action == TradingRuleEngine.Action.STOP_LOSS
+                || result.action == TradingRuleEngine.Action.WARN_PRESSURE;
+        if (isSellAction && holding) {
+            int sellableQty = DatabaseManager.get().getSellableQuantity(item.code);
+            int lockedQty = Math.max(0, pos.getQuantity() - sellableQty);
+            if (lockedQty > 0) {
+                if (sellableQty <= 0) {
+                    result.note += String.format(java.util.Locale.CHINA,
+                            "；⚠️持仓全部%d股均为今日买入，T+1前不可卖出，若确需止损只能等下一交易日开盘执行", pos.getQuantity());
+                } else {
+                    result.note += String.format(java.util.Locale.CHINA,
+                            "；⚠️持仓%d股中有%d股为今日买入尚不可卖，实际可执行卖出%d股", pos.getQuantity(), lockedQty, sellableQty);
+                }
+            }
+        }
 
-        Position pos = DatabaseManager.get().getPositionByCode(item.code);
+        String actionKey = TradingRuleEngine.actionToKey(result.action);
+        Log.i(TAG, "【规则命中】" + item.name + "(" + item.code + ") " + result.actionLabel + " → 入队待AI复核");
+        enqueueVerification(item, actionKey, result, quote, pos);
+    }
 
-        // 第二步：AI结合已学话术+真实数据二次验证，生成小白能看懂的理由
+    /** 规则命中后入队，不直接抢锁。同一股票有新数据就覆盖旧条目，排队位置不变。 */
+    private synchronized void enqueueVerification(WatchlistManager.WatchlistItem item, String actionKey,
+                                                   TradingRuleEngine.RuleResult result,
+                                                   RealtimeQuoteManager.Quote quote, Position pos) {
+        PendingVerify pv = new PendingVerify();
+        pv.item = item; pv.actionKey = actionKey; pv.result = result; pv.quote = quote; pv.pos = pos;
+        pv.queuedAt = System.currentTimeMillis();
+        mVerifyQueue.put(item.code, pv);
+        processQueueIfIdle();
+    }
+
+    /**
+     * 单流水线队列处理器：上一条处理完（无论支持/存疑/超时）就立刻取下一条，
+     * 不再受tick的60秒周期限制，AI多快就处理多快。注意：现在通知已经在规则命中那一刻
+     * 立即发出了，这个队列纯粹是让AI事后补一段定性分析，不影响是否推送这个已经做完的
+     * 决定，所以不需要再按排队时长丢弃任何条目——哪怕排很久才轮到，AI用当初规则命中
+     * 那刻的数据做分析也无妨，只是事后参考。
+     */
+    private synchronized void processQueueIfIdle() {
+        if (mVerifyProcessing || mVerifyQueue.isEmpty()) return;
+        java.util.Iterator<java.util.Map.Entry<String, PendingVerify>> it = mVerifyQueue.entrySet().iterator();
+        java.util.Map.Entry<String, PendingVerify> entry = it.next();
+        PendingVerify next = entry.getValue();
+        it.remove();
+        mVerifyProcessing = true;
+        doVerify(next);
+    }
+
+    /** 一条处理完成（无论确认/驳回/超时）都会调这个，紧接着尝试取下一条，形成持续流水线 */
+    private void onVerifyDone() {
+        synchronized (this) { mVerifyProcessing = false; }
+        processQueueIfIdle();
+    }
+
+    /** 实际发起一次AI复核调用——逻辑与之前直接内联在evaluateAndAct里的一样，只是改为从队列取数据，
+     *  并在所有完成分支都改调onVerifyDone()推进队列，而不是直接return。 */
+    private void doVerify(PendingVerify pv) {
+        WatchlistManager.WatchlistItem item = pv.item;
+        String actionKey = pv.actionKey;
+        TradingRuleEngine.RuleResult result = pv.result;
+        RealtimeQuoteManager.Quote quote = pv.quote;
+        Position pos = pv.pos;
+
+        final boolean[] handled = {false};
+        Runnable timeoutRunnable = () -> {
+            if (handled[0]) return;
+            handled[0] = true;
+            Log.w(TAG, "AI复核超时(" + (AI_VERIFY_TIMEOUT_MS / 1000) + "秒无响应): " + item.code);
+            LocalAIAgent.VerifyResult vr = new LocalAIAgent.VerifyResult();
+            vr.confirmed = false;
+            vr.reason = "AI复核超时无响应，本次不推送";
+            vr.fullText = "AI_TIMEOUT";
+            handleVerified(item, actionKey, result, quote, pos, vr, vr.fullText);
+            onVerifyDone();
+        };
+        mHandler.postDelayed(timeoutRunnable, AI_VERIFY_TIMEOUT_MS);
+
         LocalAIAgent.get(getApplicationContext()).verifySignal(
-                item.code, item.name, actionKey, result.note, quote,
+                item.code, item.name, actionKey, result.actionLabel, result.note, result.metrics, quote,
                 new LocalAIAgent.AICallback() {
                     @Override public void onToken(String token) {}
 
                     @Override
                     public void onComplete(String fullText) {
+                        if (handled[0]) return;
+                        handled[0] = true;
+                        mHandler.removeCallbacks(timeoutRunnable);
                         LocalAIAgent.VerifyResult vr = LocalAIAgent.parseVerifyResult(fullText);
-                        handleVerified(item, actionKey, result, quote, pos, vr);
+                        handleVerified(item, actionKey, result, quote, pos, vr, fullText);
+                        onVerifyDone();
                     }
 
                     @Override
                     public void onError(String msg) {
-                        Log.w(TAG, "AI验证暂时不可用(" + msg + ")，仍展示规则引擎原始判断供用户参考");
+                        if (handled[0]) return;
+                        handled[0] = true;
+                        mHandler.removeCallbacks(timeoutRunnable);
+                        Log.w(TAG, "AI复核不可用: " + msg);
                         LocalAIAgent.VerifyResult vr = new LocalAIAgent.VerifyResult();
-                        vr.confirmed = true; // AI打不通不代表信号无效，交给用户自己看规则引擎原始依据判断
-                        vr.reason = "AI本轮未能完成验证（原因：" + msg + "），以下是规则引擎的原始判断：" + result.note;
-                        handleVerified(item, actionKey, result, quote, pos, vr);
+                        vr.confirmed = false;
+                        vr.reason = "AI未能完成复核（" + msg + "），本次不推送，请查看决策日志";
+                        vr.fullText = "AI_ERROR: " + msg;
+                        handleVerified(item, actionKey, result, quote, pos, vr, vr.fullText);
+                        onVerifyDone();
                     }
                 });
     }
 
     /**
-     * 第三步：无论AI确认与否，都只落地成"待确认"状态，绝不自动买卖；同时无条件写一条
-     * 决策日志（AI确认的、存疑的都记），供你事后复盘系统的判断合不合理。
-     * 只有AI也认可时才推送打扰式通知；AI存疑的静默更新到候选池，用户打开App自己看。
+     * 仅当规则+AI双通过，且满足推送窗口时，才 markPending + 通知。
+     * 所有命中（含AI驳回）均写完整决策日志。
      */
     private void handleVerified(WatchlistManager.WatchlistItem item, String actionKey,
                                  TradingRuleEngine.RuleResult result, RealtimeQuoteManager.Quote quote,
-                                 Position pos, LocalAIAgent.VerifyResult vr) {
-        WatchlistManager.get().markPending(item.code, actionKey, result.triggerPrice, vr.confirmed, vr.reason);
+                                 Position pos, LocalAIAgent.VerifyResult vr, String aiFullText) {
+        boolean holding = pos != null && pos.getQuantity() > 0;
+        double holdCost = holding ? pos.getAvgCost() : 0;
 
-        String actionLabel = "BUY_STARTER".equals(actionKey) ? "建议买入底仓"
-                : "ADD_POSITION".equals(actionKey) ? "建议加仓" : "建议止损";
+        boolean canNotify = vr.confirmed && shouldNotifyNow(result);
 
-        // 决策日志：无论AI确认与否都记，方便事后复盘系统当时的判断是否合理
         try {
-            boolean holding = pos != null && pos.getQuantity() > 0;
-            DecisionLogger.get().logDecision(item.name, item.code, holding,
-                    holding ? pos.getAvgCost() : 0, quote.price,
-                    actionLabel, result.note, vr.confirmed, vr.reason);
+            DecisionLogger.get().logSignalEvaluation(
+                    item.name, item.code, holding, holdCost, quote.price, item.status,
+                    result, vr.confirmed, vr.reason, aiFullText, canNotify);
         } catch (Exception e) {
             Log.e(TAG, "写决策日志失败", e);
         }
 
-        if (vr.confirmed) {
-            fireAlert(item.code, item.name, actionLabel, vr.reason, result.triggerPrice);
-        } else {
-            Log.i(TAG, "AI对该候选信号存疑，不推送通知，仅静默记录: " + item.code + " " + vr.reason);
+        if (!vr.confirmed) {
+            Log.i(TAG, "AI未确认，不推送: " + item.code + " " + result.actionLabel);
+            WatchlistManager.get().updateNote(item.code,
+                    "规则命中[" + result.actionLabel + "]但AI未确认，继续观察");
+            return;
         }
-        if (sListener != null) sListener.onSignalTriggered(item.code, item.name, actionLabel, vr.reason, result.triggerPrice);
+
+        if (!canNotify) {
+            Log.i(TAG, "规则+AI双通过，但不在推送窗口: " + item.code + " " + result.actionLabel);
+            WatchlistManager.get().updateNote(item.code,
+                    result.actionLabel + "条件已满足(AI已确认)，等待收盘前推送窗口");
+            return;
+        }
+
+        WatchlistManager.get().markPending(item.code, actionKey, result.triggerPrice,
+                true, vr.reason, aiFullText);
+
+        String actionLabel = result.actionLabel;
+        fireAlert(item.code, item.name, actionLabel, vr.reason, result.triggerPrice);
+
+        if (sListener != null) {
+            sListener.onSignalTriggered(item.code, item.name, actionLabel, vr.reason, result.triggerPrice);
+        }
     }
 
-    // ══════════════════════════════════════════
-    // 通知 & 震动
-    // ══════════════════════════════════════════
+    private boolean shouldNotifyNow(TradingRuleEngine.RuleResult result) {
+        if (result.action == TradingRuleEngine.Action.STOP_LOSS) {
+            return result.notifyImmediate;
+        }
+        return true;
+    }
 
     private void createChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
@@ -289,7 +429,7 @@ public class RealtimeMonitorService extends Service {
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
             NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "实时监控",
                     NotificationManager.IMPORTANCE_HIGH);
-            ch.setDescription("待确认的买入/加仓/止损信号提醒（AI已初步核实，仍需你手动确认）");
+            ch.setDescription("规则引擎+AI双通过的买入/加仓/满仓/止损信号（需手动确认）");
             ch.enableVibration(true);
             nm.createNotificationChannel(ch);
         }
@@ -318,8 +458,8 @@ public class RealtimeMonitorService extends Service {
 
     private void fireAlert(String code, String name, String actionLabel, String aiReason, double price) {
         NotificationManager nm = getSystemService(NotificationManager.class);
-        String title = "🔔 " + name + "(" + code + ") " + actionLabel + "・待确认";
-        String content = String.format(java.util.Locale.CHINA, "¥%.2f · %s\n点击App查看详情并确认", price, aiReason);
+        String title = "🔔 " + name + "(" + code + ") " + actionLabel + " · 待确认";
+        String content = String.format(java.util.Locale.CHINA, "¥%.2f · %s\n规则+AI双通过，点击App确认", price, aiReason);
 
         Intent tapIntent = new Intent(this, MainActivity.class);
         PendingIntent pi = PendingIntent.getActivity(this, code.hashCode(), tapIntent,
@@ -348,20 +488,11 @@ public class RealtimeMonitorService extends Service {
         } catch (Exception ignored) {}
     }
 
-    // ══════════════════════════════════════
-    // 测试通知（不依赖服务运行，随时调用，用于验证锁屏/后台能否正常收到推送）
-    // ══════════════════════════════════════
-
-    /**
-     * 发一条和真实信号样式完全一致的测试通知（标题带[测试]前缀区分）。
-     * 不需要监控服务处于运行状态就能直接调，方便你单独验证通知权限/系统设置是否正常，
-     * 而不用先把整套监控流程跑起来。
-     */
     public static void sendTestNotification(Context ctx) {
         ensureChannel(ctx);
         NotificationManager nm = ctx.getSystemService(NotificationManager.class);
-        String title = "🔔 [测试] 平安银行(000001) 建议买入底仓·待确认";
-        String content = "¥12.34 · 这是一条测试通知，用来验证锁屏/后台时能否正常收到提醒（不会影响任何真实持仓/候选池数据）";
+        String title = "🔔 [测试] 太极集团(600129) 建议底仓 · 待确认";
+        String content = "¥12.34 · 规则+AI双通过测试通知（不影响真实数据）";
 
         Intent tapIntent = new Intent(ctx, MainActivity.class);
         PendingIntent pi = PendingIntent.getActivity(ctx, 999999, tapIntent,
@@ -377,17 +508,6 @@ public class RealtimeMonitorService extends Service {
                 .setAutoCancel(true)
                 .build();
         nm.notify(999999, n);
-
-        try {
-            Vibrator vib = (Vibrator) ctx.getSystemService(Context.VIBRATOR_SERVICE);
-            if (vib != null && vib.hasVibrator()) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vib.vibrate(VibrationEffect.createWaveform(new long[]{0, 200, 100, 200, 100, 200}, -1));
-                } else {
-                    vib.vibrate(new long[]{0, 200, 100, 200, 100, 200}, -1);
-                }
-            }
-        } catch (Exception ignored) {}
         Log.i(TAG, "已发送测试通知");
     }
 
@@ -397,7 +517,6 @@ public class RealtimeMonitorService extends Service {
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
             NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "实时监控",
                     NotificationManager.IMPORTANCE_HIGH);
-            ch.setDescription("待确认的买入/加仓/止损信号提醒（AI已初步核实，仍需你手动确认）");
             ch.enableVibration(true);
             nm.createNotificationChannel(ch);
         }

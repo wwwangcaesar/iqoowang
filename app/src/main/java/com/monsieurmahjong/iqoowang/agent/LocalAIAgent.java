@@ -328,14 +328,14 @@ public class LocalAIAgent {
     public static class VerifyResult {
         public boolean confirmed;
         public String reason;
+        public String fullText;
     }
 
     /**
-     * 规则引擎命中候选信号后调用。AI 结合已学话术、真实行情、历史操作记录，
-     * 判断这个信号是否真的靠谱，并生成小白也能看懂的理由——不是简单复述规则，
-     * 而是要把"为什么"讲清楚。最终是否执行，由用户在App里手动确认，AI不能替用户下单。
+     * 规则引擎命中后 AI 二次复核。仅当 AI 明确「确认」时 confirmed=true。
      */
-    public void verifySignal(String code, String name, String action, String ruleNote,
+    public void verifySignal(String code, String name, String action, String actionLabel,
+                              String ruleNote, String metrics,
                               com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote quote,
                               AICallback cb) {
         if (!tryAcquireInferLock()) {
@@ -346,15 +346,14 @@ public class LocalAIAgent {
             try {
                 String histNote = mCtxBuilder.buildStockHistoryNote(code);
                 String trend = mCtxBuilder.buildRecentTrend(code);
-                String prompt = buildVerifyPrompt(code, name, action, ruleNote, quote, histNote, trend);
+                String prompt = buildVerifyPrompt(code, name, action, actionLabel, ruleNote, metrics, quote, histNote, trend);
 
                 if (mEngine.isReady()) {
                     mEngine.reset();
                     runStream(prompt, cb);
                 } else {
-                    String fallback = consumeDebugLog() + fallbackVerifyText(action, ruleNote);
                     mInferring.set(false);
-                    streamToCallback(fallback, cb);
+                    cb.onError("本地AI模型未就绪");
                 }
             } catch (Exception e) {
                 Log.e(TAG, "verifySignal", e);
@@ -364,50 +363,60 @@ public class LocalAIAgent {
         });
     }
 
-    private String buildVerifyPrompt(String code, String name, String action, String ruleNote,
+    private String buildVerifyPrompt(String code, String name, String action, String actionLabel,
+                                      String ruleNote, String metrics,
                                       com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote quote,
                                       String histNote, String trend) {
-        String actionCn = "BUY_STARTER".equals(action) ? "买入底仓"
-                : "ADD_POSITION".equals(action) ? "加仓" : "止损清仓";
         StringBuilder sb = new StringBuilder();
-        sb.append(getSystemPrompt()).append("\n\n");
-        sb.append("【复核任务】规则引擎按固定公式检测到一个候选信号，现在需要你结合真实数据和你学过的操盘手话术，判断这个信号靠不靠谱。\n\n");
+        sb.append(getSystemPrompt(action)).append("\n\n");
+        sb.append("【复核任务】规则引擎按操盘手方法论检测到候选信号，请结合真实数据和你学过的经验，严格复核是否值得操作。\n");
+        sb.append("核心原则：右侧交易、放量验证分歧、资金安全第一。你不预测涨跌，只验证眼前证据是否够格。\n\n");
         sb.append("股票：").append(name).append("(").append(code).append(")\n");
-        sb.append("规则引擎候选动作：").append(actionCn).append("\n");
-        sb.append("规则引擎判断依据：").append(ruleNote).append("\n");
+        sb.append("候选动作：").append(actionLabel).append("（").append(action).append("）\n");
+        sb.append("规则引擎依据：").append(ruleNote).append("\n");
+        if (metrics != null && !metrics.isEmpty()) sb.append("量化指标：").append(metrics).append("\n");
         if (quote != null) {
             sb.append(String.format(Locale.CHINA,
-                    "实时行情：现价¥%.2f 今开¥%.2f 最高¥%.2f 最低¥%.2f 涨跌幅%.2f%%\n",
+                    "实时行情(%s)：现价¥%.2f 今开¥%.2f 最高¥%.2f 最低¥%.2f 涨跌幅%.2f%%\n",
+                    quote.time != null && !quote.time.isEmpty() ? quote.time : "时间未知",
                     quote.price, quote.open, quote.high, quote.low, quote.changePct));
         }
+        // 大盘环境：文档9.7把"大盘环境定性补充"列为AI该做的判断之一。
+        // 【修复】之前这里直接调getMarketSummaryText()读本地缓存，跳过了MarketIndexManager类文档
+        // 明确要求的ensureFreshBlocking()刷新步骤——选股用的buildMarketContext()有调用，这里没有，
+        // 导致AI复核买卖信号时看到的大盘环境可能是缓存建立时的旧数据，从不主动更新。
+        // 现补上，最长等6秒，超时就用已有缓存（不是编造数据），不影响主流程。
+        try {
+            com.monsieurmahjong.iqoowang.util.MarketIndexManager idx = com.monsieurmahjong.iqoowang.util.MarketIndexManager.get();
+            idx.ensureFreshBlocking(6000);
+            sb.append("大盘环境：").append(idx.getMarketSummaryText()).append("\n");
+        } catch (Exception ignored) {}
         if (!trend.isEmpty()) sb.append("近期走势：").append(trend).append("\n");
-        if (!histNote.isEmpty()) sb.append("你和这支股票的历史交易：").append(histNote).append("\n");
+        if (!histNote.isEmpty()) sb.append("历史交易：").append(histNote).append("\n");
 
-        sb.append("\n【输出要求】严格按下面两行输出，不要写其他内容：\n");
-        sb.append("判断：确认 或 不确认（这个候选信号是否真的值得操作）\n");
-        sb.append("说明：不超过100字，用完全不懂技术分析的普通人也能看懂的大白话，说清楚为什么、以及风险提示。不要用\"N≥N1\"这种公式化表达，要说人话。\n");
+        sb.append("\n【输出要求】严格按下面三行输出：\n");
+        sb.append("推理：简要说明你的判断逻辑（量价、VWAP、水线、止损位等），不超过80字\n");
+        sb.append("判断：确认 或 不确认\n");
+        sb.append("说明：不超过80字大白话，说清楚为什么、风险提示\n");
         return sb.toString();
     }
 
-    private String fallbackVerifyText(String action, String ruleNote) {
-        String actionCn = "BUY_STARTER".equals(action) ? "买入底仓"
-                : "ADD_POSITION".equals(action) ? "加仓" : "止损清仓";
-        return "判断：确认\n说明：本地AI暂不可用，以下是规则引擎的原始判断（未经AI复核，请自行斟酌）：" +
-                actionCn + "——" + ruleNote;
-    }
-
-    /** 解析AI复核结果——解析不到明确"判断"时保守处理为"确认"，交给用户自己看理由判断，不代替用户拦截 */
+    /** 仅当 AI 明确输出「确认」且不含「不确认」时返回 true；否则一律不通过 */
     public static VerifyResult parseVerifyResult(String text) {
         VerifyResult r = new VerifyResult();
+        r.fullText = text != null ? text.trim() : "";
         if (text == null || text.trim().isEmpty()) {
-            r.confirmed = true;
-            r.reason = "AI未返回有效结果，请自行判断规则引擎给出的原始信号";
+            r.confirmed = false;
+            r.reason = "AI未返回有效结果，本次不推送";
             return r;
         }
         boolean hasNotConfirm = text.contains("不确认");
-        boolean hasConfirm = text.contains("确认");
-        // 没提取到明确结论时不做拦截，交给用户自己看理由判断
-        r.confirmed = hasNotConfirm ? false : true;
+        java.util.regex.Matcher jm = java.util.regex.Pattern.compile("判断[:：]\\s*(确认|不确认)").matcher(text);
+        if (jm.find()) {
+            r.confirmed = "确认".equals(jm.group(1)) && !hasNotConfirm;
+        } else {
+            r.confirmed = text.contains("确认") && !hasNotConfirm;
+        }
 
         java.util.regex.Matcher rm = java.util.regex.Pattern.compile("说明[:：]\\s*([\\s\\S]+)").matcher(text);
         r.reason = rm.find() ? rm.group(1).trim() : text.trim();
@@ -443,11 +452,12 @@ public class LocalAIAgent {
                     mEngine.reset();
                     runLearnStream(text, prompt, cb);
                 } else {
-                    // 模型不可用：直接用规则生成一个简明摘要（截断+去空白），照样持久化
+                    // 模型不可用：直接用规则生成一个简明摘要（截断+去空白）+关键词启发式分类，照样持久化
                     String summary = fallbackSummary(text);
-                    com.monsieurmahjong.iqoowang.util.WisdomManager.get().addEntry(text, summary);
+                    String category = guessCategoryByKeyword(text);
+                    com.monsieurmahjong.iqoowang.util.WisdomManager.get().addEntry(text, summary, category);
                     mInferring.set(false);
-                    String msg = consumeDebugLog() + "已记录（专家系统模式，未做AI复述确认）：" + summary;
+                    String msg = consumeDebugLog() + "已记录（专家系统模式，未做AI复述确认，分类由关键词推断）：" + summary;
                     streamToCallback(msg, cb);
                 }
             } catch (Exception e) {
@@ -462,8 +472,41 @@ public class LocalAIAgent {
         return getCorePersona() +
                 "【学习任务】用户要教你一条新的操盘经验，原文如下：\n" +
                 "\"" + rawText + "\"\n\n" +
-                "请用不超过30字，复述你理解到的核心要点（比如：什么条件下做什么操作），" +
-                "只输出这一句复述，不要输出其他解释或客套话。\n";
+                "请严格按下面两行输出，不要输出其他内容：\n" +
+                "分类：从[BUY_STARTER, ADD_HALF, BUY_FULL, WARN_PRESSURE, STOP_LOSS, GENERAL]中选一个" +
+                "（分别对应：建底仓/加仓/满仓/抛压预警/止损；如果这条经验是通用的、不专属于某一类判断，选GENERAL）\n" +
+                "复述：不超过30字，复述你理解到的核心要点（比如：什么条件下做什么操作）\n";
+    }
+
+    private static final java.util.regex.Pattern CATEGORY_PATTERN = java.util.regex.Pattern.compile(
+            "分类[:：]\\s*(BUY_STARTER|ADD_HALF|BUY_FULL|WARN_PRESSURE|STOP_LOSS|GENERAL)");
+    private static final java.util.regex.Pattern RESTATE_PATTERN = java.util.regex.Pattern.compile(
+            "复述[:：]\\s*([\\s\\S]+)");
+
+    /**
+     * 从AI的“分类+复述”结构化输出里解析分类标签；解析失败就退化为关键词启发式推测，
+     * 比一律不分类要好（不分类意味着永远全量注入，失去了分类的意义）。
+     */
+    private String parseCategoryOrGuess(String aiOutput, String rawText) {
+        if (aiOutput != null) {
+            java.util.regex.Matcher m = CATEGORY_PATTERN.matcher(aiOutput);
+            if (m.find()) {
+                String cat = m.group(1);
+                return "GENERAL".equals(cat) ? "" : cat;
+            }
+        }
+        return guessCategoryByKeyword(rawText);
+    }
+
+    /** AI分类解析失败或模型不可用时的关键词兜底分类，匹不到就归为通用（宁可多展示也不要漏掉关键信息） */
+    private String guessCategoryByKeyword(String text) {
+        if (text == null) return "";
+        if (text.contains("止损") || text.contains("清仓") || text.contains("离场") || text.contains("跌破")) return "STOP_LOSS";
+        if (text.contains("抛压") || text.contains("预警") || text.contains("回撤")) return "WARN_PRESSURE";
+        if (text.contains("满仓")) return "BUY_FULL";
+        if (text.contains("加仓")) return "ADD_HALF";
+        if (text.contains("底仓") || text.contains("建仓") || text.contains("买入") || text.contains("进场")) return "BUY_STARTER";
+        return "";
     }
 
     private void runLearnStream(String rawText, String prompt, AICallback cb) {
@@ -478,10 +521,17 @@ public class LocalAIAgent {
             public void onFinish(String fullText) {
                 mInferring.set(false);
                 String result = fullText.isEmpty() ? full.toString() : fullText;
-                String summary = (result.startsWith("[response") || result.startsWith("[推理")
-                        || result.startsWith("[签名") || result.trim().isEmpty())
-                        ? fallbackSummary(rawText) : result.trim();
-                com.monsieurmahjong.iqoowang.util.WisdomManager.get().addEntry(rawText, summary);
+                boolean parseFailed = result.startsWith("[response") || result.startsWith("[推理")
+                        || result.startsWith("[签名") || result.trim().isEmpty();
+                String category = parseFailed ? guessCategoryByKeyword(rawText) : parseCategoryOrGuess(result, rawText);
+                String summary;
+                if (parseFailed) {
+                    summary = fallbackSummary(rawText);
+                } else {
+                    java.util.regex.Matcher rm = RESTATE_PATTERN.matcher(result);
+                    summary = rm.find() ? rm.group(1).trim() : result.trim();
+                }
+                com.monsieurmahjong.iqoowang.util.WisdomManager.get().addEntry(rawText, summary, category);
                 gainExp(8); // 学习一条新话术给更高经验值，鼓励持续教学
                 mMainHandler.post(() -> cb.onComplete(summary));
             }
@@ -580,8 +630,8 @@ public class LocalAIAgent {
         sb.append("◆大盘研判：一句话，结合上面的大盘指数和市场宽度数据，判断现在适合激进还是保守\n");
         sb.append("对每一支股票，依次输出以下块（六行，不要增减字段）：\n");
         sb.append("▶股票：名称(代码)\n评分：0-100的整数（可参考但不必等于规则引擎评分，结合大盘环境微调）\n");
-        sb.append("操作：从[买入/观察/回避]中选一个\n挂单：建议挂单价格区间（依据昨收+0.2~0.3的操盘手经验）\n");
-        sb.append("止损：具体价格（参考SAR支撑位）\n理由：一句话，必须提及大盘环境、量价信号、历史操作记录中至少一项具体依据，不要编造未提供的数字\n");
+        sb.append("操作：从[买入/观察/回避]中选一个\n挂单：给一个参考进场位（以昨收/水线为基准，说明大致等回踩到什么位置；这只是选股阶段的粗略参考，实际入场以App后续实时监控的水线+VWAP+放量信号为准）\n");
+        sb.append("止损：不给固定价格（实际止损位要等持仓后由分歧K线动态确定，不是固定百分比），这里只需一句话提示这支票的主要风险点\n理由：一句话，必须提及大盘环境、量价信号、历史操作记录中至少一项具体依据，不要编造未提供的数字\n");
         return sb.toString();
     }
 
@@ -601,9 +651,12 @@ public class LocalAIAgent {
         boolean needKnowledge = looksTradingRelated(message) || mentioned != null;
         if (needKnowledge) {
             sb.append(getTradingKnowledge());
-            // 只有涉及交易判断时才接上大盘背景，问候语不需要
+            // 只有涉及交易判断时才接上大盘背景，问候语不需要。【修复】同样补上
+            // ensureFreshBlocking，避免聊天时AI看到的大盘环境也是一直不更新的旧缓存
             try {
-                sb.append("【当前大盘】").append(com.monsieurmahjong.iqoowang.util.MarketIndexManager.get().getMarketSummaryText()).append("\n\n");
+                com.monsieurmahjong.iqoowang.util.MarketIndexManager idx = com.monsieurmahjong.iqoowang.util.MarketIndexManager.get();
+                idx.ensureFreshBlocking(6000);
+                sb.append("【当前大盘】").append(idx.getMarketSummaryText()).append("\n\n");
             } catch (Exception ignored) {}
         }
 
@@ -690,8 +743,12 @@ public class LocalAIAgent {
         return sb.toString();
     }
 
+    private String getSystemPrompt(String actionKey) {
+        return getCorePersona() + getTradingKnowledge(actionKey);
+    }
+
     private String getSystemPrompt() {
-        return getCorePersona() + getTradingKnowledge();
+        return getSystemPrompt(null);
     }
 
     /** 精简人设，每轮对话都会发，保持很短以控制prefill开销 */
@@ -703,7 +760,7 @@ public class LocalAIAgent {
     }
 
     /** 详细交易知识（公式+操盘手经验），只在真正论及股票/交易的场景下注入，避免日常对话也要prefill这一大段 */
-    private String getTradingKnowledge() {
+    private String getTradingKnowledge(String actionKey) {
         return "【选股公式核心（通达信）】\n" +
                 "· N=EMA(C,2)：2日指数均线，反映最新动量\n" +
                 "· N1=11层嵌套EMA(2)：极平滑长期趋势\n" +
@@ -715,13 +772,14 @@ public class LocalAIAgent {
 
                 "【资深操盘手经验（你必须深刻理解并融入判断）】\n" +
                 "以下是操盘手的原话，你要理解其含义并用于实战分析：\n\n" +
-                "经验1：\"买的时候，要参考昨天的这一价格，我一般加0.2～0.3做挂单进场\"\n" +
-                "→ 含义：不追涨，以昨日收盘价为基准，挂单在 昨收+0.2到0.3元 的位置等待成交。\n" +
-                "→ 实战：避免开盘追高，等回调到挂单位置再进，控制成本，提高安全边际。\n" +
-                "→ 应用：分析股票时，主动计算昨收价，给出建议挂单区间。\n\n" +
-                "经验2：止损纪律\n" +
-                "→ 跌破SAR线当日收盘，次日开盘无条件止损，不侥幸，不摊平。\n" +
-                "→ 单票仓位不超过30%，信号A最强时不超过40%。\n\n" +
+                "经验1：买入时机——不是选出来就能买，也不是随便挂个价\n" +
+                "→ 以昨收价（水线）为基准：现价跌破水线、又重新站稳分时均价（VWAP）5分钟以上，同时放量，才是底仓的入场信号。\n" +
+                "→ 突破水线，或底仓后回踩VWAP不破，+放量，才能加仓；当日吃掉选股当天长上影线的70%以上+突破水线+站上VWAP+放量，才能满仓。\n" +
+                "→ 不追涨，也不摸不清方向就抢反弹，等真正的量价确认出现再动手。\n\n" +
+                "经验2：止损纪律——参照位是动态的，不是一条固定百分比的死线\n" +
+                "→ 持仓后盯着放量但滞涨、或收长上影的那根K线（分歧K线），它的中点、最低点就是止损参照；跌破前一根阳线最低价，无条件离场。\n" +
+                "→ 当日涨幅从最高点回撤到峰值的一半，先当预警观察，不是立刻止损。\n" +
+                "→ 单票仓位不超过30%。\n\n" +
                 "经验3：量价关系\n" +
                 "→ 放量突破（信号A）比缩量整理（信号B）信号更强，但操作风险也更高。\n" +
                 "→ 缩量整理后的第一个放量日，是最佳进场时机。\n" +
@@ -735,16 +793,26 @@ public class LocalAIAgent {
                 "2. 评估量价信号时，判断是信号A（放量突破）还是信号B（缩量整理）\n" +
                 "3. 必须结合给定的大盘指数、市场宽度、历史交易记录做判断，这些都是真实数据，不是可有可无的参考信息\n" +
                 "4. 选股分析时按指定的结构化格式输出，不受字数限制\n"
-                + safeWisdomBlock();
+                + safeWisdomBlock(actionKey);
     }
 
-    /** 安全获取话术知识库注入块，WisdomManager未初始化或异常时返回空字符串，不影响正常分析 */
-    private String safeWisdomBlock() {
+    /** 兼容旧调用：不按判断类型过滤，注入全部话术（选股/聊天等无具体判断类型场景用） */
+    private String getTradingKnowledge() {
+        return getTradingKnowledge(null);
+    }
+
+    /** 安全获取话术知识库注入块（按判断类型过滤），WisdomManager未初始化或异常时返回空字符串，不影响正常分析 */
+    private String safeWisdomBlock(String actionKey) {
         try {
-            return com.monsieurmahjong.iqoowang.util.WisdomManager.get().buildInjectBlock();
+            return com.monsieurmahjong.iqoowang.util.WisdomManager.get().buildInjectBlock(actionKey);
         } catch (Exception e) {
             return "";
         }
+    }
+
+    /** 兼容旧调用：不过滤，注入全部话术 */
+    private String safeWisdomBlock() {
+        return safeWisdomBlock(null);
     }
 
     /** 粗略判断一句话是不是在问股票/交易相关的问题——只有这种情况才把详细公式/经验塞进去，日常对话保持轻量、回复快 */
@@ -822,9 +890,7 @@ public class LocalAIAgent {
                 String name = r.optString("name");
                 int baseScore = r.optInt("score");
                 double latestClose = r.optDouble("latestClose", 0);
-                double changePct = r.optDouble("change", 0);
                 String signal = r.optString("signal");
-                double prevClose = (1 + changePct / 100.0) != 0 ? latestClose / (1 + changePct / 100.0) : latestClose;
 
                 String histNote = ctxBuilder.buildStockHistoryNote(code);
                 boolean historyAllLoss = histNote.contains("0赢") && histNote.contains("亏") && !histNote.contains("亏0");
@@ -837,9 +903,10 @@ public class LocalAIAgent {
                 else if (score >= 70) action = "观察";
                 else action = "回避";
 
-                double buyLow = prevClose + 0.2;
-                double buyHigh = prevClose + 0.3;
-                double stop = latestClose * 0.95;
+                // 水线 = 选股当天收盘价（latestClose），转入实时监控后就是"昨收"参照线；
+                // 这里不再算固定挂单价/固定止损价——那套昨收+0.2~0.3、现价*0.95的老办法和现在
+                // 实际监控用的水线+VWAP+分歧K线方法论对不上，容易误导用户，改成文字说明
+                double waterLine = latestClose;
 
                 StringBuilder reason = new StringBuilder();
                 reason.append(signal).append("，量价信号").append("放量突破".equals(signal) ? "较强" : "尚需观察");
@@ -847,8 +914,8 @@ public class LocalAIAgent {
                 if (!histNote.isEmpty()) reason.append("，").append(histNote);
 
                 sb.append(String.format(Locale.CHINA,
-                        "▶股票：%s(%s)\n评分：%d\n操作：%s\n挂单：%.2f-%.2f\n止损：%.2f\n理由：%s\n",
-                        name, code, score, action, buyLow, buyHigh, stop, reason.toString()));
+                        "▶股票：%s(%s)\n评分：%d\n操作：%s\n挂单：参考水线¥%.2f附近，实际入场需等站稳VWAP+放量\n止损：待持仓后由分歧K线动态确定，非固定价\n理由：%s\n",
+                        name, code, score, action, waterLine, reason.toString()));
             }
             return sb.toString();
         }
@@ -856,16 +923,18 @@ public class LocalAIAgent {
         String answerQuestion(String q) {
             q = q.toLowerCase();
             if (q.contains("挂单") || q.contains("进场") || q.contains("买入") || q.contains("买点")) {
-                return "操盘手经验：以昨日收盘价为基准，挂单在昨收+0.2~0.3元位置等待成交，避免追高。" +
-                        "开盘不追涨，等价格回落到挂单区间再进，控制成本，提高安全边际。";
+                return "买入按三档来：跌破水线（昨收）后重新站稳分时均价（VWAP）5分钟以上+放量，才是底仓信号；" +
+                        "突破水线，或底仓后回踩VWAP不破+放量，可以加仓；吃掉选股当天长上影线70%以上+突破水线+" +
+                        "站稳VWAP+放量才能满仓。不追涨，等真正的量价确认出现再动手。";
             }
             if (q.contains("sar") || q.contains("止损")) {
-                return "SAR是红线不能破：跌破SAR当日收盘，次日开盘无条件出局，不侥幸不摊平。" +
-                        "SAR(10,2,20)：初始加速因子2%，最大20%。止损是保命的，不是可选项。";
+                return "止损参照的是分歧K线（放量但滞涨、或收长上影的那根K线）：它的中点是二级止损位，最低点是" +
+                        "三级止损位；跌破前一根阳线最低价，无条件离场。当日涨幅从峰值回撤到一半，先当预警观察，" +
+                        "不是立刻止损。";
             }
             if (q.contains("量") || q.contains("放量") || q.contains("缩量")) {
                 return "量价核心：缩量到前期一半以下说明筹码锁定充分，随时可能爆发。" +
-                        "第一个放量突破日（量比≥2）是最佳进场时机，次日挂单昨收+0.25元进场。";
+                        "无论底仓、加仓还是满仓，都必须有放量确认才成立，缩量的信号只能降级为观察，不直接下结论。";
             }
             if (q.contains("ema") || q.contains("均线") || q.contains("趋势")) {
                 return "N=EMA(2)>N1=11层嵌套EMA：短期动量突破长期趋势，是核心信号。" +
@@ -876,15 +945,17 @@ public class LocalAIAgent {
                         "50-150亿流通市值标的弹性最佳，主力容易控盘，优先选这个区间。";
             }
             if (q.contains("卖") || q.contains("止盈") || q.contains("何时出")) {
-                return "卖出三条：①跌破SAR无条件止损；②涨10-15%分批减仓；③N<N1动量衰减减到半仓。" +
-                        "不要贪，操盘手的核心是管好风险，留着子弹打下一只。";
+                return "止损分三级，都参照分歧K线：一级是当日涨幅从峰值回撤过半，先预警观察；二级跌破分歧K线" +
+                        "中点；三级跌破分歧K线最低点，建议清仓；跌破前一根阳线最低价，无条件离场。" +
+                        "另外注意T+1：当天买入的份额当天不能卖。";
             }
             if (q.contains("市值") || q.contains("盘子")) {
                 return "市值偏好：50-150亿最佳，弹性好主力容易控；200亿以上启动慢但稳；" +
                         "20亿以下流动性差风险大。公式硬限：20-320亿。";
             }
-            return "基于操盘手经验：挂单在昨收+0.2~0.3元进场，跌破SAR止损，量比≥2放量才进，" +
-                    "单票仓位≤30%。四维共振（EMA趋势+布林突破+量比放量+SAR支撑）才是最强信号。";
+            return "买入看三档（底仓/加仓/满仓），都要求先破水线再站稳VWAP+放量确认；止损参照分歧K线的" +
+                    "中点和最低点，不是固定百分比；单票仓位不超过30%。水线位置+VWAP+放量+分歧K线止损参照，" +
+                    "这几点合在一起才是完整判断。";
         }
     }
 }

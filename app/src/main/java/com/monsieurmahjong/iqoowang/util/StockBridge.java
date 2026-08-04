@@ -235,6 +235,16 @@ public class StockBridge implements RealtimeMonitorService.Listener {
     }
 
     /**
+     * 某只股票当前可T+1卖出的数量（持仓总量减去今日买入尚未过户部分）。
+     * 卖出弹窗用来限制满仓/最大可卖股数，避免提交一笔实际会被T+1拒绝的卖单。
+     * JS调用：Android.getSellableQuantity("600519")
+     */
+    @JavascriptInterface
+    public int getSellableQuantity(String code) {
+        return mDb.getSellableQuantity(code);
+    }
+
+    /**
      * 获取近N天资产曲线数据
      * JS调用：Android.getDailyAsset(30)
      */
@@ -268,6 +278,46 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         } catch (Exception e) {
             return "{}";
         }
+    }
+
+    // ══════════════════════════════════════════════
+    // 交易规则参数配置接口
+    // ══════════════════════════════════════════════
+
+    /**
+     * 当前生效的完整交易规则参数（内置默认值叠加用户覆盖后的最终值），
+     * 供参数配置面板回显当前值。
+     * JS调用：Android.getTradingConfig()
+     */
+    @JavascriptInterface
+    public String getTradingConfig() {
+        return TradingRuleConfig.get().toJson().toString();
+    }
+
+    /**
+     * 保存用户在参数配置面板里调整过的参数——只需传有改动的字段，其余保持不变。
+     * 立即对运行中的监控生效（TradingRuleEngine用的是同一个单例），并持久化到
+     * App内部可写目录，下次冷启动也会加载。assets目录只读，无法直接写回，
+     * 所以持久化走的是单独的覆盖文件，见TradingRuleConfig.saveOverrides()。
+     * JS调用：Android.saveTradingConfig(jsonStr)，返回是否保存成功
+     */
+    @JavascriptInterface
+    public boolean saveTradingConfig(String updatesJson) {
+        try {
+            return TradingRuleConfig.saveOverrides(mContext, new JSONObject(updatesJson));
+        } catch (Exception e) {
+            Log.e(TAG, "saveTradingConfig error", e);
+            return false;
+        }
+    }
+
+    /**
+     * 恢复全部参数为内置默认值（删除用户覆盖文件）。
+     * JS调用：Android.resetTradingConfig()
+     */
+    @JavascriptInterface
+    public boolean resetTradingConfig() {
+        return TradingRuleConfig.resetToDefault(mContext);
     }
 
     // ══════════════════════════════════════════════
@@ -501,6 +551,7 @@ public class StockBridge implements RealtimeMonitorService.Listener {
                     p.optBoolean("exKC", true),
                     p.optBoolean("exST", true),
                     p.optBoolean("exLT", true),
+                    p.optBoolean("requireXianRenZhiLu", false),
                     p.optString("boardFilter", "all"),
                     new MarketDataManager.ScreenCallback() {
                         @Override
@@ -512,7 +563,10 @@ public class StockBridge implements RealtimeMonitorService.Listener {
                                     JSONObject r = arr.getJSONObject(i);
                                     WatchlistManager.get().addIfAbsent(
                                             r.optString("code"), r.optString("name"),
-                                            r.optInt("score"), r.optString("signal"));
+                                            r.optInt("score"), r.optString("signal"),
+                                            r.optDouble("patternOpen", 0), r.optDouble("patternHigh", 0),
+                                            r.optDouble("patternClose", 0), r.optDouble("patternLow", 0),
+                                            r.optString("patternDate", null));
                                 }
                             } catch (Exception e) {
                                 Log.e(TAG, "候选池入池失败", e);

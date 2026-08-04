@@ -29,7 +29,7 @@ public class WisdomManager {
 
     private static final String TAG = "WisdomManager";
     private static final String DB_NAME = "wisdom.db";
-    private static final int DB_VERSION = 1;
+    private static final int DB_VERSION = 2;
 
     /** 注入prompt时最多带几条最近的话术，避免话术越攒越多把prompt拖得很长、拖慢推理 */
     private static final int MAX_INJECT_ENTRIES = 15;
@@ -67,29 +67,46 @@ public class WisdomManager {
                     "id INTEGER PRIMARY KEY AUTOINCREMENT," +
                     "raw_text TEXT," +      // 用户教的原始话术
                     "summary TEXT," +        // AI/规则生成的简明摘要（用于进化记录展示）
-                    "added_at INTEGER)");
+                    "category TEXT DEFAULT ''" +  // 判断类型：BUY_STARTER/ADD_HALF/BUY_FULL/
+                                                    // WARN_PRESSURE/STOP_LOSS，空字符串=通用（不区分类型都注入）
+                    ",added_at INTEGER)");
         }
 
         @Override
-        public void onUpgrade(SQLiteDatabase db, int o, int n) {
-            db.execSQL("DROP TABLE IF EXISTS wisdom_entries");
-            onCreate(db);
+        public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+            // 【重要】这里之前是DROP TABLE重建，升级会把用户已经教过的话术全部清空！
+            // 现改为ALTER TABLE增列，保留已有数据。旧记录的category默认为空字符串
+            // （即“通用”，不会因为新增分类字段而被过滤掉）。
+            if (oldVersion < 2) {
+                try {
+                    db.execSQL("ALTER TABLE wisdom_entries ADD COLUMN category TEXT DEFAULT ''");
+                } catch (Exception e) {
+                    Log.w(TAG, "category列可能已存在，跳过: " + e.getMessage());
+                }
+            }
         }
     }
 
-    public long addEntry(String rawText, String summary) {
+    public long addEntry(String rawText, String summary, String category) {
         ContentValues cv = new ContentValues();
         cv.put("raw_text", rawText);
         cv.put("summary", summary);
+        cv.put("category", category == null ? "" : category);
         cv.put("added_at", System.currentTimeMillis());
         long id = mDb.insert("wisdom_entries", null, cv);
-        Log.i(TAG, "新增话术#" + id + ": " + summary);
+        Log.i(TAG, "新增话术#" + id + "[" + (category == null || category.isEmpty() ? "通用" : category) + "]: " + summary);
         return id;
+    }
+
+    /** 兼容旧调用：不指定分类，默认为通用（不区分判断类型都会注入） */
+    public long addEntry(String rawText, String summary) {
+        return addEntry(rawText, summary, "");
     }
 
     public static class WisdomEntry {
         public long id;
         public String rawText, summary;
+        public String category = "";
         public long addedAt;
     }
 
@@ -102,6 +119,9 @@ public class WisdomManager {
                 e.id = c.getLong(c.getColumnIndexOrThrow("id"));
                 e.rawText = c.getString(c.getColumnIndexOrThrow("raw_text"));
                 e.summary = c.getString(c.getColumnIndexOrThrow("summary"));
+                int catIdx = c.getColumnIndex("category");
+                e.category = catIdx >= 0 ? c.getString(catIdx) : "";
+                if (e.category == null) e.category = "";
                 e.addedAt = c.getLong(c.getColumnIndexOrThrow("added_at"));
                 list.add(e);
             }
@@ -117,6 +137,7 @@ public class WisdomManager {
                 o.put("id", e.id);
                 o.put("summary", e.summary);
                 o.put("rawText", e.rawText);
+                o.put("category", e.category == null ? "" : e.category);
                 o.put("addedAt", mDateFmt.format(new Date(e.addedAt)));
                 arr.put(o);
             } catch (Exception ignored) {}
@@ -125,18 +146,24 @@ public class WisdomManager {
     }
 
     /**
-     * 生成供 Prompt 注入的知识块——把最近学到的话术原文拼进去，让AI每次分析
-     * 都能"看到"你教过的东西。按最近优先截取，控制总长度。
+     * 生成供 Prompt 注入的知识块——只注入“通用”（category为空）和“与当前判断类型匹配”
+     * 的话术，而不是无差别塞全部。actionKey 传 null 或空字符串时退化为不过滤（全部注入），
+     * 供选股/聊天等没有具体判断类型的场景使用。
      */
-    public String buildInjectBlock() {
+    public String buildInjectBlock(String actionKey) {
         List<WisdomEntry> all = getAll(); // 已按时间倒序
         if (all.isEmpty()) return "";
+        boolean filterByType = actionKey != null && !actionKey.isEmpty();
 
         StringBuilder sb = new StringBuilder("\n【你之前学过的操盘手补充话术（务必参考）】\n");
         int used = sb.length();
         int count = 0;
         for (WisdomEntry e : all) {
             if (count >= MAX_INJECT_ENTRIES) break;
+            if (filterByType && e.category != null && !e.category.isEmpty()
+                    && !e.category.equalsIgnoreCase(actionKey)) {
+                continue; // 分类明确且与当前判断类型不匹配，跳过
+            }
             String line = "· " + e.rawText + "\n";
             if (used + line.length() > MAX_INJECT_CHARS) break;
             sb.append(line);
@@ -145,6 +172,11 @@ public class WisdomManager {
         }
         sb.append("\n");
         return sb.toString();
+    }
+
+    /** 兼容旧调用：不按类型过滤，注入全部（选股/聊天等无具体判断类型场景用） */
+    public String buildInjectBlock() {
+        return buildInjectBlock(null);
     }
 
     public boolean hasAny() {

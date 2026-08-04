@@ -131,7 +131,7 @@ public class DatabaseManager {
      * @param quantity  成交股数
      * @param signalType 信号类型
      * @param aiScore   AI评分
-     * @return 交易记录id；资金不足时返回-1，不会写入任何数据
+     * @return 交易记录id；资金不足时返回-1，T+1限制（卖出数量超过可卖数量）时返回-2，均不会写入任何数据
      */
     public long insertTrade(String code, String name, String direction,
                             double price, int quantity,
@@ -149,6 +149,13 @@ public class DatabaseManager {
 
         double realizedPnl = 0;
         if ("SELL".equals(direction)) {
+            // T+1硬性拦截：今日买入尚未过户的部分不允许当日卖出（对应操盘手经验终版.md 5节T+1硬约束）
+            int sellable = getSellableQuantity(code);
+            if (quantity > sellable) {
+                Log.w(TAG, "T+1限制拒绝卖出: " + code + " 请求卖出" + quantity + "股，可卖仅" + sellable
+                        + "股（差额为当日买入尚未过户部分，需下一交易日起才可卖出）");
+                return -2;
+            }
             Position pos = getPositionByCode(code);
             if (pos != null) {
                 // 已实现盈亏 = 卖出净所得(已扣手续费) - 按均价计算的成本（均价里已经折算了买入时的手续费）
@@ -389,6 +396,42 @@ public class DatabaseManager {
         return mDaoSession.getPositionDao().loadAll();
     }
 
+    // ────────────────────────────────
+    // T+1 可卖状态（操盘手经验终版.md 5.4节：仓位需按可卖状态分层记录）
+    // ────────────────────────────────
+
+    /** 某只股票“今日已买入、尚未过T+1”的数量——这部分当日不可卖出 */
+    public int getTodayBoughtQuantity(String code) {
+        String today = mDateFmt.format(new Date());
+        List<TradeRecord> todayBuys = mDaoSession.getTradeRecordDao()
+                .queryBuilder()
+                .where(TradeRecordDao.Properties.StockCode.eq(code),
+                        TradeRecordDao.Properties.Direction.eq("BUY"),
+                        TradeRecordDao.Properties.TradeDate.eq(today))
+                .list();
+        int sum = 0;
+        for (TradeRecord t : todayBuys) sum += t.getQuantity();
+        return sum;
+    }
+
+    /**
+     * T+1可执行卖出数量 = 持仓总量 - 今日买入未过户部分（不会为负）。
+     * 简化假设：卖出总是先消耗“更早买入、已过户”的部分，与真实券商行为一致。
+     */
+    public int getSellableQuantity(String code) {
+        Position pos = getPositionByCode(code);
+        if (pos == null) return 0;
+        int lockedToday = getTodayBoughtQuantity(code);
+        return Math.max(0, pos.getQuantity() - lockedToday);
+    }
+
+    /** 当日买入、尚未过T+1、暂不可卖出的数量 */
+    public int getLockedQuantity(String code) {
+        Position pos = getPositionByCode(code);
+        if (pos == null) return 0;
+        return Math.max(0, pos.getQuantity() - getSellableQuantity(code));
+    }
+
     /**
      * 批量更新持仓最新价格（行情推送时调用）
      * @param priceJson {"600519":1680.5,"000001":11.2,...}
@@ -541,6 +584,9 @@ public class DatabaseManager {
                 obj.put("marketValue", p.getMarketValue());
                 obj.put("board", p.getBoard());
                 obj.put("openDate", p.getOpenDate());
+                int sellableQty = getSellableQuantity(p.getStockCode());
+                obj.put("sellableQty", sellableQty);
+                obj.put("lockedQty", Math.max(0, p.getQuantity() - sellableQty));
                 arr.put(obj);
             } catch (Exception ignored) {}
         }

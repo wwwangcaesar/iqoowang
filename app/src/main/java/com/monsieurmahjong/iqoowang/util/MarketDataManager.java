@@ -569,6 +569,7 @@ public class MarketDataManager {
                                 double minCap, double maxCap,
                                 double volMulti,
                                 boolean exCY, boolean exKC, boolean exST, boolean exLT,
+                                boolean requireXianRenZhiLu,
                                 String boardFilter,
                                 ScreenCallback cb) {
         mPool.execute(() -> {
@@ -608,7 +609,7 @@ public class MarketDataManager {
                     if (exLT && Math.abs(latest.changePct) >= 19.9) continue;
 
                     // ── 运行通达信公式 ──
-                    JSONObject r = runTDXFormula(code, name, cap, bars, volMulti);
+                    JSONObject r = runTDXFormula(code, name, cap, bars, volMulti, requireXianRenZhiLu);
                     if (r != null) {
                         results.put(r);
                     }
@@ -634,7 +635,7 @@ public class MarketDataManager {
      * 通达信公式核心逻辑（Java版，使用真实数据）
      */
     private JSONObject runTDXFormula(String code, String name, double cap,
-                                     List<KlineBar> bars, double volMulti) {
+                                     List<KlineBar> bars, double volMulti, boolean requireXianRenZhiLu) {
         int n = bars.size();
         int i = n - 1; // 最新一天
 
@@ -698,6 +699,25 @@ public class MarketDataManager {
 
         if (!(condA || condB) || !baseCond) return null;
 
+        // ─── 仙人指路形态检测（操盘手经验终版.md 3.1节定义：上影线长度≥实体长度×2，
+        // 且当日成交量≥5日均量×阈值倍数）。这是独立于上面通达信公式(condA/condB)之外的
+        // 一道额外筛选，公式本身不动，只在用户主动勾选时才叠加这道门槛；未勾选时这里
+        // 算出的isXianRenZhiLu/shadowRatio只作为候选列表里的信息展示，不影响入选。
+        double body = Math.abs(closes[i] - opens[i]);
+        double upperShadow = highs[i] - Math.max(opens[i], closes[i]);
+        boolean shadowLongEnough = body > 0.0001 ? (upperShadow >= body * 2) : (upperShadow > 0);
+        int volDaysXRZL = Math.min(5, i);
+        double avgVol5 = 0;
+        if (volDaysXRZL > 0) {
+            long sumV = 0;
+            for (int k = i - volDaysXRZL; k < i; k++) sumV += vols[k];
+            avgVol5 = sumV / (double) volDaysXRZL;
+        }
+        boolean volumeEnoughXRZL = avgVol5 > 0 && vols[i] >= avgVol5 * volMulti;
+        boolean isXianRenZhiLu = shadowLongEnough && volumeEnoughXRZL;
+
+        if (requireXianRenZhiLu && !isXianRenZhiLu) return null;
+
         // 综合评分
         int score = 60;
         if (condA) score += 25;
@@ -724,6 +744,8 @@ public class MarketDataManager {
             obj.put("sarOk", true);
             obj.put("condA", condA);
             obj.put("condB", condB);
+            obj.put("isXianRenZhiLu", isXianRenZhiLu);
+            obj.put("shadowRatio", body > 0.0001 ? String.format(Locale.US, "%.2f", upperShadow / body) : "N/A");
             obj.put("score", score);
             obj.put("signal", condA ? "放量突破" : "缩量持续");
             obj.put("ema_n", String.format(Locale.US, "%.3f", N[i]));
@@ -731,6 +753,11 @@ public class MarketDataManager {
             obj.put("market", code.startsWith("6") ? "sh" : "sz");
             obj.put("board", code.startsWith("6") ? "sh" : "sz");
             obj.put("price", closes[i]);
+            obj.put("patternOpen", opens[i]);
+            obj.put("patternHigh", highs[i]);
+            obj.put("patternClose", closes[i]);
+            obj.put("patternLow", lows[i]);
+            obj.put("patternDate", bars.get(i).date);
             return obj;
         } catch (Exception e) {
             return null;

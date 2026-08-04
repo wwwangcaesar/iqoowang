@@ -44,6 +44,10 @@ public class StockMasterApp extends Application {
         com.monsieurmahjong.iqoowang.util.MarketIndexManager.init(this);
         Log.i(TAG, "MarketIndexManager initialized");
 
+        // 交易规则配置（assets/trading_rules.json）
+        com.monsieurmahjong.iqoowang.util.TradingRuleConfig.init(this);
+        Log.i(TAG, "TradingRuleConfig initialized");
+
         // 初始化候选池管理器（第一天筛选结果持久化跟踪）
         com.monsieurmahjong.iqoowang.util.WatchlistManager.init(this);
         Log.i(TAG, "WatchlistManager initialized");
