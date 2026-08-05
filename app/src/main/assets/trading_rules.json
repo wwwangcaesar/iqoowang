@@ -1,0 +1,32 @@
+{
+  "volumeRatioThreshold": 1.8,
+  "volumeMaDays": 5,
+  "vwapConfirmMinutes": 5,
+  "shadowEatRatio": 0.70,
+  "stopNotifyMinutesBeforeClose": 30,
+  "marketCloseHour": 15,
+  "marketCloseMinute": 0,
+  "earlyWindowMinutes": 60,
+  "lateWindowMinutes": 20,
+  "earlyWindowVolumeMultiplier": 1.5,
+  "fullConfirmMinutes": 45,
+  "sellObserveMinutes": 10,
+  "peakRetraceRatio": 0.50,
+  "divergenceMidMode": "KLINE_MID",
+  "starterPositionPct": 0.30,
+  "addHalfPositionPct": 0.50,
+  "divergenceBodyMaxRatio": 0.35,
+  "mainboardLimitPct": 0.10,
+  "gemStarLimitPct": 0.20,
+  "bjExchangeLimitPct": 0.30,
+  "candidateDeepBreakPct": 0.08,
+  "candidateMaxObserveDays": 10,
+  "comments": {
+    "divergenceMidMode": "KLINE_MID=分歧K线(H+L)/2; RETRACE_MID=峰值涨幅回撤50%对应价位",
+    "shadowEatRatio": "吃掉上影线比例阈值，建议值0.70需回测",
+    "volumeRatioThreshold": "5日均量倍数，建议值1.8需回测",
+    "mainboardLimitPct": "涨跌停检测用，2026年起主板ST已统一放宽到10%，若规则再变动请相应调整",
+    "candidateDeepBreakPct": "候选股跌破水线这个比例就自动移出观察池，建议值8%需回测",
+    "candidateMaxObserveDays": "候选股观察超过这么多天仍未买入就自动移出，建议值10交易日需回测"
+  }
+}
