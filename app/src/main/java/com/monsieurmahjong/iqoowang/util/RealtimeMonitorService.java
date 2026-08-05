@@ -30,7 +30,12 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * RealtimeMonitorService — 实时监控前台服务
  *
- * 流程：规则引擎(Layer1) → AI复核(Layer2) → 仅双通过才推送+待确认 → 完整决策日志
+ * 流程（2026-08重设：规则引擎独立决定是否推送，AI不再阻塞通知）：
+ * 规则引擎(Layer1)命中 → 立即markPending+推送通知+写决策日志 → 同时入队交给
+ * AI(Layer2)异步补充定性分析 → AI跑完后回填支持/存疑结论+补一条决策日志，不影响
+ * 是否推送这个已经做完的决定。因为本地AI推理慢（单次可能长达几十秒），让它卡在
+ * 推送前面会让用户错过规则引擎已经确认成立的买卖机会—基本操作规则必须优先于AI的
+ * 分析速度。
  */
 public class RealtimeMonitorService extends Service {
 
@@ -258,29 +263,138 @@ public class RealtimeMonitorService extends Service {
                 Log.w(TAG, "【陈旧数据拦截】" + item.name + "(" + item.code + ") " + result.note);
                 DecisionLogger.get().logNote(item.name + "(" + item.code + ") " + result.note);
             }
+            // 观察中的候选股：本轮无买卖信号时，检查是否该自动移出观察池
+            if (WatchlistManager.STATUS_WATCHING.equals(item.status) && !holding) {
+                String staleReason = checkStaleCandidate(item, quote, prevDay, result);
+                if (staleReason != null) {
+                    WatchlistManager.get().autoRemoveStale(item.code, staleReason);
+                    DecisionLogger.get().logNote(item.name + "(" + item.code + ") 自动移出观察池：" + staleReason);
+                }
+            }
             return;
         }
 
-        // T+1同日保护：卖出类信号需让用户/AI清楚知道持仓里有多少股当日不可卖（对应操盘手经验终版.md 5.2节“真正的风险场景”）
-        boolean isSellAction = result.action == TradingRuleEngine.Action.STOP_LOSS
-                || result.action == TradingRuleEngine.Action.WARN_PRESSURE;
-        if (isSellAction && holding) {
-            int sellableQty = DatabaseManager.get().getSellableQuantity(item.code);
-            int lockedQty = Math.max(0, pos.getQuantity() - sellableQty);
-            if (lockedQty > 0) {
-                if (sellableQty <= 0) {
-                    result.note += String.format(java.util.Locale.CHINA,
-                            "；⚠️持仓全部%d股均为今日买入，T+1前不可卖出，若确需止损只能等下一交易日开盘执行", pos.getQuantity());
-                } else {
-                    result.note += String.format(java.util.Locale.CHINA,
-                            "；⚠️持仓%d股中有%d股为今日买入尚不可卖，实际可执行卖出%d股", pos.getQuantity(), lockedQty, sellableQty);
-                }
-            }
+        applyT1Note(result, pos, holding);
+
+        // 二级止损中点：未到收盘前推送窗口 → 只更新备注，不推送、不入AI队列
+        if (!shouldNotifyNow(result)) {
+            WatchlistManager.get().updateNote(item.code, result.note);
+            Log.i(TAG, "规则命中但不在推送窗口: " + item.code + " " + result.actionLabel);
+            return;
         }
 
         String actionKey = TradingRuleEngine.actionToKey(result.action);
-        Log.i(TAG, "【规则命中】" + item.name + "(" + item.code + ") " + result.actionLabel + " → 入队待AI复核");
+        Log.i(TAG, "【规则命中·立即推送】" + item.name + "(" + item.code + ") " + result.actionLabel);
+
+        WatchlistManager.get().markPending(item.code, actionKey, result.triggerPrice, result.note);
+
+        try {
+            DecisionLogger.get().logRulePush(item.name, item.code, holding, holdCost,
+                    quote.price, item.status, result);
+        } catch (Exception e) {
+            Log.e(TAG, "写规则推送日志失败", e);
+        }
+
+        fireAlert(item.code, item.name, result.actionLabel, result.note, result.triggerPrice);
+        if (sListener != null) {
+            sListener.onSignalTriggered(item.code, item.name, result.actionLabel, result.note, result.triggerPrice);
+        }
+
         enqueueVerification(item, actionKey, result, quote, pos);
+    }
+
+    /** T+1 同日保护：卖出类信号标注可卖/锁定股数（操盘手经验终版.md 5.2节） */
+    private void applyT1Note(TradingRuleEngine.RuleResult result, Position pos, boolean holding) {
+        if (!holding || pos == null) return;
+        boolean isSellAction = result.action == TradingRuleEngine.Action.STOP_LOSS
+                || result.action == TradingRuleEngine.Action.WARN_PRESSURE;
+        if (!isSellAction) return;
+        int sellableQty = DatabaseManager.get().getSellableQuantity(pos.getStockCode());
+        int lockedQty = Math.max(0, pos.getQuantity() - sellableQty);
+        if (lockedQty <= 0) return;
+        if (sellableQty <= 0) {
+            result.note += String.format(java.util.Locale.CHINA,
+                    "；⚠️持仓全部%d股均为今日买入，T+1前不可卖出，若确需止损只能等下一交易日开盘执行", pos.getQuantity());
+        } else {
+            result.note += String.format(java.util.Locale.CHINA,
+                    "；⚠️持仓%d股中有%d股为今日买入尚不可卖，实际可执行卖出%d股",
+                    pos.getQuantity(), lockedQty, sellableQty);
+        }
+    }
+
+    /**
+     * 候选股形态失效自动清理。prevYangLow 必须读本轮 evaluate 刚算出的 stateUpdate，
+     * 不能 loadTrackState() 读旧值——否则会比实际情况慢一拍。
+     */
+    private String checkStaleCandidate(WatchlistManager.WatchlistItem item, RealtimeQuoteManager.Quote quote,
+                                        TradingRuleEngine.PrevDayRef prevDay,
+                                        TradingRuleEngine.RuleResult result) {
+        if (!prevDay.hasData || quote == null) return null;
+        TradingRuleConfig cfg = TradingRuleConfig.get();
+        double waterLine = prevDay.prevClose;
+
+        // 条件1：大幅跌破水线（非正常回踩）
+        if (waterLine > 0 && quote.price < waterLine * (1.0 - cfg.candidateDeepBreakPct)) {
+            return String.format(java.util.Locale.CHINA,
+                    "现价¥%.2f大幅跌破水线¥%.2f超过%.0f%%，形态失效",
+                    quote.price, waterLine, cfg.candidateDeepBreakPct * 100);
+        }
+
+        // 条件2：跌破前一根阳线最低价（用本轮刚追踪到的值）
+        double yangLow = result.stateUpdate != null ? result.stateUpdate.prevYangLow : 0;
+        if (yangLow > 0 && quote.price < yangLow) {
+            return String.format(java.util.Locale.CHINA,
+                    "现价¥%.2f跌破前阳低¥%.2f，支撑失效", quote.price, yangLow);
+        }
+
+        // 条件3：观察天数超限仍未触发底仓
+        int observeDays = computeObserveDays(item.addedDate);
+        if (observeDays >= cfg.candidateMaxObserveDays) {
+            return String.format(java.util.Locale.CHINA,
+                    "观察%d天（上限%d天）仍未出现底仓信号，仙人指路预期落空",
+                    observeDays, cfg.candidateMaxObserveDays);
+        }
+        return null;
+    }
+
+    /**
+     * 从入池日期到今天的交易日数（含首尾）。
+     * 【修复】原实现按日历天数计算（两个日期相减/一天毫秒数），但trading_rules.json的
+     * candidateMaxObserveDays注释、TradingRuleConfig.java字段注释都明确写的是"交易日"，
+     * 按日历天数算会把周末也计入观察期——跨一个周末的候选股会比文档口径提前1~2天
+     * 被判定超时移出观察池。改为按周一到周五估算交易日，不接入法定节假日日历，
+     * 与本类isWithinTradingHours()、MarketDataManager.computeExpectedTradeDate()是同一套
+     * 简化口径（节假日当天本来也不会有行情变化，顶多把移出判断稍微推迟，不会误报）。
+     */
+    private int computeObserveDays(String addedDate) {
+        if (addedDate == null || addedDate.isEmpty()) return 0;
+        try {
+            java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.CHINA);
+            java.util.Date added = fmt.parse(addedDate);
+            if (added == null) return 0;
+            java.util.Calendar cursor = java.util.Calendar.getInstance();
+            cursor.setTime(added);
+            clearTimeFields(cursor);
+            java.util.Calendar today = java.util.Calendar.getInstance();
+            clearTimeFields(today);
+            if (cursor.after(today)) return 0;
+            int tradeDays = 0;
+            while (!cursor.after(today)) {
+                int dow = cursor.get(java.util.Calendar.DAY_OF_WEEK);
+                if (dow != java.util.Calendar.SATURDAY && dow != java.util.Calendar.SUNDAY) tradeDays++;
+                cursor.add(java.util.Calendar.DAY_OF_MONTH, 1);
+            }
+            return tradeDays;
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private void clearTimeFields(java.util.Calendar cal) {
+        cal.set(java.util.Calendar.HOUR_OF_DAY, 0);
+        cal.set(java.util.Calendar.MINUTE, 0);
+        cal.set(java.util.Calendar.SECOND, 0);
+        cal.set(java.util.Calendar.MILLISECOND, 0);
     }
 
     /** 规则命中后入队，不直接抢锁。同一股票有新数据就覆盖旧条目，排队位置不变。 */
@@ -333,9 +447,9 @@ public class RealtimeMonitorService extends Service {
             Log.w(TAG, "AI复核超时(" + (AI_VERIFY_TIMEOUT_MS / 1000) + "秒无响应): " + item.code);
             LocalAIAgent.VerifyResult vr = new LocalAIAgent.VerifyResult();
             vr.confirmed = false;
-            vr.reason = "AI复核超时无响应，本次不推送";
+            vr.reason = "AI复核超时无响应，不影响已推送的规则信号";
             vr.fullText = "AI_TIMEOUT";
-            handleVerified(item, actionKey, result, quote, pos, vr, vr.fullText);
+            handleAiAnalysisComplete(item, result, vr, vr.fullText);
             onVerifyDone();
         };
         mHandler.postDelayed(timeoutRunnable, AI_VERIFY_TIMEOUT_MS);
@@ -351,7 +465,7 @@ public class RealtimeMonitorService extends Service {
                         handled[0] = true;
                         mHandler.removeCallbacks(timeoutRunnable);
                         LocalAIAgent.VerifyResult vr = LocalAIAgent.parseVerifyResult(fullText);
-                        handleVerified(item, actionKey, result, quote, pos, vr, fullText);
+                        handleAiAnalysisComplete(item, result, vr, fullText);
                         onVerifyDone();
                     }
 
@@ -360,60 +474,37 @@ public class RealtimeMonitorService extends Service {
                         if (handled[0]) return;
                         handled[0] = true;
                         mHandler.removeCallbacks(timeoutRunnable);
-                        Log.w(TAG, "AI复核不可用: " + msg);
+                        Log.w(TAG, "AI补充分析不可用: " + msg);
                         LocalAIAgent.VerifyResult vr = new LocalAIAgent.VerifyResult();
                         vr.confirmed = false;
-                        vr.reason = "AI未能完成复核（" + msg + "），本次不推送，请查看决策日志";
+                        vr.reason = "AI未能完成补充分析（" + msg + "），规则推送仍然有效，请自行判断";
                         vr.fullText = "AI_ERROR: " + msg;
-                        handleVerified(item, actionKey, result, quote, pos, vr, vr.fullText);
+                        handleAiAnalysisComplete(item, result, vr, vr.fullText);
                         onVerifyDone();
                     }
                 });
     }
 
     /**
-     * 仅当规则+AI双通过，且满足推送窗口时，才 markPending + 通知。
-     * 所有命中（含AI驳回）均写完整决策日志。
+     * AI 异步分析完成：只回填 pending 记录的 AI 结论 + 写补充日志，不再决定要不要通知
+     * （通知已在规则命中那一刻发出）。用户若在 AI 完成前已确认/忽略，updatePendingAiResult 会跳过。
      */
-    private void handleVerified(WatchlistManager.WatchlistItem item, String actionKey,
-                                 TradingRuleEngine.RuleResult result, RealtimeQuoteManager.Quote quote,
-                                 Position pos, LocalAIAgent.VerifyResult vr, String aiFullText) {
-        boolean holding = pos != null && pos.getQuantity() > 0;
-        double holdCost = holding ? pos.getAvgCost() : 0;
-
-        boolean canNotify = vr.confirmed && shouldNotifyNow(result);
+    private void handleAiAnalysisComplete(WatchlistManager.WatchlistItem item,
+                                           TradingRuleEngine.RuleResult result,
+                                           LocalAIAgent.VerifyResult vr, String aiFullText) {
+        WatchlistManager.get().updatePendingAiResult(
+                item.code, vr.confirmed, vr.reason, aiFullText);
 
         try {
-            DecisionLogger.get().logSignalEvaluation(
-                    item.name, item.code, holding, holdCost, quote.price, item.status,
-                    result, vr.confirmed, vr.reason, aiFullText, canNotify);
+            DecisionLogger.get().logAiSupplement(
+                    item.name, item.code, result.actionLabel,
+                    vr.confirmed, vr.reason, aiFullText);
         } catch (Exception e) {
-            Log.e(TAG, "写决策日志失败", e);
+            Log.e(TAG, "写AI补充日志失败", e);
         }
 
-        if (!vr.confirmed) {
-            Log.i(TAG, "AI未确认，不推送: " + item.code + " " + result.actionLabel);
-            WatchlistManager.get().updateNote(item.code,
-                    "规则命中[" + result.actionLabel + "]但AI未确认，继续观察");
-            return;
-        }
-
-        if (!canNotify) {
-            Log.i(TAG, "规则+AI双通过，但不在推送窗口: " + item.code + " " + result.actionLabel);
-            WatchlistManager.get().updateNote(item.code,
-                    result.actionLabel + "条件已满足(AI已确认)，等待收盘前推送窗口");
-            return;
-        }
-
-        WatchlistManager.get().markPending(item.code, actionKey, result.triggerPrice,
-                true, vr.reason, aiFullText);
-
-        String actionLabel = result.actionLabel;
-        fireAlert(item.code, item.name, actionLabel, vr.reason, result.triggerPrice);
-
-        if (sListener != null) {
-            sListener.onSignalTriggered(item.code, item.name, actionLabel, vr.reason, result.triggerPrice);
-        }
+        Log.i(TAG, "AI补充分析完成: " + item.code + " "
+                + result.actionLabel + " " + (vr.confirmed ? "支持" : "存疑"));
     }
 
     private boolean shouldNotifyNow(TradingRuleEngine.RuleResult result) {
@@ -429,7 +520,7 @@ public class RealtimeMonitorService extends Service {
         if (nm.getNotificationChannel(CHANNEL_ID) == null) {
             NotificationChannel ch = new NotificationChannel(CHANNEL_ID, "实时监控",
                     NotificationManager.IMPORTANCE_HIGH);
-            ch.setDescription("规则引擎+AI双通过的买入/加仓/满仓/止损信号（需手动确认）");
+            ch.setDescription("规则引擎触发的买入/加仓/满仓/止损信号（AI异步补充分析，需手动确认）");
             ch.enableVibration(true);
             nm.createNotificationChannel(ch);
         }
@@ -456,10 +547,10 @@ public class RealtimeMonitorService extends Service {
         nm.notify(NOTIFICATION_ID, buildNotification("实时监控运行中", content));
     }
 
-    private void fireAlert(String code, String name, String actionLabel, String aiReason, double price) {
+    private void fireAlert(String code, String name, String actionLabel, String ruleReason, double price) {
         NotificationManager nm = getSystemService(NotificationManager.class);
         String title = "🔔 " + name + "(" + code + ") " + actionLabel + " · 待确认";
-        String content = String.format(java.util.Locale.CHINA, "¥%.2f · %s\n规则+AI双通过，点击App确认", price, aiReason);
+        String content = String.format(java.util.Locale.CHINA, "¥%.2f · %s\n规则引擎已触发，AI分析中，点击App确认", price, ruleReason);
 
         Intent tapIntent = new Intent(this, MainActivity.class);
         PendingIntent pi = PendingIntent.getActivity(this, code.hashCode(), tapIntent,

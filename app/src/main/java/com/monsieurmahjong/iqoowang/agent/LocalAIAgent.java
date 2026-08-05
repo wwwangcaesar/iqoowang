@@ -369,8 +369,9 @@ public class LocalAIAgent {
                                       String histNote, String trend) {
         StringBuilder sb = new StringBuilder();
         sb.append(getSystemPrompt(action)).append("\n\n");
-        sb.append("【复核任务】规则引擎按操盘手方法论检测到候选信号，请结合真实数据和你学过的经验，严格复核是否值得操作。\n");
-        sb.append("核心原则：右侧交易、放量验证分歧、资金安全第一。你不预测涨跌，只验证眼前证据是否够格。\n\n");
+        sb.append("【补充分析任务】规则引擎已按操盘手方法论触发信号并推送通知，现在需要你结合真实数据和你学过的话术，做定性补充分析。\n");
+        sb.append("你的结论不会阻止已发出的通知，但会显示给用户参考。买入类信号偏审慎复核，卖出/止损类偏支持规则执行。\n");
+        sb.append("核心原则：右侧交易、放量验证分歧、资金安全第一。你不预测涨跌，只评估眼前证据的可信度。\n\n");
         sb.append("股票：").append(name).append("(").append(code).append(")\n");
         sb.append("候选动作：").append(actionLabel).append("（").append(action).append("）\n");
         sb.append("规则引擎依据：").append(ruleNote).append("\n");

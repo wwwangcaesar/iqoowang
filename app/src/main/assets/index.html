@@ -1310,6 +1310,8 @@ const TRADING_CONFIG_FIELDS = [
   { group: '涨跌停幅度', key: 'mainboardLimitPct', label: '主板(含ST)', type: 'percent', step: 1 },
   { group: '涨跌停幅度', key: 'gemStarLimitPct', label: '创业板/科创板', type: 'percent', step: 1 },
   { group: '涨跌停幅度', key: 'bjExchangeLimitPct', label: '北交所', type: 'percent', step: 1 },
+  { group: '候选池清理', key: 'candidateDeepBreakPct', label: '跌破水线移出阈值', type: 'percent', step: 1, hint: '观察中的候选股现价低于水线超过此比例，视为形态失效自动移出（建议值8%需回测）' },
+  { group: '候选池清理', key: 'candidateMaxObserveDays', label: '最大观察天数', type: 'int', step: 1, hint: '入池后超过这么多天仍未触发底仓信号，自动移出观察池（建议值10需回测）' },
 ];
 
 function toggleConfigPanel() {
@@ -1426,6 +1428,25 @@ const WATCHLIST_STATUS_LABEL = {
 
 const PENDING_STATUSES = ['PENDING_STARTER', 'PENDING_ADD', 'PENDING_FULL', 'PENDING_WARN', 'PENDING_STOP'];
 
+/** 从入池日期到今天的交易日数（含首尾，周六周日不计入）。
+ *  与Java端 RealtimeMonitorService.computeObserveDays() 用同一套口径（不接入节假日日历），
+ *  避免候选池卡片上显示的"观察N天"和后端实际用来判断候选股清理超时的天数对不上。 */
+function computeTradeDaysSince(addedDateStr) {
+  if (!addedDateStr) return 0;
+  const start = new Date(addedDateStr + 'T00:00:00');
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  if (isNaN(start.getTime()) || start > today) return 0;
+  let days = 0;
+  const cur = new Date(start);
+  while (cur <= today) {
+    const dow = cur.getDay();
+    if (dow !== 0 && dow !== 6) days++;
+    cur.setDate(cur.getDate() + 1);
+  }
+  return days;
+}
+
 function renderWatchlist(items) {
   const box = document.getElementById('watchlistContainer');
   if (!items.length) {
@@ -1437,16 +1458,20 @@ function renderWatchlist(items) {
     const isPending = PENDING_STATUSES.includes(it.status);
 
     if (isPending) {
-      const aiTag = it.pendingAiConfirmed
-        ? '<span style="color:var(--accent-cyan);font-size:9px;">✓ AI认可</span>'
-        : '<span style="color:var(--text-dim);font-size:9px;">⚠ AI存疑，仅供参考</span>';
+      const aiStatusTag = (() => {
+        const s = it.aiStatus || 'NONE';
+        if (s === 'PENDING') return '<span style="color:var(--accent-cyan);font-size:9px;">⏳ AI分析中…</span>';
+        if (s === 'CONFIRMED') return '<span style="color:var(--accent-cyan);font-size:9px;">✓ AI分析已完成·支持</span>';
+        if (s === 'DOUBTED') return '<span style="color:var(--accent-gold);font-size:9px;">⚠ AI分析已完成·存疑</span>';
+        return '<span style="color:var(--text-dim);font-size:9px;">等待AI分析</span>';
+      })();
       return `
       <div style="padding:10px;margin-top:8px;background:var(--bg-card2);border-radius:8px;border:1.5px solid ${label.color};">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
           <span style="font-weight:600;color:var(--text-prime);font-size:12px;">${it.name} <span style="color:var(--text-dim);font-size:10px;">${it.code}</span></span>
           <span style="color:${label.color};font-size:10px;border:1px solid ${label.color};border-radius:8px;padding:1px 6px;">${label.text}</span>
         </div>
-        <div style="font-size:9px;margin-bottom:4px;">${aiTag}，触发价¥${(it.pendingPrice||0).toFixed(2)}</div>
+        <div style="font-size:9px;margin-bottom:4px;">${aiStatusTag} · 触发价¥${(it.pendingPrice||0).toFixed(2)}</div>
         <div style="font-size:11px;color:var(--text-prime);line-height:1.6;margin-bottom:8px;">${it.pendingReason || ''}</div>
         <div style="display:flex;gap:8px;">
           <button onclick="confirmWatchlistSignal('${it.code}')" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--up-red);background:transparent;color:var(--up-red);font-size:11px;">✓ 确认执行</button>
@@ -1463,10 +1488,14 @@ function renderWatchlist(items) {
         </div>`
       : '';
 
+    const observeDays = computeTradeDaysSince(it.addedDate);
+    const observeTag = it.status === 'WATCHING' && observeDays > 0
+      ? `<span style="font-size:9px;color:var(--text-dim);margin-left:6px;">观察${observeDays}天</span>` : '';
+
     return `
     <div style="padding:8px 10px;margin-top:8px;background:var(--bg-card2);border-radius:8px;border:1px solid var(--border);">
       <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span style="font-weight:600;color:var(--text-prime);font-size:12px;">${it.name} <span style="color:var(--text-dim);font-size:10px;">${it.code}</span></span>
+        <span style="font-weight:600;color:var(--text-prime);font-size:12px;">${it.name} <span style="color:var(--text-dim);font-size:10px;">${it.code}</span>${observeTag}</span>
         <span style="display:flex;align-items:center;gap:6px;">
           <span style="color:${label.color};font-size:10px;border:1px solid ${label.color};border-radius:8px;padding:1px 6px;">${label.text}</span>
           <span onclick="removeWatchlistItem('${it.code}')" style="color:var(--text-dim);font-size:14px;padding:0 4px;">✕</span>

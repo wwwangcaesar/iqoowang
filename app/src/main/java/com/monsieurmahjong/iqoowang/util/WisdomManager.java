@@ -55,7 +55,35 @@ public class WisdomManager {
 
     private WisdomManager(Context context) {
         mDb = new DbHelper(context).getWritableDatabase();
+        ensureDefaultWisdom();
         Log.i(TAG, "WisdomManager initialized");
+    }
+
+    /**
+     * 话术库为空时预置默认操盘手心态：买入类偏审慎（右侧交易需验证），
+     * 卖出/风控类偏支持规则（资金安全第一）。用户后续教的话术会追加，不会覆盖这些。
+     */
+    private void ensureDefaultWisdom() {
+        if (hasAny()) return;
+        Log.i(TAG, "话术库为空，预置默认操盘手复核话术");
+        addEntry(
+                "买底仓时要特别警惕：水下站上VWAP只是初步转一致，必须确认放量是真实的而不是脉冲式一下。缩量突破只能观察，不能直接当底仓信号。",
+                "买底仓：放量要真实，缩量只观察", "BUY_STARTER");
+        addEntry(
+                "加仓50%要更谨慎：突破水线或回踩VWAP不破都需要放量确认。如果量能只是勉强达标、分时反复穿越VWAP，宁可错过也不要勉强加。",
+                "加仓：突破需持续放量", "ADD_HALF");
+        addEntry(
+                "满仓条件最严格：吃掉上影线+突破水线+站上VWAP+放量必须全部同时满足。任何一项勉强达标都要存疑，因为同日满仓意味着T+1前不可卖。",
+                "满仓：四项全满足才支持", "BUY_FULL");
+        addEntry(
+                "一级抛压预警：当日涨幅从峰值回撤一半时，说明分歧在加大。即使还没触发止损位，也要提高警惕，考虑是否提前减仓。",
+                "抛压预警：峰值回撤需重视", "WARN_PRESSURE");
+        addEntry(
+                "止损信号必须优先尊重：跌破前阳低是独立破位，跌破分歧K线中点/最低点是最后防线。资金安全第一，不要侥幸摊平或死扛。",
+                "止损：规则触发应果断执行", "STOP_LOSS");
+        addEntry(
+                "右侧交易的核心是等分歧转一致，不是猜底。任何买入信号都要问：放量验证了吗？站上VWAP持续了吗？",
+                "通用：右侧等验证不猜底", "");
     }
 
     private static class DbHelper extends SQLiteOpenHelper {

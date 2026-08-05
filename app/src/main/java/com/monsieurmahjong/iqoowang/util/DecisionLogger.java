@@ -43,6 +43,56 @@ public class DecisionLogger {
     }
 
     /**
+     * 规则引擎命中且已立即推送通知时记录（AI 尚未完成，标记为分析进行中）。
+     */
+    public void logRulePush(String name, String code, boolean holding, double holdCost,
+                            double currentPrice, String watchStatus,
+                            TradingRuleEngine.RuleResult ruleResult) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[").append(mTimeFmt.format(new java.util.Date())).append("] ");
+        sb.append(name).append("(").append(code).append(") ");
+        sb.append("候选池状态=").append(watchStatus).append(" ");
+        if (holding) {
+            sb.append(String.format(Locale.CHINA, "持仓中 成本¥%.2f 现价¥%.2f", holdCost, currentPrice));
+        } else {
+            sb.append(String.format(Locale.CHINA, "未买入 现价¥%.2f", currentPrice));
+        }
+        sb.append("\n");
+        sb.append("【规则推送】").append(ruleResult.actionLabel);
+        sb.append(" | action=").append(TradingRuleEngine.actionToKey(ruleResult.action));
+        sb.append("\n规则依据：").append(ruleResult.note);
+        if (ruleResult.metrics != null && !ruleResult.metrics.isEmpty()) {
+            sb.append("\n指标快照：").append(ruleResult.metrics);
+        }
+        if (ruleResult.stopLevel != TradingRuleEngine.StopLevel.NONE) {
+            sb.append("\n止损级别：").append(ruleResult.stopLevel.name());
+            sb.append(" | 即时推送=").append(ruleResult.notifyImmediate);
+        }
+        sb.append("\n用户通知：已推送（规则引擎独立决定，不等AI）");
+        sb.append("\nAI复核：分析进行中…");
+        sb.append("\n").append(repeat('-', 72)).append("\n");
+        appendToFile(sb.toString());
+    }
+
+    /**
+     * AI 异步定性分析完成后补充记录（不改变已推送的通知）。
+     */
+    public void logAiSupplement(String name, String code, String actionLabel,
+                               boolean aiConfirmed, String aiReason, String aiFullText) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[").append(mTimeFmt.format(new java.util.Date())).append("] ");
+        sb.append(name).append("(").append(code).append(") ");
+        sb.append("【AI补充分析】针对已推送信号：").append(actionLabel).append("\n");
+        sb.append("AI结论：").append(aiConfirmed ? "支持规则判断" : "存疑，请结合规则依据自行斟酌");
+        sb.append("\nAI说明：").append(aiReason != null ? aiReason : "（无）");
+        if (aiFullText != null && !aiFullText.trim().isEmpty()) {
+            sb.append("\nAI完整输出：\n").append(aiFullText.trim());
+        }
+        sb.append("\n").append(repeat('-', 72)).append("\n");
+        appendToFile(sb.toString());
+    }
+
+    /**
      * 记录一次完整的信号评估（含规则未命中、AI驳回、双通过等所有情况）。
      */
     public void logSignalEvaluation(String name, String code, boolean holding, double holdCost,
