@@ -825,9 +825,16 @@
         候选池会持续跟踪直到满足买入条件或手动移除，锁屏/切后台不中断。
       </div>
       <div style="padding:0 14px 12px;display:flex;gap:8px;align-items:center;">
-        <button onclick="testNotification()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--accent-cyan);background:transparent;color:var(--accent-cyan);font-size:11px;">🔔 测试通知(10秒后到)</button>
+        <button onclick="aiReviewPendingSignals()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--accent-cyan);background:transparent;color:var(--accent-cyan);font-size:11px;">🤖 AI分析审核</button>
         <button onclick="toggleDecisionLog()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--text-sub);background:transparent;color:var(--text-sub);font-size:11px;">📝 决策日志</button>
         <button onclick="toggleConfigPanel()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--accent-gold);background:transparent;color:var(--accent-gold);font-size:11px;">⚙️ 参数配置</button>
+      </div>
+      <div id="aiReviewPanel" style="display:none;padding:0 12px 12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <span style="font-size:11px;color:var(--text-prime);font-weight:600;">🤖 AI分析审核队列</span>
+          <span id="aiReviewSummary" style="font-size:9px;color:var(--text-dim);"></span>
+        </div>
+        <div id="aiReviewList"></div>
       </div>
       <div id="decisionLogPanel" style="display:none;padding:0 12px 12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
@@ -1260,6 +1267,81 @@ function testNotification() {
   addThinkLine('sys', '[TST] 已安排测试通知，10秒后到达，现在可以锁屏验证');
   Android.testNotificationDelayed(10);
 }
+
+// ══ AI分析审核：手动串行重新分析所有待确认信号，按推送时间排队 ══
+
+const AI_REVIEW_STATUS_LABEL = {
+  QUEUED:     { text: '排队中',   color: 'var(--text-dim)' },
+  ANALYZING:  { text: 'AI分析中…', color: 'var(--accent-cyan)' },
+  CONFIRMED:  { text: '✓ 完成·支持', color: 'var(--up-red)' },
+  DOUBTED:    { text: '⚠ 完成·存疑', color: 'var(--accent-gold)' },
+  TIMEOUT:    { text: '⏱ 超时未响应', color: 'var(--down-green)' },
+  SKIPPED:    { text: '已跳过',   color: 'var(--text-dim)' },
+};
+
+STATE.aiReviewItems = [];
+
+function aiReviewPendingSignals() {
+  if (!IS_ANDROID) { showToast('AI分析审核需要在App中运行'); return; }
+  Android.startAiReviewPendingSignals();
+}
+
+function renderAiReviewList() {
+  const box = document.getElementById('aiReviewList');
+  const items = STATE.aiReviewItems;
+  if (!items.length) {
+    box.innerHTML = '<div style="padding:10px 0;text-align:center;color:var(--text-dim);font-size:11px;">无待审核信号</div>';
+    return;
+  }
+  box.innerHTML = items.map((it, i) => {
+    const label = AI_REVIEW_STATUS_LABEL[it.reviewStatus] || { text: it.reviewStatus, color: 'var(--text-sub)' };
+    return `
+    <div style="padding:8px 10px;margin-top:6px;background:var(--bg-card2);border-radius:8px;border:1px solid ${label.color};">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span style="font-weight:600;color:var(--text-prime);font-size:12px;">${i + 1}. ${it.name} <span style="color:var(--text-dim);font-size:10px;">${it.code}</span></span>
+        <span style="color:${label.color};font-size:10px;border:1px solid ${label.color};border-radius:8px;padding:1px 6px;">${label.text}</span>
+      </div>
+      ${it.reason ? `<div style="font-size:11px;color:var(--text-sub);line-height:1.6;margin-top:4px;">${it.reason}</div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+window.onAiReviewQueued = function(jsonStr) {
+  try {
+    const arr = JSON.parse(jsonStr);
+    STATE.aiReviewItems = arr.map(it => ({ ...it, reason: '' }));
+    document.getElementById('aiReviewPanel').style.display = 'block';
+    document.getElementById('aiReviewSummary').textContent = `共${arr.length}支·排队中`;
+    renderAiReviewList();
+    showToast(`🤖 开始串行审核${arr.length}支待确认信号，请勿离开App`);
+  } catch (e) { console.error('[AiReview] 解析队列失败', e); }
+};
+
+window.onAiReviewProgress = function(jsonStr) {
+  try {
+    const upd = JSON.parse(jsonStr);
+    const idx = STATE.aiReviewItems.findIndex(it => it.code === upd.code);
+    if (idx >= 0) {
+      STATE.aiReviewItems[idx] = { ...STATE.aiReviewItems[idx], ...upd };
+    } else {
+      STATE.aiReviewItems.push(upd);
+    }
+    const done = STATE.aiReviewItems.filter(it => ['CONFIRMED','DOUBTED','TIMEOUT','SKIPPED'].includes(it.reviewStatus)).length;
+    document.getElementById('aiReviewSummary').textContent = `共${STATE.aiReviewItems.length}支·已完成${done}支`;
+    renderAiReviewList();
+    if (upd.reviewStatus === 'CONFIRMED' || upd.reviewStatus === 'DOUBTED') loadWatchlist();
+  } catch (e) { console.error('[AiReview] 解析进度失败', e); }
+};
+
+window.onAiReviewFinished = function() {
+  document.getElementById('aiReviewSummary').textContent = `共${STATE.aiReviewItems.length}支·已全部完成`;
+  showToast('✅ AI分析审核已全部完成');
+  loadWatchlist();
+};
+
+window.onAiReviewError = function(msg) {
+  showToast('⚠️ ' + msg);
+};
 
 // ══ 决策日志 ══
 let _decisionLogOpen = false;

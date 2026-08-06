@@ -42,6 +42,28 @@ public class StockBridge implements RealtimeMonitorService.Listener {
             android.os.Looper.getMainLooper());
     private static final int REFRESH_INTERVAL_MS = 3000; // 3秒刷新一次（交易时段）
 
+    /** AI分析审核队列是否正在跑——串行执行，一支跑完才跑下一支，避免和自动补充分析/
+     *  选股分析抢同一把AI推理锁（这正是后台自动补充分析经常打回"AI正在思考中"的原因） */
+    private volatile boolean mAiReviewRunning = false;
+
+    /** 单支AI审核外层超时——如果本地模型这次推理真的原生层卡死（onToken/onComplete都不再
+     *  触发，这是你反馈的"卡住"的真实成因），不能让整条审核队列跟着永远卡在这一支上。
+     *  超时后强制把这一支标记为TIMEOUT并继续下一支，不影响其余股票的审核进度。
+     *  时长比LocalAIAgent内部看门狗(45秒)略长，给内部机制先自行恢复的机会。 */
+    private static final long AI_REVIEW_TIMEOUT_MS = 50_000;
+    private final android.os.Handler mAiReviewHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    /** 待确认信号pendingAction → 中文动作说明，口径对齐TradingRuleEngine.RuleResult.actionLabel */
+    private static final Map<String, String> AI_REVIEW_ACTION_LABELS = new java.util.HashMap<>();
+    static {
+        AI_REVIEW_ACTION_LABELS.put("BUY_STARTER", "建议底仓");
+        AI_REVIEW_ACTION_LABELS.put("ADD_HALF", "建议增加50%仓位");
+        AI_REVIEW_ACTION_LABELS.put("ADD_POSITION", "建议增加50%仓位");
+        AI_REVIEW_ACTION_LABELS.put("BUY_FULL", "建议满仓");
+        AI_REVIEW_ACTION_LABELS.put("WARN_PRESSURE", "建议抛压");
+        AI_REVIEW_ACTION_LABELS.put("STOP_LOSS", "建议立即清仓止损");
+    }
+
     public StockBridge(Context context, WebView webView) {
         mContext = context;
         mWebView = webView;
@@ -671,6 +693,157 @@ public class StockBridge implements RealtimeMonitorService.Listener {
             } catch (Exception ignored) {}
         }
         return arr.toString();
+    }
+
+    // ══ AI分析审核（手动串行重新分析所有待确认信号，按推送时间排队）══
+
+    /**
+     * 【AI分析审核】手动触发：把当前所有待确认信号（含此前后台自动补充分析因为
+     * 并发推理锁冲突/模型刚冷启动等原因失败、显示"存疑"或"AI正在思考中"的）
+     * 按推送时间从早到晚排队，串行调用本地AI重新分析——一支跑完拿到结论再跑下一支，绝不并发。
+     * 之所以设计成"点开App手动审核"而不是让后台自动补充分析更努力重试：本地AI(LocalAIAgent)
+     * 全局只有一把推理锁，用户点这个按钮时人已经在看 App、模型大概率已加载/预热完成，
+     * 比后台监控服务刚推送那一刻（可能还在冷启动/被其它AI调用占用）成功率高得多。
+     * JS调用：Android.startAiReviewPendingSignals()
+     * 回调：window.onAiReviewQueued(jsonArrayStr) 一次性给出初始队列（含排队顺序）
+     *       window.onAiReviewProgress(jsonStr) 每支状态变化时推送一次（QUEUED/ANALYZING/CONFIRMED/DOUBTED/SKIPPED）
+     *       window.onAiReviewFinished() 全部跑完
+     *       window.onAiReviewError(msg) 无法启动时的提示（队列为空/正在审核中）
+     */
+    @JavascriptInterface
+    public void startAiReviewPendingSignals() {
+        if (mAiReviewRunning) {
+            evalJs("window.onAiReviewError && window.onAiReviewError('AI审核正在进行中，请稍候')");
+            return;
+        }
+        List<WatchlistManager.WatchlistItem> pending = new ArrayList<>(WatchlistManager.get().getPendingSignals());
+        if (pending.isEmpty()) {
+            evalJs("window.onAiReviewError && window.onAiReviewError('当前没有待确认信号')");
+            return;
+        }
+        // getPendingSignals()内部按pending_at DESC排序，这里改成从早到晚——先推送的先分析
+        java.util.Collections.sort(pending, (a, b) -> Long.compare(a.pendingAt, b.pendingAt));
+
+        mAiReviewRunning = true;
+        JSONArray initArr = new JSONArray();
+        for (WatchlistManager.WatchlistItem it : pending) {
+            try {
+                JSONObject o = new JSONObject();
+                o.put("code", it.code);
+                o.put("name", it.name);
+                o.put("pendingAction", it.pendingAction);
+                o.put("pendingPrice", it.pendingPrice);
+                o.put("reviewStatus", "QUEUED");
+                initArr.put(o);
+            } catch (Exception ignored) {}
+        }
+        String escInit = initArr.toString().replace("\\", "\\\\").replace("'", "\\'");
+        evalJs("window.onAiReviewQueued && window.onAiReviewQueued('" + escInit + "')");
+
+        processAiReviewQueue(pending, 0);
+    }
+
+    /** 串行处理AI审核队列：上一支彻底跑完（成功/失败/超时/被跳过）才会处理下一支。
+     *  带外层超时兼底：即使本次推理真的卡死不返回，队列也不会永远卡住，保证"不会卡住"。 */
+    private void processAiReviewQueue(List<WatchlistManager.WatchlistItem> queue, int index) {
+        if (index >= queue.size()) {
+            mAiReviewRunning = false;
+            evalJs("window.onAiReviewFinished && window.onAiReviewFinished()");
+            return;
+        }
+        WatchlistManager.WatchlistItem queued = queue.get(index);
+        // 分析前用最新数据库状态重新确认——用户可能已经在这支股票上手动确认/忽略过了
+        WatchlistManager.WatchlistItem fresh = WatchlistManager.get().getByCode(queued.code);
+        if (fresh == null || fresh.pendingAction == null) {
+            pushAiReviewProgress(queued.code, queued.name, "SKIPPED", false, "该信号已被处理，跳过", "");
+            processAiReviewQueue(queue, index + 1);
+            return;
+        }
+
+        pushAiReviewProgress(fresh.code, fresh.name, "ANALYZING", false, "本地AI分析中…", "");
+
+        final boolean[] handled = {false};
+        Runnable timeoutRunnable = () -> {
+            if (handled[0]) return;
+            handled[0] = true;
+            Log.w(TAG, "AI审核超时(" + (AI_REVIEW_TIMEOUT_MS / 1000) + "秒无响应)，跳过继续下一支: " + fresh.code);
+            LocalAIAgent.VerifyResult vr = new LocalAIAgent.VerifyResult();
+            vr.confirmed = false;
+            vr.reason = "AI分析超时无响应（可能本次推理卡住），请结合规则依据自行判断，或稍后再次点击AI分析审核重试";
+            finishOneReview(queue, index, fresh, vr, "AI_TIMEOUT");
+        };
+        mAiReviewHandler.postDelayed(timeoutRunnable, AI_REVIEW_TIMEOUT_MS);
+
+        List<String> codes = new ArrayList<>();
+        codes.add(fresh.code);
+        RealtimeQuoteManager.get().fetchBatch(codes, (quotes, failedCodes) -> {
+            if (handled[0]) return; // 行情还没拿到就已经超时了，不再继续发起AI调用
+            RealtimeQuoteManager.Quote quote = quotes.get(fresh.code);
+            String actionLabel = AI_REVIEW_ACTION_LABELS.containsKey(fresh.pendingAction)
+                    ? AI_REVIEW_ACTION_LABELS.get(fresh.pendingAction) : fresh.pendingAction;
+            mAgent.verifySignal(fresh.code, fresh.name, fresh.pendingAction, actionLabel,
+                    fresh.pendingReason, "", quote,
+                    new LocalAIAgent.AICallback() {
+                        @Override public void onToken(String token) {}
+
+                        @Override
+                        public void onComplete(String fullText) {
+                            if (handled[0]) return;
+                            handled[0] = true;
+                            mAiReviewHandler.removeCallbacks(timeoutRunnable);
+                            LocalAIAgent.VerifyResult vr = LocalAIAgent.parseVerifyResult(fullText);
+                            finishOneReview(queue, index, fresh, vr, fullText);
+                        }
+
+                        @Override
+                        public void onError(String msg) {
+                            if (handled[0]) return;
+                            handled[0] = true;
+                            mAiReviewHandler.removeCallbacks(timeoutRunnable);
+                            LocalAIAgent.VerifyResult vr = new LocalAIAgent.VerifyResult();
+                            vr.confirmed = false;
+                            vr.reason = "AI分析失败：" + msg;
+                            finishOneReview(queue, index, fresh, vr, "AI_ERROR: " + msg);
+                        }
+                    });
+        });
+    }
+
+    /** 一支处理完成（无论成功/失败/超时）都走这里：回填AI结论+写日志+推进到下一支，
+     *  确保无论哪种结局都能让队列继续前进。 */
+    private void finishOneReview(List<WatchlistManager.WatchlistItem> queue, int index,
+                                  WatchlistManager.WatchlistItem fresh,
+                                  LocalAIAgent.VerifyResult vr, String fullText) {
+        WatchlistManager.get().updatePendingAiResult(fresh.code, vr.confirmed, vr.reason, fullText);
+        String actionLabel = AI_REVIEW_ACTION_LABELS.containsKey(fresh.pendingAction)
+                ? AI_REVIEW_ACTION_LABELS.get(fresh.pendingAction) : fresh.pendingAction;
+        try {
+            DecisionLogger.get().logAiSupplement(fresh.name, fresh.code,
+                    actionLabel + "（AI分析审核·手动触发）",
+                    vr.confirmed, vr.reason, fullText);
+        } catch (Exception e) {
+            Log.e(TAG, "写AI审核日志失败", e);
+        }
+        String status = "AI_TIMEOUT".equals(fullText) ? "TIMEOUT" : (vr.confirmed ? "CONFIRMED" : "DOUBTED");
+        pushAiReviewProgress(fresh.code, fresh.name, status, vr.confirmed, vr.reason, fullText);
+        processAiReviewQueue(queue, index + 1);
+    }
+
+    private void pushAiReviewProgress(String code, String name, String reviewStatus,
+                                       boolean confirmed, String reason, String fullText) {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("code", code);
+            o.put("name", name);
+            o.put("reviewStatus", reviewStatus);
+            o.put("confirmed", confirmed);
+            o.put("reason", reason);
+            o.put("fullText", fullText);
+            String esc = o.toString().replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
+            evalJs("window.onAiReviewProgress && window.onAiReviewProgress('" + esc + "')");
+        } catch (Exception e) {
+            Log.e(TAG, "pushAiReviewProgress", e);
+        }
     }
 
     /** 今天的决策日志内容（无需切到文件管理器，App内直接看） */
