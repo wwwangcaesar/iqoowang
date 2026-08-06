@@ -1,62 +1,56 @@
 package com.monsieurmahjong.iqoowang.streak;
 
-import android.app.Activity;
 import android.content.Context;
 import android.webkit.JavascriptInterface;
 
 import com.monsieurmahjong.iqoowang.utils.StreakManager;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
-/**
- * JavaScript ↔ Android 数据桥接层（streak-flame.html 专用）
- * streak-flame.html 中通过 window.StreakBridge.xxx() 调用此类的方法。
- */
 public class StreakBridge {
 
-    private final Context ctx;
-    private final StreakManager manager = StreakManager.getInstance();
+    private final Context context;
+    private final StreakActivity activity;
 
-    public StreakBridge(Context ctx) {
-        // 注意：这里故意保留 Activity Context（而非 applicationContext），
-        // 因为 close() 需要对它 finish()；WebView 销毁时 bridge 也会被回收，不会长期持有导致泄漏。
-        this.ctx = ctx;
+    public StreakBridge(Context context, StreakActivity activity) {
+        this.context = context;
+        this.activity = activity;
     }
 
-    /**
-     * 返回当前连续打卡状态：
-     * { currentStreak, checkedToday, last7Days:[bool*7] }
-     */
     @JavascriptInterface
     public String getStreakData() {
+        StreakManager manager = StreakManager.getInstance();
         try {
+            StreakManager.StreakState state = manager.getState(context);
             JSONObject json = new JSONObject();
-            json.put("currentStreak", manager.getCurrentStreak(ctx));
-            json.put("checkedToday", manager.isCheckedToday(ctx));
-
-            boolean[] last7 = manager.getLast7Days(ctx);
+            json.put("currentStreak", state.currentStreak);
+            json.put("checkedToday", state.checkedToday);
             JSONArray arr = new JSONArray();
-            for (boolean b : last7) arr.put(b);
+            for (boolean b : state.last7Days) arr.put(b);
             json.put("last7Days", arr);
-
+            // 断签补签相关状态：pendingRestore>0 时表示有一次断签正在等待补签
+            json.put("pendingRestore", state.pendingRestore);
+            json.put("recoveryTarget", state.recoveryTarget);
+            json.put("recoveryProgress", state.recoveryProgress);
+            json.put("justRestored", state.justRestored);
+            json.put("justRestoredTotal", state.justRestoredTotal);
             return json.toString();
-        } catch (Exception e) {
-            return "{\"currentStreak\":0,\"checkedToday\":false,\"last7Days\":[false,false,false,false,false,false,false]}";
+        } catch (JSONException e) {
+            return "{}";
         }
     }
 
-    /** 执行一次打卡（幂等，同一天重复调用不会重复计数） */
     @JavascriptInterface
     public void checkIn() {
-        manager.checkIn(ctx);
+        StreakManager.getInstance().checkIn(context);
     }
 
-    /** 关闭页面（页面内的返回按钮调用） */
     @JavascriptInterface
     public void close() {
-        if (ctx instanceof Activity) {
-            ((Activity) ctx).runOnUiThread(((Activity) ctx)::finish);
+        if (activity != null) {
+            activity.finish();
         }
     }
 }

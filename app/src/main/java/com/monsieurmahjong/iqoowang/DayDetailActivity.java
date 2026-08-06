@@ -20,6 +20,7 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.google.android.material.bottomsheet.BottomSheetDialog;
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.android.material.textfield.TextInputEditText;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
@@ -52,6 +53,7 @@ public class DayDetailActivity extends AppCompatActivity {
         TextView tvDate = findViewById(R.id.tv_detail_date);
         tvTotal = findViewById(R.id.tv_detail_total);
         rvTransactions = findViewById(R.id.rv_daily_transactions);
+        FloatingActionButton fabAddExpense = findViewById(R.id.fab_add_expense);
 
         tvDate.setText(dateStr + " 消费明细");
         tvTotal.setText(String.format("¥%.2f", totalAmount));
@@ -59,6 +61,16 @@ public class DayDetailActivity extends AppCompatActivity {
         rvTransactions.setLayoutManager(new LinearLayoutManager(this));
         detailAdapter = new TransactionAdapter();
         rvTransactions.setAdapter(detailAdapter);
+
+        // 右下角悬浮加号：在当前查看的这一天补录一笔消费（用于补录忘记记账的旧日期），
+        // 复用 EditExpenseDialog 新增模式，不需要在这里自己写弹窗逻辑
+        fabAddExpense.setOnClickListener(v -> {
+            if (dateStr == null) {
+                Toast.makeText(this, "日期信息异常，无法补录", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            com.monsieurmahjong.iqoowang.utils.EditExpenseDialog.show(this, db, dateStr, null);
+        });
 
         // 绑定 LiveData，数据库任何增删改都会自动触发此处刷新
         if (dateStr != null) {

@@ -9,6 +9,7 @@ import android.widget.ArrayAdapter;
 import android.widget.AutoCompleteTextView;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AlertDialog;
@@ -20,14 +21,19 @@ import com.monsieurmahjong.iqoowang.R;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Calendar;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 /**
- * 复用的"修改账单明细" BottomSheet（原本只在 DayDetailActivity 里，
- * 现在抽成共用组件，SearchActivity 等其他入口点击条目也能弹出同一个编辑弹窗）。
+ * 复用的"账单明细"编辑/新增 BottomSheet（原本只在 DayDetailActivity 里做"编辑"，
+ * 现在抽成共用组件：SearchActivity 等入口点击条目走编辑模式；
+ * DayDetailActivity 右下角悬浮加号走新增模式，用于给过去某一天补录忘记记的消费）。
  *
- * 分类字段改为单选下拉菜单：点击弹出已有分类列表供选择，
+ * 分类字段是单选下拉菜单：点击弹出已有分类列表供选择，
  * 列表最后一项是"新增分类"，选中后弹出小输入框让用户新增一个分类名称。
  */
 public class EditExpenseDialog {
@@ -38,38 +44,28 @@ public class EditExpenseDialog {
         void onSaved();
     }
 
+    /** 编辑模式：修改一条已有消费记录 */
     public static void show(Activity activity, AppDatabase db, Expense expense, OnSavedListener listener) {
-        BottomSheetDialog dialog = new BottomSheetDialog(activity,
-                com.google.android.material.R.style.Theme_MaterialComponents_Light_BottomSheetDialog);
-
-        // 用 ContextThemeWrapper 包装，确保 TextInputLayout / AutoCompleteTextView 能正确识别 Material 样式
-        ContextThemeWrapper themeWrapper = new ContextThemeWrapper(activity,
-                com.google.android.material.R.style.Theme_MaterialComponents_Light);
-
-        View view = LayoutInflater.from(themeWrapper).inflate(R.layout.dialog_edit_transaction, null);
-        dialog.setContentView(view);
-
-        TextInputEditText etAmount = view.findViewById(R.id.et_edit_amount);
-        AutoCompleteTextView etCategory = view.findViewById(R.id.et_edit_category);
-        TextInputEditText etRemark = view.findViewById(R.id.et_edit_remark);
-        Button btnSave = view.findViewById(R.id.btn_save_changes);
+        DialogViews dv = buildDialogShell(activity);
+        dv.title.setText("修改账单明细");
+        dv.btnSave.setText("保存修改");
 
         // 回显数据
-        etAmount.setText(String.valueOf(expense.getAmount() / 100.0));
+        dv.etAmount.setText(String.valueOf(expense.getAmount() / 100.0));
         String currentCategory = expense.getCategoryName();
-        etCategory.setText(currentCategory);
+        dv.etCategory.setText(currentCategory);
         if (expense.getRemark() != null) {
-            etRemark.setText(expense.getRemark());
+            dv.etRemark.setText(expense.getRemark());
         }
 
-        setupCategoryDropdown(activity, db, etCategory, currentCategory);
+        setupCategoryDropdown(activity, db, dv.etCategory, currentCategory);
 
-        btnSave.setOnClickListener(v -> {
+        dv.btnSave.setOnClickListener(v -> {
             try {
-                double newAmountDouble = Double.parseDouble(etAmount.getText().toString());
+                double newAmountDouble = Double.parseDouble(dv.etAmount.getText().toString());
                 long newAmountCents = (long) (newAmountDouble * 100);
-                String newCategory = etCategory.getText().toString().trim();
-                String newRemark = etRemark.getText() != null ? etRemark.getText().toString().trim() : "";
+                String newCategory = dv.etCategory.getText().toString().trim();
+                String newRemark = dv.etRemark.getText() != null ? dv.etRemark.getText().toString().trim() : "";
 
                 if (ADD_NEW_SENTINEL.equals(newCategory)) {
                     Toast.makeText(activity, "请先在下拉菜单里输入新分类名称", Toast.LENGTH_SHORT).show();
@@ -83,7 +79,7 @@ public class EditExpenseDialog {
                 new Thread(() -> {
                     db.expenseDao().updateExpense(expense);
                     activity.runOnUiThread(() -> {
-                        dialog.dismiss();
+                        dv.dialog.dismiss();
                         Toast.makeText(activity, "修改成功", Toast.LENGTH_SHORT).show();
                         if (listener != null) listener.onSaved();
                     });
@@ -93,11 +89,112 @@ public class EditExpenseDialog {
             }
         });
 
+        dv.dialog.show();
+    }
+
+    /**
+     * 新增模式：给 dateStrForNew（"yyyy-MM-dd"）这一天补录一笔消费。
+     * 和"编辑"共用同一套弹窗外壳与分类下拉逻辑，区别只在标题/按钮文案、
+     * 初始为空、保存时是插入一条新记录而不是更新已有记录。
+     *
+     * 【日期一致性】新记录的 timestamp 不能直接用 System.currentTimeMillis()——
+     * 那样会导致 date_str（比如"2026-07-15"）和 timestamp（实际是今天）对不上：
+     * 日历、按 date_str 查询的地方能正确归到 7 月 15 号，但统计报表、
+     * CheckInManager 周打卡这些按 timestamp 时间范围查询的地方，会把这笔
+     * 补录的支出误算到"今天"头上。这里用 dateStrForNew 对应的那一天 + 当前的
+     * 时分秒拼出 timestamp，保证两个字段的"日期部分"严格一致。
+     */
+    public static void show(Activity activity, AppDatabase db, String dateStrForNew, OnSavedListener listener) {
+        DialogViews dv = buildDialogShell(activity);
+        dv.title.setText("补录消费记录");
+        dv.btnSave.setText("确认添加");
+
+        setupCategoryDropdown(activity, db, dv.etCategory, "");
+
+        dv.btnSave.setOnClickListener(v -> {
+            try {
+                double amountDouble = Double.parseDouble(dv.etAmount.getText().toString());
+                long amountCents = (long) (amountDouble * 100);
+                String category = dv.etCategory.getText().toString().trim();
+                String remark = dv.etRemark.getText() != null ? dv.etRemark.getText().toString().trim() : "";
+
+                if (ADD_NEW_SENTINEL.equals(category)) {
+                    Toast.makeText(activity, "请先在下拉菜单里输入新分类名称", Toast.LENGTH_SHORT).show();
+                    return;
+                }
+
+                long timestamp = timestampForDateKeepingTimeOfDay(dateStrForNew);
+                Expense newExpense = new Expense(0, amountCents,
+                        category.isEmpty() ? "其他支出" : category,
+                        timestamp, dateStrForNew, "MANUAL");
+                if (!remark.isEmpty()) newExpense.setRemark(remark);
+
+                new Thread(() -> {
+                    db.expenseDao().insertExpense(newExpense);
+                    activity.runOnUiThread(() -> {
+                        dv.dialog.dismiss();
+                        Toast.makeText(activity, "补录成功", Toast.LENGTH_SHORT).show();
+                        if (listener != null) listener.onSaved();
+                    });
+                }).start();
+            } catch (NumberFormatException e) {
+                Toast.makeText(activity, "请输入合法的金额", Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        dv.dialog.show();
+    }
+
+    /**
+     * 把 dateStr（yyyy-MM-dd）和"现在的时分秒"拼成一个 timestamp：
+     * 日期部分固定成补录目标那一天，时间部分用当前时刻，
+     * 这样同一天里补录多笔时相互之间仍能按录入先后正确排序。
+     * 解析失败时兜底退化成 System.currentTimeMillis()（此时 date_str 仍然是对的，
+     * 只是 timestamp 会指向今天——比完全崩溃或写入非法数据更安全）。
+     */
+    private static long timestampForDateKeepingTimeOfDay(String dateStr) {
+        try {
+            SimpleDateFormat dateFmt = new SimpleDateFormat("yyyy-MM-dd", Locale.CHINA);
+            Date parsed = dateFmt.parse(dateStr);
+            if (parsed == null) return System.currentTimeMillis();
+            Calendar target = Calendar.getInstance();
+            target.setTime(parsed);
+            Calendar now = Calendar.getInstance();
+            target.set(Calendar.HOUR_OF_DAY, now.get(Calendar.HOUR_OF_DAY));
+            target.set(Calendar.MINUTE, now.get(Calendar.MINUTE));
+            target.set(Calendar.SECOND, now.get(Calendar.SECOND));
+            target.set(Calendar.MILLISECOND, now.get(Calendar.MILLISECOND));
+            return target.getTimeInMillis();
+        } catch (Exception e) {
+            return System.currentTimeMillis();
+        }
+    }
+
+    /** 弹窗外壳：inflate 布局、找控件、处理 BottomSheet 透明背景，编辑/新增两种模式共用 */
+    private static DialogViews buildDialogShell(Activity activity) {
+        BottomSheetDialog dialog = new BottomSheetDialog(activity,
+                com.google.android.material.R.style.Theme_MaterialComponents_Light_BottomSheetDialog);
+
+        // 用 ContextThemeWrapper 包装，确保 TextInputLayout / AutoCompleteTextView 能正确识别 Material 样式
+        ContextThemeWrapper themeWrapper = new ContextThemeWrapper(activity,
+                com.google.android.material.R.style.Theme_MaterialComponents_Light);
+
+        View view = LayoutInflater.from(themeWrapper).inflate(R.layout.dialog_edit_transaction, null);
+        dialog.setContentView(view);
+
+        DialogViews dv = new DialogViews();
+        dv.dialog = dialog;
+        dv.title = view.findViewById(R.id.tv_edit_dialog_title);
+        dv.etAmount = view.findViewById(R.id.et_edit_amount);
+        dv.etCategory = view.findViewById(R.id.et_edit_category);
+        dv.etRemark = view.findViewById(R.id.et_edit_remark);
+        dv.btnSave = view.findViewById(R.id.btn_save_changes);
+
         // 让 BottomSheet 背景透明以展示自绘的圆角背景
         if (view.getParent() instanceof View) {
             ((View) view.getParent()).setBackgroundColor(Color.TRANSPARENT);
         }
-        dialog.show();
+        return dv;
     }
 
     /** 异步加载库内已有分类，填充下拉菜单；末尾追加"新增分类"入口 */
@@ -114,7 +211,7 @@ public class EditExpenseDialog {
                 ArrayAdapter<String> adapter = new ArrayAdapter<>(
                         activity, android.R.layout.simple_list_item_1, categories);
                 etCategory.setAdapter(adapter);
-                etCategory.setText(currentCategory, false);
+                etCategory.setText(currentCategory == null ? "" : currentCategory, false);
 
                 // 阈值设为 0，点击即弹出完整列表，不需要先输入字符触发过滤
                 etCategory.setThreshold(0);
@@ -151,5 +248,15 @@ public class EditExpenseDialog {
                 })
                 .setNegativeButton("取消", (d, which) -> etCategory.setText("", false))
                 .show();
+    }
+
+    /** 弹窗内控件的简单集合，供 buildDialogShell() 返回，编辑/新增两种模式各自在其上继续操作 */
+    private static class DialogViews {
+        BottomSheetDialog dialog;
+        TextView title;
+        TextInputEditText etAmount;
+        AutoCompleteTextView etCategory;
+        TextInputEditText etRemark;
+        Button btnSave;
     }
 }

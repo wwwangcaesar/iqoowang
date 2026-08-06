@@ -121,6 +121,12 @@
   .checkin-btn[disabled]{ background:#E4DFD5; color:#B4AC9C; box-shadow:none; }
   .checkin-btn:active:not([disabled]){ transform:scale(.95); }
 
+  .recover-card{ margin:14px 20px 0; padding:14px 16px; border-radius:18px; background:#FFF1EC;
+    border:1px solid rgba(255,90,60,.18); display:flex; align-items:center; gap:10px; }
+  .recover-emoji{ font-size:22px; line-height:1; }
+  .recover-title{ font-size:13px; font-weight:800; color:#D6291F; }
+  .recover-sub{ font-size:11px; color:#B8664F; margin-top:3px; line-height:1.5; }
+
   .week-row{ display:flex; justify-content:space-between; margin:16px 20px 0; }
   .week-dot{ flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; }
   .week-dot .dot{ width:30px;height:30px;border-radius:50%; background:var(--gray1); display:flex;align-items:center;justify-content:center; font-size:14px; color:#fff; transition:all .4s; }
@@ -197,9 +203,17 @@
     <button class="checkin-btn" id="checkinBtn" onclick="checkIn()">点亮打卡</button>
   </div>
 
+  <div class="recover-card" id="recoverCard" style="display:none;">
+    <div class="recover-emoji">💔</div>
+    <div>
+      <div class="recover-title" id="recoverTitle"></div>
+      <div class="recover-sub" id="recoverSub"></div>
+    </div>
+  </div>
+
   <div class="week-row" id="weekRow"></div>
 
-  <div class="hint">每天打卡一次，连续不中断，火苗会越烧越旺；错过一天，就要从灰烬重新点燃～</div>
+  <div class="hint">每天打卡一次，连续不中断，火苗会越烧越旺；不小心断签也别灰心，连续补签几天就能找回之前的天数～</div>
 
   <div class="toast" id="toast"></div>
 
@@ -209,7 +223,8 @@
    window.StreakBridge.getStreakData() -> {currentStreak, checkedToday, last7Days:[bool*7]}
    window.StreakBridge.close()
    ════════════════════════════════════════════════════════════ */
-let state = { streak:12, checkedToday:false, week:[true,true,false,true,true,true,false] };
+let state = { streak:12, checkedToday:false, week:[true,true,false,true,true,true,false],
+  pendingRestore:0, recoveryTarget:0, recoveryProgress:0 };
 
 /* ════════════════════════════════════════════════════════════
    火焰"阶级"系统：连续打卡天数越多，火焰颜色越绚丽、层数越多（3层→7层）
@@ -285,24 +300,47 @@ function applyFlameVisual(){
 }
 
 
-const weekLabels=['一','二','三','四','五','六','日'];
+/* 【修复】state.week 是"今天往前推6天"的滚动窗口，today 可能是周一到周日中的任意一天，
+   不能像之前那样把7个格子写死标成"一二三四五六日"——那样只有today恰好是周日时才是对的，
+   其余情况全部错位。改成按每个格子实际对应的日期现算星期几。 */
+const weekdayCharByJsDay = ['日','一','二','三','四','五','六']; // JS Date.getDay(): 0=周日
 
 function renderWeek(){
   const row = document.getElementById('weekRow');
   row.innerHTML='';
   const todayIdx = state.week.length-1;
+  const now = new Date();
   state.week.forEach((done,i)=>{
     const d = document.createElement('div');
     d.className = 'week-dot' + (done?' done':'') + (i===todayIdx?' today':'');
-    d.innerHTML = `<div class="dot">${done?'✓':''}</div><span>${weekLabels[i]}</span>`;
+    const cellDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (todayIdx - i));
+    const label = weekdayCharByJsDay[cellDate.getDay()];
+    d.innerHTML = `<div class="dot">${done?'✓':''}</div><span>${label}</span>`;
     row.appendChild(d);
   });
+}
+
+/** 断签补签提示条：有 pendingRestore 时展示"还差几天恢复"，否则隐藏 */
+function renderRecoverCard(){
+  const card = document.getElementById('recoverCard');
+  if(!card) return;
+  if(state.pendingRestore > 0){
+    card.style.display = 'flex';
+    document.getElementById('recoverTitle').textContent = `断签了，之前连续 ${state.pendingRestore} 天`;
+    const left = Math.max(0, state.recoveryTarget - state.recoveryProgress);
+    document.getElementById('recoverSub').textContent = state.recoveryProgress > 0
+      ? `已连续补签 ${state.recoveryProgress}/${state.recoveryTarget} 天，再坚持 ${left} 天就能恢复`
+      : `再连续签到 ${state.recoveryTarget} 天即可恢复（不会清零重来）`;
+  } else {
+    card.style.display = 'none';
+  }
 }
 
 function renderBase(){
   document.getElementById('countNum').textContent = state.streak;
   document.getElementById('badgeText').textContent = '连续 ' + state.streak + ' 天';
   renderWeek();
+  renderRecoverCard();
 
   const flameWrap = document.getElementById('flameWrap');
   const glow = document.getElementById('flameGlow');
@@ -507,10 +545,22 @@ function checkIn(){
 
   setTimeout(()=>{
     const oldTier = getFlameTier(state.streak); // 累加前的阶级，用来判断这次打卡是否跨入新阶级
+    const wasRecovering = state.pendingRestore > 0; // 这次打卡之前，是否处于"补签中"状态
 
     state.streak += 1;
     state.checkedToday = true;
     if(state.week.length) state.week[state.week.length-1] = true;
+
+    // 断签补签：本地先按和 StreakManager.checkIn() 一致的规则算一遍，UI 立即给反馈，
+    // 不用等桥接层往返；真正的持久化仍然由下面的 StreakBridge.checkIn() 完成。
+    let justRestored = false;
+    if(wasRecovering && state.streak >= state.recoveryTarget){
+      state.streak = state.pendingRestore + state.streak; // 冻结的天数 + 这一轮补签天数，一起加回来
+      state.pendingRestore = 0;
+      state.recoveryTarget = 0;
+      justRestored = true;
+    }
+    if(state.pendingRestore > 0) state.recoveryProgress = state.streak; // 还没补完，同步这一轮进度
 
     const newTier = getFlameTier(state.streak);
     const evolved = newTier.name !== oldTier.name;
@@ -527,12 +577,20 @@ function checkIn(){
     btn.textContent = '已完成';
 
     renderWeek();
+    renderRecoverCard();
     applyFlameVisual();
 
     const c = flameCenter();
-    spawnConfetti(c.x, c.y-20, evolved ? 70 : 46);
+    spawnConfetti(c.x, c.y-20, justRestored ? 90 : (evolved ? 70 : 46));
 
-    showToast(evolved ? `🔥 火苗进化成了${newTier.name}！` : milestoneText(state.streak));
+    if(justRestored){
+      showToast(`🎉 补签成功！已恢复至 ${state.streak} 天`);
+    } else if(wasRecovering){
+      const left = state.recoveryTarget - state.recoveryProgress;
+      showToast(`🔥 补签第 ${state.recoveryProgress}/${state.recoveryTarget} 天，再坚持 ${left} 天`);
+    } else {
+      showToast(evolved ? `🔥 火苗进化成了${newTier.name}！` : milestoneText(state.streak));
+    }
 
     if(window.StreakBridge && StreakBridge.checkIn) StreakBridge.checkIn();
 
@@ -561,6 +619,14 @@ function initFromBridge(){
       state.streak = data.currentStreak ?? state.streak;
       state.checkedToday = !!data.checkedToday;
       if(Array.isArray(data.last7Days) && data.last7Days.length===7) state.week = data.last7Days;
+      state.pendingRestore = data.pendingRestore ?? 0;
+      state.recoveryTarget = data.recoveryTarget ?? 0;
+      state.recoveryProgress = data.recoveryProgress ?? 0;
+      if(data.justRestored){
+        // 兜底：如果补签成功那次 checkIn() 因为 App 被系统杀掉没来得及播完庆祝动画，
+        // 冷启动重新弹一次。这个标记在 Java 端只会被读取消费一次，不会重复触发。
+        setTimeout(()=> showToast(`🎉 补签成功！已恢复至 ${data.justRestoredTotal} 天`), 500);
+      }
     }
   }catch(e){}
   renderBase();
