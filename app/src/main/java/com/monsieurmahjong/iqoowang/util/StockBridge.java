@@ -48,9 +48,10 @@ public class StockBridge implements RealtimeMonitorService.Listener {
 
     /** 单支AI审核外层超时——如果本地模型这次推理真的原生层卡死（onToken/onComplete都不再
      *  触发，这是你反馈的"卡住"的真实成因），不能让整条审核队列跟着永远卡在这一支上。
-     *  超时后强制把这一支标记为TIMEOUT并继续下一支，不影响其余股票的审核进度。
-     *  时长比LocalAIAgent内部看门狗(45秒)略长，给内部机制先自行恢复的机会。 */
-    private static final long AI_REVIEW_TIMEOUT_MS = 50_000;
+     *  实测本地模型单次推理正常情况下需要约 90 秒，因此超时阈值设成 3 分钟，留够充裕度，
+     *  避免把“还在正常推理”误判成“卡死”。超时后强制把这一支标记为TIMEOUT并继续下一支，
+     *  不影响其余股票的审核进度。 */
+    private static final long AI_REVIEW_TIMEOUT_MS = 180_000; // 3分钟
     private final android.os.Handler mAiReviewHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
     /** 待确认信号pendingAction → 中文动作说明，口径对齐TradingRuleEngine.RuleResult.actionLabel */

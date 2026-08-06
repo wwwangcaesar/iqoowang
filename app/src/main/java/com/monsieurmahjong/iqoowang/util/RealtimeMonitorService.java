@@ -56,7 +56,7 @@ public class RealtimeMonitorService extends Service {
      *  但一定得比默认tick间隔(60秒)短，避免多轮tick堆叠。即使本地模型JNI层面彻底卡死
      *  （既不触发onToken也不触发onFinish），这次信号评估也会有明确的“超时不推送”结论
      *  写进决策日志，而不是静默消失。 */
-    private static final long AI_VERIFY_TIMEOUT_MS = 50_000;
+    private static final long AI_VERIFY_TIMEOUT_MS = 180_000; // 3分钟，实测本地模型单次正常推理需约90秒，之前50秒太短会把正常推理误判为超时；下面的单流水线队列已与tick周期解耦（见processQueueIfIdle注释），拉长这个阈值不会导致多轮tick堆叠
 
     /** 待AI复核队列的一条记录——规则引擎命中后不直接抢锁，而是先进这个队列，
      *  由下面的单流水线处理器按实际推理速度持续消费，不再跟tick的60秒周期绑定。 */

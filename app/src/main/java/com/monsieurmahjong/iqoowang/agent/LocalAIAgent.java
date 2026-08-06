@@ -46,7 +46,7 @@ public class LocalAIAgent {
     /** 推理锁看门狗超时——超过这个时长还没释放锁，视为上一次推理异常挂起（比如原生库
      *  崩溃导致onFinish回调根本没触发），强制解锁重试，避免一次卡死导致之后所有AI调用
      *  永久性地弹"AI正在思考中" */
-    private static final long INFER_WATCHDOG_MS = 45_000;
+    private static final long INFER_WATCHDOG_MS = 200_000; // 3分钟，实测本地模型单次推理需约90秒，这个阈值必须明显高于它，否则会把还在正常推理的误判为卡死而提前强制解锁，让新请求与旧推理并发争用MNN资源
 
     // Agent 进化状态
     private int mLevel = 1;

@@ -129,6 +129,17 @@
     border-radius: 2px;
   }
 
+  /* ── AI审核/决策日志/参数配置 tab切换 ── */
+  .review-tab {
+    flex: 1; text-align: center; padding: 8px 4px; font-size: 11px;
+    color: var(--text-sub); border-bottom: 2px solid transparent;
+    cursor: pointer; transition: color 0.2s, border-color 0.2s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .review-tab.active {
+    color: var(--accent-gold); border-bottom: 2px solid var(--accent-gold); font-weight: 600;
+  }
+
   /* ── 总资产面板 ── */
   .asset-panel {
     margin: 10px 12px;
@@ -783,6 +794,15 @@
       </button>
     </div>
 
+    <!-- 候选池/监听中的股票列表：放在运行选股按钮下面、AI增强分析上面，不用再向下滑很久才能看到 -->
+    <div class="card">
+      <div class="card-header">
+        <div class="card-title">候选池 · 监听中</div>
+        <div style="font-size:10px;color:var(--text-dim);" id="watchlistCountLabel">0 支</div>
+      </div>
+      <div id="watchlistContainer" style="padding:0 12px 12px;"></div>
+    </div>
+
     <!-- AI 增强分析 -->
     <div class="card">
       <div class="card-header">
@@ -824,26 +844,27 @@
       <div style="padding:0 14px 12px;font-size:10px;color:var(--text-dim);">
         候选池会持续跟踪直到满足买入条件或手动移除，锁屏/切后台不中断。
       </div>
-      <div style="padding:0 14px 12px;display:flex;gap:8px;align-items:center;">
-        <button onclick="aiReviewPendingSignals()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--accent-cyan);background:transparent;color:var(--accent-cyan);font-size:11px;">🤖 AI分析审核</button>
-        <button onclick="toggleDecisionLog()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--text-sub);background:transparent;color:var(--text-sub);font-size:11px;">📝 决策日志</button>
-        <button onclick="toggleConfigPanel()" style="flex:1;padding:7px;border-radius:6px;border:1px solid var(--accent-gold);background:transparent;color:var(--accent-gold);font-size:11px;">⚙️ 参数配置</button>
+      <div style="padding:0 12px;display:flex;border-bottom:1px solid var(--border);" id="reviewTabBar">
+        <div class="review-tab" id="tabBtn_aiReview" onclick="showReviewTab('aiReview')">🤖 AI分析审核</div>
+        <div class="review-tab" id="tabBtn_log" onclick="showReviewTab('log')">📝 决策日志</div>
+        <div class="review-tab" id="tabBtn_config" onclick="showReviewTab('config')">⚙️ 参数配置</div>
       </div>
-      <div id="aiReviewPanel" style="display:none;padding:0 12px 12px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <div id="aiReviewPanel" style="display:none;padding:10px 12px 12px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;">
           <span style="font-size:11px;color:var(--text-prime);font-weight:600;">🤖 AI分析审核队列</span>
-          <span id="aiReviewSummary" style="font-size:9px;color:var(--text-dim);"></span>
+          <span id="aiReviewSummary" style="font-size:9px;color:var(--text-dim);flex:1;text-align:right;"></span>
+          <button onclick="aiReviewPendingSignals()" style="padding:4px 10px;border-radius:6px;border:1px solid var(--accent-cyan);background:transparent;color:var(--accent-cyan);font-size:10px;white-space:nowrap;">▶ 开始审核</button>
         </div>
         <div id="aiReviewList"></div>
       </div>
-      <div id="decisionLogPanel" style="display:none;padding:0 12px 12px;">
+      <div id="decisionLogPanel" style="display:none;padding:10px 12px 12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
           <select id="decisionLogDateSelect" onchange="loadDecisionLog(this.value)" style="background:var(--bg-card2);color:var(--text-prime);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;flex:1;margin-right:8px;"></select>
           <span id="decisionLogPath" style="font-size:9px;color:var(--text-dim);"></span>
         </div>
         <pre id="decisionLogContent" style="background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:10px;color:var(--text-sub);line-height:1.6;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;font-family:var(--font-mono);">还没有日志</pre>
       </div>
-      <div id="configPanel" style="display:none;padding:0 12px 12px;">
+      <div id="configPanel" style="display:none;padding:10px 12px 12px;">
         <div style="font-size:9px;color:var(--text-dim);margin-bottom:6px;">
           调整规则引擎用的判断阈值，保存后立即生效（不用重启App），也会记住下次启动。改动前建议先了解每项含义，盲目调整可能导致信号变得过于灵敏或迟钝。
         </div>
@@ -853,7 +874,6 @@
           <button onclick="saveTradingConfig()" style="flex:2;padding:8px;border-radius:6px;border:none;background:var(--accent-gold);color:var(--bg-deep);font-size:12px;font-weight:600;">保存并生效</button>
         </div>
       </div>
-      <div id="watchlistContainer" style="padding:0 12px 12px;"></div>
     </div>
   </div>
 
@@ -1283,6 +1303,7 @@ STATE.aiReviewItems = [];
 
 function aiReviewPendingSignals() {
   if (!IS_ANDROID) { showToast('AI分析审核需要在App中运行'); return; }
+  showReviewTab('aiReview', true);
   Android.startAiReviewPendingSignals();
 }
 
@@ -1343,24 +1364,32 @@ window.onAiReviewError = function(msg) {
   showToast('⚠️ ' + msg);
 };
 
-// ══ 决策日志 ══
-let _decisionLogOpen = false;
+// ══ AI分析审核/决策日志/参数配置 —— tab切换（同时只显示其中一个，不用再向下滑找面板） ══
+let _activeReviewTab = null; // null | 'aiReview' | 'log' | 'config'
 
-function toggleDecisionLog() {
-  _decisionLogOpen = !_decisionLogOpen;
-  const panel = document.getElementById('decisionLogPanel');
-  panel.style.display = _decisionLogOpen ? 'block' : 'none';
-  if (_decisionLogOpen && IS_ANDROID) {
-    try {
-      const dates = JSON.parse(Android.getDecisionLogDates() || '[]');
-      const sel = document.getElementById('decisionLogDateSelect');
-      const today = new Date().toISOString().slice(0, 10);
-      const allDates = dates.includes(today) ? dates : [today, ...dates];
-      sel.innerHTML = allDates.map(d => `<option value="${d}">${d}${d === today ? '（今天）' : ''}</option>`).join('');
-      document.getElementById('decisionLogPath').textContent = Android.getDecisionLogDirPath();
-      loadDecisionLog(today);
-    } catch (e) { console.error('[DecisionLog] 初始化失败', e); }
-  }
+function showReviewTab(tab, forceOpen) {
+  _activeReviewTab = (!forceOpen && _activeReviewTab === tab) ? null : tab; // 再点一次当前tab收起面板
+  const panelIdOf = { aiReview: 'aiReviewPanel', log: 'decisionLogPanel', config: 'configPanel' };
+  ['aiReview', 'log', 'config'].forEach(t => {
+    document.getElementById('tabBtn_' + t).classList.toggle('active', t === _activeReviewTab);
+    document.getElementById(panelIdOf[t]).style.display = (t === _activeReviewTab) ? 'block' : 'none';
+  });
+  if (_activeReviewTab === 'log') initDecisionLogTab();
+  if (_activeReviewTab === 'config') loadTradingConfig();
+}
+
+// ══ 决策日志 ══
+function initDecisionLogTab() {
+  if (!IS_ANDROID) return;
+  try {
+    const dates = JSON.parse(Android.getDecisionLogDates() || '[]');
+    const sel = document.getElementById('decisionLogDateSelect');
+    const today = new Date().toISOString().slice(0, 10);
+    const allDates = dates.includes(today) ? dates : [today, ...dates];
+    sel.innerHTML = allDates.map(d => `<option value="${d}">${d}${d === today ? '（今天）' : ''}</option>`).join('');
+    document.getElementById('decisionLogPath').textContent = Android.getDecisionLogDirPath();
+    loadDecisionLog(today);
+  } catch (e) { console.error('[DecisionLog] 初始化失败', e); }
 }
 
 function loadDecisionLog(dayStr) {
@@ -1368,8 +1397,6 @@ function loadDecisionLog(dayStr) {
   const content = Android.getDecisionLog(dayStr) || '';
   document.getElementById('decisionLogContent').textContent = content || '这一天还没有决策记录';
 }
-
-let _configPanelOpen = false;
 
 /** 交易规则参数配置字段清单，和TradingRuleConfig.java字段一一对应。
  *  percent类型在界面上按百分比展示（乘100），保存时再除回100，避免用户输入"0.3"这种不直观的写法。 */
@@ -1396,11 +1423,6 @@ const TRADING_CONFIG_FIELDS = [
   { group: '候选池清理', key: 'candidateMaxObserveDays', label: '最大观察天数', type: 'int', step: 1, hint: '入池后超过这么多天仍未触发底仓信号，自动移出观察池（建议值10需回测）' },
 ];
 
-function toggleConfigPanel() {
-  _configPanelOpen = !_configPanelOpen;
-  document.getElementById('configPanel').style.display = _configPanelOpen ? 'block' : 'none';
-  if (_configPanelOpen) loadTradingConfig();
-}
 
 function loadTradingConfig() {
   if (!IS_ANDROID) { showToast('参数配置需要在App中运行'); return; }
