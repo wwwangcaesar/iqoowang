@@ -58,6 +58,12 @@ public class WatchlistManager {
         sLiveMetricsCache.put(code, new double[]{waterLine, vwap, volRatio});
     }
 
+    /** 读取某支股票最近一次tick缓存的水线/VWAP/量比快照——没有则返回null（比如App刚重启还没tick过）。
+     *  供StockBridge的手动AI审核队列拼 metrics 字符串用，跟候选池卡片上显示的数字同一口径。 */
+    public double[] getLiveMetrics(String code) {
+        return sLiveMetricsCache.get(code);
+    }
+
     public static void init(Context context) {
         if (sInstance == null) {
             synchronized (WatchlistManager.class) {

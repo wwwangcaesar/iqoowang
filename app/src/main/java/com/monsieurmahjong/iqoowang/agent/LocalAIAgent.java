@@ -333,10 +333,12 @@ public class LocalAIAgent {
 
     /**
      * 规则引擎命中后 AI 二次复核。仅当 AI 明确「确认」时 confirmed=true。
+     * position传null表示未持仓（或调用方没去查），不会报错，只是提示词里缺一块持仓上下文。
      */
     public void verifySignal(String code, String name, String action, String actionLabel,
                               String ruleNote, String metrics,
                               com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote quote,
+                              com.monsieurmahjong.iqoowang.dao.Position position,
                               AICallback cb) {
         if (!tryAcquireInferLock()) {
             cb.onError("AI正在思考中，请稍后");
@@ -346,7 +348,7 @@ public class LocalAIAgent {
             try {
                 String histNote = mCtxBuilder.buildStockHistoryNote(code);
                 String trend = mCtxBuilder.buildRecentTrend(code);
-                String prompt = buildVerifyPrompt(code, name, action, actionLabel, ruleNote, metrics, quote, histNote, trend);
+                String prompt = buildVerifyPrompt(code, name, action, actionLabel, ruleNote, metrics, quote, position, histNote, trend);
 
                 if (mEngine.isReady()) {
                     mEngine.reset();
@@ -366,6 +368,7 @@ public class LocalAIAgent {
     private String buildVerifyPrompt(String code, String name, String action, String actionLabel,
                                       String ruleNote, String metrics,
                                       com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote quote,
+                                      com.monsieurmahjong.iqoowang.dao.Position position,
                                       String histNote, String trend) {
         StringBuilder sb = new StringBuilder();
         sb.append(getSystemPrompt(action)).append("\n\n");
@@ -374,6 +377,32 @@ public class LocalAIAgent {
         sb.append("核心原则：右侧交易、放量验证分歧、资金安全第一。你不预测涨跌，只评估眼前证据的可信度。\n\n");
         sb.append("股票：").append(name).append("(").append(code).append(")\n");
         sb.append("候选动作：").append(actionLabel).append("（").append(action).append("）\n");
+
+        // 持仓状态——之前这里完全没传，导致AI只能泛泛而谈技术面，给不出具体买卖指令。
+        // 这是给具体价位/仓位建议的关键依据，跟 buildStockDataBlock()（聊天场景）同一口径。
+        boolean holding = position != null && position.getQuantity() > 0;
+        boolean isSellSide = "WARN_PRESSURE".equals(action) || "STOP_LOSS".equals(action);
+        if (holding) {
+            double cost = position.getAvgCost();
+            if (quote != null && cost > 0) {
+                double pnlPct = (quote.price - cost) / cost * 100;
+                sb.append(String.format(Locale.CHINA,
+                        "持仓状态：持仓中，成本价¥%.2f，数量%d股，%s%.2f%%，建仓日%s\n",
+                        cost, position.getQuantity(), pnlPct >= 0 ? "浮盈" : "浮亏", Math.abs(pnlPct),
+                        position.getOpenDate() != null ? position.getOpenDate() : "未知"));
+            } else {
+                sb.append(String.format(Locale.CHINA,
+                        "持仓状态：持仓中，成本价¥%.2f，数量%d股（实时价获取失败，无法计算浮盈亏），建仓日%s\n",
+                        cost, position.getQuantity(),
+                        position.getOpenDate() != null ? position.getOpenDate() : "未知"));
+            }
+        } else {
+            sb.append("持仓状态：未持仓\n");
+            if (isSellSide) {
+                sb.append("【注意】卖出方向信号但当前显示未持仓，可能是持仓数据不同步或已手动卖出，请在说明里提醒用户核实持仓，不要凭空给出卖出指令。\n");
+            }
+        }
+
         sb.append("规则引擎依据：").append(ruleNote).append("\n");
         if (metrics != null && !metrics.isEmpty()) sb.append("量化指标：").append(metrics).append("\n");
         if (quote != null) {
@@ -395,10 +424,20 @@ public class LocalAIAgent {
         if (!trend.isEmpty()) sb.append("近期走势：").append(trend).append("\n");
         if (!histNote.isEmpty()) sb.append("历史交易：").append(histNote).append("\n");
 
-        sb.append("\n【输出要求】严格按下面三行输出：\n");
-        sb.append("推理：简要说明你的判断逻辑（量价、VWAP、水线、止损位等），不超过80字\n");
+        // 信号方向显式告知——避免出现“判断确认了，却又用观望/等企稳这类话术搬碬”的方向错位，
+        // 这正是之前太极集团那条抱压预警确认却写“建议等放量回踩VWAP企稳再议”的根因。
+        sb.append("\n【信号方向】本次是").append(isSellSide ? "卖出方向" : "买入方向").append("的信号。");
+        if (isSellSide) {
+            sb.append("你判断为「确认」就代表你同意规则引擎的建议——现在应该卖出/减仓，不能用“观望/等企稳再议”这类话搬碮，那等于既确认了又没确认。\n");
+        } else {
+            sb.append("你判断为「确认」就代表你同意规则引擎的建议——现在可以按建议买入/加仓，不能确认了却又说“再等等”。\n");
+        }
+
+        sb.append("\n【输出要求】严格按下面四行输出，不要多一行也不要少一行：\n");
+        sb.append("推理：结合量价、VWAP、水线、持仓盈亏等说明你的判断逻辑，不超过90字\n");
         sb.append("判断：确认 或 不确认\n");
-        sb.append("说明：不超过80字大白话，说清楚为什么、风险提示\n");
+        sb.append("操作：判断为确认时必须给出可直接执行的指令，必须包含具体价位和仓位/减仓比例（例如“现价¥15.25起分批减仓，每次1/3，跌破¥15.10前阳低剩余仓位无条件清仓”，或“现价¥12.30已站稳VWAP，建议按底仓比例15%建仓”）；判断为不确认时写“观望，暂不操作，等待XX信号出现”，不超过70字\n");
+        sb.append("说明：不超过60字大白话，说清楚主要风险点\n");
         return sb.toString();
     }
 
