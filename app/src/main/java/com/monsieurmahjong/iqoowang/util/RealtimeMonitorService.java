@@ -455,7 +455,7 @@ public class RealtimeMonitorService extends Service {
         mHandler.postDelayed(timeoutRunnable, AI_VERIFY_TIMEOUT_MS);
 
         LocalAIAgent.get(getApplicationContext()).verifySignal(
-                item.code, item.name, actionKey, result.actionLabel, result.note, result.metrics, quote,
+                item.code, item.name, actionKey, result.actionLabel, result.note, result.metrics, quote, pos,
                 new LocalAIAgent.AICallback() {
                     @Override public void onToken(String token) {}
 

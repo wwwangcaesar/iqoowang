@@ -424,11 +424,11 @@ public class LocalAIAgent {
         if (!trend.isEmpty()) sb.append("近期走势：").append(trend).append("\n");
         if (!histNote.isEmpty()) sb.append("历史交易：").append(histNote).append("\n");
 
-        // 信号方向显式告知——避免出现“判断确认了，却又用观望/等企稳这类话术搬碬”的方向错位，
-        // 这正是之前太极集团那条抱压预警确认却写“建议等放量回踩VWAP企稳再议”的根因。
+        // 信号方向显式告知——避免出现“判断确认了，却又用观望/等企稳这类话术搪塞”的方向错位，
+        // 这正是之前太极集团那条抛压预警确认却写“建议等放量回踩VWAP企稳再议”的根因。
         sb.append("\n【信号方向】本次是").append(isSellSide ? "卖出方向" : "买入方向").append("的信号。");
         if (isSellSide) {
-            sb.append("你判断为「确认」就代表你同意规则引擎的建议——现在应该卖出/减仓，不能用“观望/等企稳再议”这类话搬碮，那等于既确认了又没确认。\n");
+            sb.append("你判断为「确认」就代表你同意规则引擎的建议——现在应该卖出/减仓，不能用“观望/等企稳再议”这类话搪塞，那等于既确认了又没确认。\n");
         } else {
             sb.append("你判断为「确认」就代表你同意规则引擎的建议——现在可以按建议买入/加仓，不能确认了却又说“再等等”。\n");
         }
@@ -458,8 +458,26 @@ public class LocalAIAgent {
             r.confirmed = text.contains("确认") && !hasNotConfirm;
         }
 
+        // 【新增】解析"操作"行——这是具体可执行的买卖指令，之前没这行，导致"确认"只是认同方向，
+        // 却给不出具体怎么做。注意此行只在一行内，避免贪婪匹配到后面的"说明："行。
+        java.util.regex.Matcher am = java.util.regex.Pattern.compile("操作[:：]\\s*([^\\n]+)").matcher(text);
+        String actionAdvice = am.find() ? am.group(1).trim() : "";
+
         java.util.regex.Matcher rm = java.util.regex.Pattern.compile("说明[:：]\\s*([\\s\\S]+)").matcher(text);
-        r.reason = rm.find() ? rm.group(1).trim() : text.trim();
+        String explain = rm.find() ? rm.group(1).trim() : "";
+        if (explain.isEmpty() && actionAdvice.isEmpty()) explain = text.trim(); // 格式完全没对上时就把原文直接给用户，保证最差也有个结果可看
+
+        if (r.confirmed) {
+            if (!actionAdvice.isEmpty()) {
+                // 确认且有明确操作指令——把操作指令置顶，让用户一眼看到该怎么做，说明作为补充依据跟在后面
+                r.reason = "【操作建议】" + actionAdvice + (explain.isEmpty() ? "" : "　" + explain);
+            } else {
+                // 确认了但AI没按格式给出操作指令——不能装作没这回事，明确告诉用户，别让人误以为只是"观察"
+                r.reason = (explain.isEmpty() ? text.trim() : explain) + "（AI未按格式给出明确操作指令，请结合规则依据自行判断）";
+            }
+        } else {
+            r.reason = explain.isEmpty() ? text.trim() : explain;
+        }
         return r;
     }
 

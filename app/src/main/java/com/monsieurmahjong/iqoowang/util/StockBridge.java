@@ -782,8 +782,12 @@ public class StockBridge implements RealtimeMonitorService.Listener {
             RealtimeQuoteManager.Quote quote = quotes.get(fresh.code);
             String actionLabel = AI_REVIEW_ACTION_LABELS.containsKey(fresh.pendingAction)
                     ? AI_REVIEW_ACTION_LABELS.get(fresh.pendingAction) : fresh.pendingAction;
+            // 【修复】之前这里 metrics 传的是空字符串，持仓也从未传——AI只能凭规则文字描述泛泛而谈，
+            // 缺少具体数字支撑，这也是列表页分析比AI大脑聊天浅的主因之一。现补上两个：
+            String metrics = buildAiReviewMetricsString(fresh.code);
+            com.monsieurmahjong.iqoowang.dao.Position position = DatabaseManager.get().getPositionByCode(fresh.code);
             mAgent.verifySignal(fresh.code, fresh.name, fresh.pendingAction, actionLabel,
-                    fresh.pendingReason, "", quote,
+                    fresh.pendingReason, metrics, quote, position,
                     new LocalAIAgent.AICallback() {
                         @Override public void onToken(String token) {}
 
@@ -845,6 +849,14 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         } catch (Exception e) {
             Log.e(TAG, "pushAiReviewProgress", e);
         }
+    }
+
+    /** 从候选池最近一次tick缓存的水线/VWAP/量比快照拼出跟候选池卡片同一口径的指标文本，
+     *  没有缓存（比如App刚重启还没tick过）就返回空字符串，交给AI凭规则依据本身判断，不会报错。 */
+    private String buildAiReviewMetricsString(String code) {
+        double[] m = WatchlistManager.get().getLiveMetrics(code);
+        if (m == null) return "";
+        return String.format(java.util.Locale.CHINA, "水线¥%.2f VWAP¥%.2f 量比%.2fx", m[0], m[1], m[2]);
     }
 
     /** 今天的决策日志内容（无需切到文件管理器，App内直接看） */
