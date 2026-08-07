@@ -209,17 +209,8 @@ public class SettingsFragment extends Fragment {
         // 异步查询当前月份支出，再弹出日历
         // 使用 ExpenseDao.getAllExpensesByMonthSync(month)
         // month 格式 "yyyy-MM"，与 date_str 字段的 LIKE 匹配一致
-        new Thread(() -> {
-            String monthKey = new java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.getDefault())
-                    .format(java.util.Calendar.getInstance().getTime());
-            List<Expense> monthExpenses = db.expenseDao().getAllExpensesByMonthSync(monthKey);
-            if (getActivity() == null) return;
-            getActivity().runOnUiThread(() -> {
-                CalendarDialogFragment dialog =
-                        CalendarDialogFragment.newInstance(new ArrayList<>(monthExpenses));
-                dialog.show(getChildFragmentManager(), "CalendarDialog");
-            });
-        }).start();
+        CalendarDialogFragment dialog = CalendarDialogFragment.newInstance();
+        dialog.show(getChildFragmentManager(), "CalendarDialog");
     }
 
     // ─────────────────────────────────────────────────────

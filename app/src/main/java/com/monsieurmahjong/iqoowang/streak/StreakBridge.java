@@ -12,11 +12,11 @@ import org.json.JSONObject;
 public class StreakBridge {
 
     private final Context context;
-    private final StreakActivity activity;
+//    private final StreakActivity activity;
 
-    public StreakBridge(Context context, StreakActivity activity) {
+    public StreakBridge(Context context) {
         this.context = context;
-        this.activity = activity;
+//        this.activity = activity;
     }
 
     @JavascriptInterface
@@ -49,8 +49,8 @@ public class StreakBridge {
 
     @JavascriptInterface
     public void close() {
-        if (activity != null) {
-            activity.finish();
-        }
+//        if (activity != null) {
+//            activity.finish();
+//        }
     }
 }
