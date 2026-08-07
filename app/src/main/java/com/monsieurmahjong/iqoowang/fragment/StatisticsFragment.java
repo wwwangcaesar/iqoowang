@@ -533,19 +533,12 @@ public class StatisticsFragment extends Fragment {
                 .show();
     }
     private void openCalendarDialog() {
-        // 异步查询本月支出，再弹出日历
-        new Thread(() -> {
-            // 修正后（使用新增方法，只查当月）
-            String monthKey = new SimpleDateFormat("yyyy-MM", Locale.getDefault())
-                    .format(Calendar.getInstance().getTime());
-            List<Expense> monthExpenses = db.expenseDao().getAllExpensesByMonthSync(monthKey);
-            if (getActivity() == null) return;
-            getActivity().runOnUiThread(() -> {
-                CalendarDialogFragment dialog =
-                        CalendarDialogFragment.newInstance(new ArrayList<>(monthExpenses));
-                dialog.show(getChildFragmentManager(), "CalendarDialog");
-            });
-        }).start();
+        // 弹窗自己会按当前显示的月份异步查库并渲染（见
+        // CalendarDialogFragment.loadMonthDataAndRender()），这里不用再预查一次本月数据了。
+        // 这也顺便修复了一个 bug：以前这里只预查了"打开那一刻"所在的月份，
+        // 用户在弹窗里翻到其它月份时没有新数据，格子全部空白。
+        CalendarDialogFragment dialog = CalendarDialogFragment.newInstance();
+        dialog.show(getChildFragmentManager(), "CalendarDialog");
     }
     private android.graphics.drawable.LayerDrawable createProgressBarDrawable(String hexActiveColor, float percentage) {
         GradientDrawable track = new GradientDrawable();

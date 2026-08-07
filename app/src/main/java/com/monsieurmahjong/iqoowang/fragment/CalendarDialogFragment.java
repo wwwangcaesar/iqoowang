@@ -19,6 +19,7 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.DialogFragment;
 
 import com.monsieurmahjong.iqoowang.R;
+import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
 
 import java.text.SimpleDateFormat;
@@ -40,13 +41,14 @@ import java.util.Map;
  */
 public class CalendarDialogFragment extends DialogFragment {
 
-    private static final String ARG_EXPENSES = "arg_expenses";
-
     // 当前显示的年月
     private int displayYear;
     private int displayMonth; // 0-indexed (Calendar.MONTH)
 
-    // 全量支出数据：key = "yyyy-MM-dd"，value = 总金额（分）
+    // 当前 displayYear/displayMonth 这一个月的支出数据：key = "yyyy-MM-dd"，value = 总金额（分）。
+    // 【2026-08 修复】以前是构造时一次性传入 List<Expense> 建好整份 map，翻页时不会重新查询——
+    // 只有"打开对话框那一刻"所在的月份是对的，翻到其它月份格子全部空白（看起来像消费记录丢了）。
+    // 现在改成每次显示的月份变化（初次加载 / 上一月 / 下一月）都重新按月查库，永远只缓存当前这一屏。
     private Map<String, Long> dailyExpenseMap = new HashMap<>();
 
     // 今日日期字符串 "yyyy-MM-dd"
@@ -56,12 +58,12 @@ public class CalendarDialogFragment extends DialogFragment {
     private GridLayout calendarGrid;
     private TextView tvMonthTitle;
 
+    private AppDatabase db;
+
     // ── 工厂方法 ─────────────────────────────────────────
 
-    public static CalendarDialogFragment newInstance(List<Expense> expenses) {
-        CalendarDialogFragment fragment = new CalendarDialogFragment();
-        fragment.buildExpenseMap(expenses);
-        return fragment;
+    public static CalendarDialogFragment newInstance() {
+        return new CalendarDialogFragment();
     }
 
     /**
@@ -98,6 +100,7 @@ public class CalendarDialogFragment extends DialogFragment {
         displayMonth = today.get(Calendar.MONTH);
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
         todayStr = sdf.format(today.getTime());
+        db = AppDatabase.getDatabase(requireContext().getApplicationContext());
     }
 
     @Nullable
@@ -158,8 +161,10 @@ public class CalendarDialogFragment extends DialogFragment {
         scrollView.addView(content);
         root.addView(scrollView);
 
-        // 首次渲染当前月
+        // 先同步渲染一次空壳（日期数字/今日高亮先出来，避免弹窗先白屏一下），
+        // 真实的当月消费数据异步查完之后在 loadMonthDataAndRender() 里再刷新一次
         renderCalendar();
+        loadMonthDataAndRender();
 
         return root;
     }
@@ -241,7 +246,7 @@ public class CalendarDialogFragment extends DialogFragment {
             displayMonth--;
             if (displayMonth < 0) { displayMonth = 11; displayYear--; }
             updateMonthTitle();
-            renderCalendar();
+            loadMonthDataAndRender();
         });
 
         // 月份标题
@@ -265,7 +270,7 @@ public class CalendarDialogFragment extends DialogFragment {
             displayMonth++;
             if (displayMonth > 11) { displayMonth = 0; displayYear++; }
             updateMonthTitle();
-            renderCalendar();
+            loadMonthDataAndRender();
         });
 
         nav.addView(btnPrev);
@@ -352,6 +357,31 @@ public class CalendarDialogFragment extends DialogFragment {
     }
 
     // ── 日历渲染核心 ─────────────────────────────────────
+
+    /**
+     * 按 displayYear/displayMonth 重新查询这一个月的消费数据并刷新格子。
+     * 初次显示、上一月、下一月都会调用这个方法——每次都是新查询，不复用旧月份的缓存，
+     * 这样翻到任何月份都能正确显示该月的消费标记，而不是只有打开对话框那一刻的月份是对的。
+     *
+     * 用请求发出时的 reqYear/reqMonth 和查询返回时的 displayYear/displayMonth 做比对，
+     * 丢弃"用户已经又翻了别的月份"之后才妧妧来迟的过期结果，避免快速连续翻页时乱序覆盖。
+     */
+    private void loadMonthDataAndRender() {
+        if (getContext() == null || db == null) return;
+        final int reqYear = displayYear;
+        final int reqMonth = displayMonth;
+        String monthKey = String.format(Locale.getDefault(), "%d-%02d", reqYear, reqMonth + 1);
+
+        new Thread(() -> {
+            List<Expense> monthExpenses = db.expenseDao().getAllExpensesByMonthSync(monthKey);
+            if (getActivity() == null) return;
+            getActivity().runOnUiThread(() -> {
+                if (!isAdded() || reqYear != displayYear || reqMonth != displayMonth) return;
+                buildExpenseMap(monthExpenses);
+                renderCalendar();
+            });
+        }).start();
+    }
 
     /** 更新月份标题文字 */
     private void updateMonthTitle() {
