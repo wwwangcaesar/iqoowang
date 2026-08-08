@@ -205,4 +205,55 @@ public class DecisionLogger {
     public String getLogDirPath() {
         return getLogDir().getAbsolutePath();
     }
+
+    /**
+     * 周期性监控快照——不管本轮有没有触发买卖信号，都定期把所有监控中/持仓中股票的现价、
+     * 参考价（持仓成本或水线）和当前规则判断记一笔。目的是证明监控确实在跑，
+     * 也给事后复盘留一条时间线——之前只有规则命中时才写日志，没命中的时候日志
+     * 会长时间空白，无法区分“确实没信号”和“监控其实已经停了”。
+     * lines：调用方已经拼好的每支股票一行摘要。
+     */
+    public void logSnapshot(java.util.List<String> lines) {
+        if (lines == null || lines.isEmpty()) return;
+        StringBuilder sb = new StringBuilder();
+        sb.append("[").append(mTimeFmt.format(new java.util.Date())).append("] ");
+        sb.append("【监控快照】共").append(lines.size()).append("支\n");
+        for (String line : lines) {
+            sb.append("  ").append(line).append("\n");
+        }
+        sb.append(repeat('-', 72)).append("\n");
+        appendToFile(sb.toString());
+    }
+
+    /**
+     * 只保留最近keepDays天的决策日志，避免无限堆积。在监控服务每次启动时调用一次即可，
+     * 不需要单独的定时任务——用户不开监控的时候本来也不会有新日志，没必要清理。
+     */
+    public void cleanupOldLogs() {
+        cleanupOldLogs(14);
+    }
+
+    public void cleanupOldLogs(int keepDays) {
+        java.io.File dir = getLogDir();
+        java.io.File[] files = dir.listFiles((d, name) -> name.startsWith("decisions_") && name.endsWith(".txt"));
+        if (files == null || files.length == 0) return;
+        java.util.Calendar cutoff = java.util.Calendar.getInstance();
+        cutoff.add(java.util.Calendar.DAY_OF_YEAR, -keepDays);
+        int deleted = 0;
+        for (java.io.File f : files) {
+            String n = f.getName();
+            String dateStr = n.substring("decisions_".length(), n.length() - ".txt".length());
+            try {
+                java.util.Date d2 = mDayFmt.parse(dateStr);
+                if (d2 != null && d2.before(cutoff.getTime())) {
+                    if (f.delete()) deleted++;
+                }
+            } catch (Exception e) {
+                // 文件名不是日期格式，跳过，不误删
+            }
+        }
+        if (deleted > 0) {
+            Log.i(TAG, "清理了" + deleted + "个超过" + keepDays + "天的旧日志文件");
+        }
+    }
 }

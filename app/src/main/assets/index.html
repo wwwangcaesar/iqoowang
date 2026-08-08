@@ -838,7 +838,8 @@
         <button class="scan-btn" style="flex:1;min-width:120px;padding:8px;font-size:12px;" id="monitorToggleBtn" onclick="toggleMonitor()">▶ 启动监控</button>
         <select id="monitorInterval" style="background:var(--bg-card2);color:var(--text-prime);border:1px solid var(--border);border-radius:8px;padding:8px;font-size:12px;">
           <option value="30000">30秒</option>
-          <option value="60000" selected>1分钟</option>
+          <option value="60000">1分钟</option>
+          <option value="120000" selected>2分钟</option>
         </select>
       </div>
       <div style="padding:0 14px 12px;font-size:10px;color:var(--text-dim);">
@@ -1105,7 +1106,7 @@ window.initPositions = function(jsonStr) {
       loadWatchlist();
       loadEvolveLog();
       if (Android.loadPrefs('monitor_running', '0') === '1') {
-        const savedInterval = +Android.loadPrefs('monitor_interval', '60000') || 60000;
+        const savedInterval = +Android.loadPrefs('monitor_interval', '120000') || 120000;
         document.getElementById('monitorInterval').value = String(savedInterval);
         Android.startMonitor(savedInterval);
         STATE.monitorRunning = true;
@@ -1499,7 +1500,7 @@ function toggleMonitor() {
     btn.textContent = '▶ 启动监控';
     document.getElementById('monitorTickStatus').textContent = '已停止';
   } else {
-    const interval = +document.getElementById('monitorInterval').value || 60000;
+    const interval = +document.getElementById('monitorInterval').value || 120000;
     Android.startMonitor(interval);
     STATE.monitorRunning = true;
     btn.textContent = '⏹ 停止监控';

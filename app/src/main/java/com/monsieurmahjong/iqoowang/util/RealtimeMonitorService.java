@@ -44,7 +44,7 @@ public class RealtimeMonitorService extends Service {
     private static final int NOTIFICATION_ID = 1001;
 
     public static final String EXTRA_INTERVAL_MS = "interval_ms";
-    public static final long DEFAULT_INTERVAL_MS = 60_000;
+    public static final long DEFAULT_INTERVAL_MS = 120_000; // 2分钟：之前30/60秒轮询过密，与AI复核真实耗时(90-180秒)错开，也降低行情接口频率降低双熔断风险。前端默认选项同步改为2分钟
     public static final long FAST_INTERVAL_MS = 30_000;
 
     private final Handler mHandler = new Handler(Looper.getMainLooper());
@@ -52,11 +52,26 @@ public class RealtimeMonitorService extends Service {
     private final TradingRuleEngine mEngine = new TradingRuleEngine();
     private int mTickCount = 0;
     private final Set<String> mStaleWarnedCodes = new HashSet<>();
-    /** AI复核外层超时——比LocalAIAgent内部看门狗(45秒)稍长一点，给内部机制先机会处理；
-     *  但一定得比默认tick间隔(60秒)短，避免多轮tick堆叠。即使本地模型JNI层面彻底卡死
-     *  （既不触发onToken也不触发onFinish），这次信号评估也会有明确的“超时不推送”结论
-     *  写进决策日志，而不是静默消失。 */
-    private static final long AI_VERIFY_TIMEOUT_MS = 180_000; // 3分钟，实测本地模型单次正常推理需约90秒，之前50秒太短会把正常推理误判为超时；下面的单流水线队列已与tick周期解耦（见processQueueIfIdle注释），拉长这个阈值不会导致多轮tick堆叠
+
+    // 断档检测：把每次tick的时间戳存进SharedPreferences，App/服务重启时用来判断
+    // 中间是不是隔了太久没监控（被系统杀了、网络断了、或者根本没打开App）
+    private static final String PREFS_NAME = "monitor_prefs";
+    private static final String KEY_LAST_TICK_AT = "last_tick_at";
+
+    // 周期性监控快照：不管有没有信号，定期把所有股票的现价/参考价/判断记一笔，
+    // 证明监控确实在跑，不能靠“通知栏还在”来判断
+    private static final long SNAPSHOT_INTERVAL_MS = 15 * 60_000; // 15分钟一次
+    private volatile long mLastSnapshotAt = 0;
+
+    // 行情双源全部失败时的日志节流：断网期间避免每个tick都刷一条，最多10分钟记一次
+    private static final long FETCH_FAIL_LOG_THROTTLE_MS = 10 * 60_000;
+    private volatile long mLastFetchFailLoggedAt = 0;
+    /** AI复核外层超时——实测本地模型单次正常推理需约90秒，与LocalAIAgent内部看门狗(200秒)错开，
+     *  外层先放弃、内部看门狗不会提前介入搅乱正常推理。下面的单流水线队列已与tick周期
+     *  解耦（见processQueueIfIdle注释），拉长这个阈值不会导致多轮tick堆叠。即使本地模型JNI层面
+     *  彻底卡死（既不触发onToken也不触发onFinish），这次信号评估也会有明确的“超时不推送”
+     *  结论写进决策日志，而不是静默消失。 */
+    private static final long AI_VERIFY_TIMEOUT_MS = 180_000; // 3分钟
 
     /** 待AI复核队列的一条记录——规则引擎命中后不直接抢锁，而是先进这个队列，
      *  由下面的单流水线处理器按实际推理速度持续消费，不再跟tick的60秒周期绑定。 */
@@ -110,7 +125,36 @@ public class RealtimeMonitorService extends Service {
         mHandler.post(mTick);
         Log.i(TAG, "监控服务启动，间隔=" + mIntervalMs + "ms");
         DecisionLogger.get().logNote("监控服务启动，间隔=" + (mIntervalMs / 1000) + "秒");
+
+        // 断档检测：如果上次tick距现在超过预期间隔的3倍以上，说明中间很大概率被系统杀掉、
+        // 网络中断或者很久没打开App，明确写进日志，别让人以为“通知还在=一直在正常监控”。
+        checkAndLogMonitorGap();
+        // 顺手清一次超过14天的旧日志，不需要单独的定时任务。
+        try { DecisionLogger.get().cleanupOldLogs(); } catch (Exception e) { Log.e(TAG, "清理旧日志失败", e); }
+
         return START_STICKY;
+    }
+
+    /** 把上次tick时间和现在对比，间隔异常大就明确写一条警示进决策日志。
+     *  第一次运行（没有历史记录）不报警，避免新装App误报。 */
+    private void checkAndLogMonitorGap() {
+        android.content.SharedPreferences sp = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        long lastTick = sp.getLong(KEY_LAST_TICK_AT, 0);
+        if (lastTick <= 0) return;
+        long gapMs = System.currentTimeMillis() - lastTick;
+        if (gapMs > mIntervalMs * 3) {
+            DecisionLogger.get().logNote(String.format(java.util.Locale.CHINA,
+                    "⚠️ 监控中断提示：距上次记录已经过去%s（预期间隔%d秒），期间可能被系统后台限制终止、"
+                            + "网络中断，或App一直未打开。如经常出现，请检查系统电池优化/后台自启动权限设置。",
+                    formatDuration(gapMs), mIntervalMs / 1000));
+        }
+    }
+
+    private String formatDuration(long ms) {
+        long totalMin = ms / 60_000;
+        if (totalMin < 60) return totalMin + "分钟";
+        long h = totalMin / 60, m = totalMin % 60;
+        return h + "小时" + m + "分钟";
     }
 
     @Override
@@ -135,6 +179,9 @@ public class RealtimeMonitorService extends Service {
 
     private void doTick() {
         mTickCount++;
+        // 心跳戳记：无论交易时间内外都写，证明tick自身还在正常跑。
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                .putLong(KEY_LAST_TICK_AT, System.currentTimeMillis()).apply();
 
         if (!isWithinTradingHours()) {
             // 非交易时段（晚上/凌晨/周末）：不拉行情、不跑规则评估、不发通知。行情根本没变，
@@ -170,34 +217,71 @@ public class RealtimeMonitorService extends Service {
 
         RealtimeQuoteManager.get().fetchBatch(codes, (quotes, failed) -> {
             if (!failed.isEmpty()) Log.w(TAG, "本轮" + failed.size() + "支行情获取失败: " + failed);
+            if (quotes.isEmpty() && !codes.isEmpty()) {
+                // 两个行情源全都没拿到任何一支的数据——很可能是双熔断中或网络彻底不通。
+                // 之前这种情况只写Logcat，用户看不到，会误以为监控挂了，现写进决策日志（带节流）。
+                maybeLogTotalFetchFailure(codes.size());
+            }
+
+            // 本轮是否到了写监控快照的时候——不管有没有信号都定期记一笔，证明监控确实在跑。
+            boolean dueForSnapshot = System.currentTimeMillis() - mLastSnapshotAt >= SNAPSHOT_INTERVAL_MS;
+            List<String> snapshotLines = dueForSnapshot
+                    ? java.util.Collections.synchronizedList(new ArrayList<>()) : null;
 
             AtomicInteger pending = new AtomicInteger(watchItems.size());
+            if (watchItems.isEmpty()) {
+                finishTickBatch(snapshotLines);
+                return;
+            }
             for (WatchlistManager.WatchlistItem item : watchItems) {
                 if (isPendingStatus(item.status)) {
-                    pending.decrementAndGet();
+                    if (pending.decrementAndGet() == 0) finishTickBatch(snapshotLines);
                     continue;
                 }
                 RealtimeQuoteManager.Quote q = quotes.get(item.code);
                 if (q == null) {
-                    pending.decrementAndGet();
+                    if (pending.decrementAndGet() == 0) finishTickBatch(snapshotLines);
                     continue;
                 }
                 // 所有状态均需分时数据（VWAP/量比/止损追踪）
                 RealtimeQuoteManager.get().fetchMinuteLine(item.code, new RealtimeQuoteManager.MinuteCallback() {
                     @Override
                     public void onResult(String code, List<RealtimeQuoteManager.MinutePoint> points) {
-                        evaluateAndAct(item, q, points);
-                        pending.decrementAndGet();
+                        String line = evaluateAndAct(item, q, points);
+                        if (snapshotLines != null && line != null) snapshotLines.add(line);
+                        if (pending.decrementAndGet() == 0) finishTickBatch(snapshotLines);
                     }
                     @Override
                     public void onError(String code, String msg) {
                         Log.w(TAG, "分时数据获取失败 " + code + ": " + msg);
-                        evaluateAndAct(item, q, null);
-                        pending.decrementAndGet();
+                        String line = evaluateAndAct(item, q, null);
+                        if (snapshotLines != null && line != null) snapshotLines.add(line);
+                        if (pending.decrementAndGet() == 0) finishTickBatch(snapshotLines);
                     }
                 });
             }
         });
+    }
+
+    /** 本轮tick所有股票都评估完了才会走到这里。snapshotLines为null表示本轮还没到写快照的时间，直接跳过。 */
+    private void finishTickBatch(List<String> snapshotLines) {
+        if (snapshotLines == null || snapshotLines.isEmpty()) return;
+        mLastSnapshotAt = System.currentTimeMillis();
+        try {
+            DecisionLogger.get().logSnapshot(new ArrayList<>(snapshotLines));
+        } catch (Exception e) {
+            Log.e(TAG, "写监控快照日志失败", e);
+        }
+    }
+
+    /** 行情双源全部失败时的节流日志——断网期间避免每个tick都刷屏，最多每10分钟记一次。 */
+    private void maybeLogTotalFetchFailure(int codeCount) {
+        long now = System.currentTimeMillis();
+        if (now - mLastFetchFailLoggedAt < FETCH_FAIL_LOG_THROTTLE_MS) return;
+        mLastFetchFailLoggedAt = now;
+        DecisionLogger.get().logNote(String.format(java.util.Locale.CHINA,
+                "⚠️ 本轮行情获取全部失败（腾讯源+新浪源均不可用或正在熔断冷却），%d支股票本轮未评估。"
+                        + "如持续出现，请检查网络连接是否正常。", codeCount));
     }
 
     private void syncPositionsIntoWatchlist(List<Position> positions) {
@@ -238,7 +322,7 @@ public class RealtimeMonitorService extends Service {
         return morning || afternoon;
     }
 
-    private void evaluateAndAct(WatchlistManager.WatchlistItem item, RealtimeQuoteManager.Quote quote,
+    private String evaluateAndAct(WatchlistManager.WatchlistItem item, RealtimeQuoteManager.Quote quote,
                                  List<RealtimeQuoteManager.MinutePoint> minutePoints) {
         TradingRuleEngine.PrevDayRef prevDay = mEngine.getPrevDayRef(item.code);
         TradingRuleEngine.DivergenceState trackState = WatchlistManager.get().loadTrackState(item);
@@ -271,7 +355,7 @@ public class RealtimeMonitorService extends Service {
                     DecisionLogger.get().logNote(item.name + "(" + item.code + ") 自动移出观察池：" + staleReason);
                 }
             }
-            return;
+            return buildSnapshotLine(item, quote, holding, holdCost, result.note);
         }
 
         applyT1Note(result, pos, holding);
@@ -280,7 +364,7 @@ public class RealtimeMonitorService extends Service {
         if (!shouldNotifyNow(result)) {
             WatchlistManager.get().updateNote(item.code, result.note);
             Log.i(TAG, "规则命中但不在推送窗口: " + item.code + " " + result.actionLabel);
-            return;
+            return buildSnapshotLine(item, quote, holding, holdCost, result.actionLabel + "（未到推送窗口，暂缓）");
         }
 
         String actionKey = TradingRuleEngine.actionToKey(result.action);
@@ -301,6 +385,25 @@ public class RealtimeMonitorService extends Service {
         }
 
         enqueueVerification(item, actionKey, result, quote, pos);
+        return buildSnapshotLine(item, quote, holding, holdCost, result.actionLabel + "（已推送，待AI复核）");
+    }
+
+    /** 拼一支股票的监控快照摘要行——现价、对比参考价（持仓成本）、当前判断，
+     *  给周期性快照日志用，就是用户说的"13:20 太极集团 15.23 对比买入价格15.43"那种格式。
+     *  quote为null时返回null（没数据不写这一行）。 */
+    private String buildSnapshotLine(WatchlistManager.WatchlistItem item, RealtimeQuoteManager.Quote quote,
+                                      boolean holding, double holdCost, String judgment) {
+        if (quote == null) return null;
+        StringBuilder sb = new StringBuilder();
+        sb.append(item.name).append("(").append(item.code).append(") 现价¥")
+                .append(String.format(java.util.Locale.CHINA, "%.2f", quote.price));
+        if (holding && holdCost > 0) {
+            double pnlPct = (quote.price - holdCost) / holdCost * 100;
+            sb.append(String.format(java.util.Locale.CHINA, "，对比成本¥%.2f（%s%.2f%%）",
+                    holdCost, pnlPct >= 0 ? "浮盈" : "浮亏", Math.abs(pnlPct)));
+        }
+        sb.append(" ｜ ").append(judgment != null && !judgment.isEmpty() ? judgment : "观望");
+        return sb.toString();
     }
 
     /** T+1 同日保护：卖出类信号标注可卖/锁定股数（操盘手经验终版.md 5.2节） */
