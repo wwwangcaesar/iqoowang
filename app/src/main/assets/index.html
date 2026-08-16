@@ -699,6 +699,17 @@
       </div>
     </div>
 
+    <!-- 最近交易 -->
+    <div class="card" style="margin:0 12px 12px;">
+      <div class="card-header">
+        <div class="card-title">最近交易</div>
+        <div style="font-size:10px;color:var(--accent-cyan);cursor:pointer;" onclick="openTradeHistoryModal()">查看更多 ›</div>
+      </div>
+      <div id="recentTradesList" style="padding:8px 14px 10px;">
+        <div style="padding:16px 0;text-align:center;color:var(--text-dim);font-size:11px;">还没有交易记录</div>
+      </div>
+    </div>
+
   </div>
 
   <!-- ══ 选股页 ══ -->
@@ -874,6 +885,17 @@
           <button onclick="resetTradingConfig()" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--text-sub);background:transparent;color:var(--text-sub);font-size:11px;">恢复默认</button>
           <button onclick="saveTradingConfig()" style="flex:2;padding:8px;border-radius:6px;border:none;background:var(--accent-gold);color:var(--bg-deep);font-size:12px;font-weight:600;">保存并生效</button>
         </div>
+        <div style="margin-top:20px;padding-top:10px;border-top:1px dashed var(--border);">
+          <div style="font-size:9px;color:var(--text-dim);margin-bottom:6px;">危险区域——以下操作不可撤销</div>
+          <button onclick="showClearDataConfirm()" style="width:100%;padding:6px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-dim);font-size:10px;">清空全部交易数据，重新开始记录</button>
+          <div id="clearDataConfirmBox" style="display:none;margin-top:8px;padding:10px;border:1px solid var(--up-red);border-radius:6px;background:rgba(255,61,87,0.08);">
+            <div style="font-size:10px;color:var(--text-sub);margin-bottom:8px;">这会清空全部交易记录/持仓/资产历史/交易复盘记录，并重置本地AI的等级经验，不会清你手动教过的话术。不可恢复，确定要继续吗？</div>
+            <div style="display:flex;gap:8px;">
+              <button onclick="hideClearDataConfirm()" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--text-sub);background:transparent;color:var(--text-sub);font-size:11px;">取消</button>
+              <button onclick="doClearAllData()" style="flex:1;padding:6px;border-radius:6px;border:none;background:var(--up-red);color:#fff;font-size:11px;font-weight:600;">确认清空</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -982,6 +1004,17 @@
       </div>
     </div>
 
+    <!-- 待复盘交易周期：买入到清仓走完一轮后会出现在这里，点击才会触发AI总结，不自动跑，避免卡顿 -->
+    <div class="card" style="margin-top:10px;">
+      <div class="card-header">
+        <div class="card-title">待复盘交易</div>
+        <div style="font-size:9px;color:var(--text-dim);" id="pendingReviewCount"></div>
+      </div>
+      <div id="pendingReviewList" style="padding:10px 14px;font-size:11px;color:var(--text-sub);">
+        <div>暂无待复盘的交易——某支股票卖到清仓后会出现在这里</div>
+      </div>
+    </div>
+
     <!-- 进化记录 -->
     <div class="card" style="margin-top:10px;">
       <div class="card-header"><div class="card-title">进化记录</div></div>
@@ -1026,13 +1059,23 @@
     <div class="qty-control">
       <button class="qty-btn" onclick="changeQty(-1)">−</button>
       <div class="qty-display"><span id="qtyVal">1</span><br><span class="qty-unit">手 = <span id="qtyShares">100</span>股</span></div>
-      <button class="qty-btn" onclick="changeQty(1)">+</button>
+      <button class="qty-btn" id="qtyBtnPlus" onclick="changeQty(1)">+</button>
     </div>
     <div class="modal-row"><div class="modal-key">预计金额</div><div class="modal-val c-gold" id="modalAmount">--</div></div>
     <div class="modal-row"><div class="modal-key">预计手续费</div><div class="modal-val" id="modalFee" style="color:var(--text-sub);font-size:12px;">--</div></div>
     <div class="modal-row"><div class="modal-key">可用资金</div><div class="modal-val" id="modalCash">--</div></div>
     <button class="modal-confirm" id="modalConfirmBtn" onclick="confirmTrade()">确认买入</button>
     <button onclick="closeModal()" style="width:100%;padding:10px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--text-sub);font-size:13px;cursor:pointer;margin-top:6px;">取消</button>
+  </div>
+</div>
+
+<!-- 交易历史详情 -->
+<div class="modal-overlay" id="tradeHistoryModal">
+  <div class="modal-sheet" style="max-height:75vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <div class="modal-title">全部交易记录</div>
+    <div id="tradeHistoryFullList" style="text-align:left;"></div>
+    <button onclick="closeTradeHistoryModal()" style="width:100%;padding:10px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--text-sub);font-size:13px;cursor:pointer;margin-top:10px;">关闭</button>
   </div>
 </div>
 
@@ -1105,6 +1148,9 @@ window.initPositions = function(jsonStr) {
     if (IS_ANDROID) {
       loadWatchlist();
       loadEvolveLog();
+      refreshAgentStats();
+      loadPendingReviews();
+      loadRecentTrades();
       if (Android.loadPrefs('monitor_running', '0') === '1') {
         const savedInterval = +Android.loadPrefs('monitor_interval', '120000') || 120000;
         document.getElementById('monitorInterval').value = String(savedInterval);
@@ -1489,6 +1535,36 @@ function resetTradingConfig() {
   const ok = Android.resetTradingConfig();
   showToast(ok ? '✅ 已恢复内置默认参数' : '❌ 恢复失败');
   if (ok) loadTradingConfig();
+}
+
+// ══ 隐藏功能：清空全部交易数据（在参数配置tab里，不在首页醒目位置）══
+
+function showClearDataConfirm() {
+  const box = document.getElementById('clearDataConfirmBox');
+  if (box) box.style.display = 'block';
+}
+
+function hideClearDataConfirm() {
+  const box = document.getElementById('clearDataConfirmBox');
+  if (box) box.style.display = 'none';
+}
+
+function doClearAllData() {
+  if (!IS_ANDROID) { showToast('该功能需要在App中运行'); return; }
+  const ok = Android.clearAllTradingData();
+  hideClearDataConfirm();
+  if (ok) {
+    showToast('✅ 已清空全部交易数据，重新开始记录');
+    refreshAccountSummary();
+    refreshAgentStats();
+    loadPendingReviews();
+    loadRecentTrades();
+    loadWatchlist();
+    STATE.positions = {};
+    renderPositions();
+  } else {
+    showToast('⚠️ 清空失败，请重试');
+  }
 }
 
 function toggleMonitor() {
@@ -2201,15 +2277,36 @@ function simulateExpertStream(results) {
 function closeModal() { document.getElementById('tradeModal').classList.remove('show'); }
 
 function changeQty(delta) {
-  STATE.tradeQty = Math.max(1, STATE.tradeQty + delta);
+  const t = STATE.tradeTarget;
+  let next = STATE.tradeQty + delta;
+  next = Math.max(1, next);
+  const maxLots = (t && STATE.tradeMaxLots) || 9999;
+  next = Math.min(next, maxLots);
+  STATE.tradeQty = next;
   updateModalAmount();
+  updateQtyButtonState();
+}
+
+/** 根据当前档位是否已到上限（卖出时=可卖手数，买入时=现金能买的最大手数）禁用+按钮，
+ *  不让用户点出一个明知会失败的数量。 */
+function updateQtyButtonState() {
+  const plusBtn = document.getElementById('qtyBtnPlus');
+  if (!plusBtn) return;
+  const maxLots = STATE.tradeMaxLots || 0;
+  const atMax = STATE.tradeQty >= maxLots;
+  plusBtn.disabled = atMax;
+  plusBtn.style.opacity = atMax ? '0.35' : '1';
+  plusBtn.style.cursor = atMax ? 'not-allowed' : 'pointer';
 }
 
 function updateModalAmount() {
   const t = STATE.tradeTarget;
   if (!t) return;
   const price = t.latestClose || t.currentPrice || t.price || t.cost;
-  const shares = STATE.tradeQty * 100;
+  const atMax = STATE.tradeQty >= (STATE.tradeMaxLots || 0);
+  // 卖出且档位在最大值时，把不足一手的零股也一并卖掉，真正做到"全部卖出"，
+  // 不留下一个卖不掉、看不见的零头残仓。
+  const shares = STATE.tradeQty * 100 + (t.isSell && atMax ? (STATE.tradeOddShares || 0) : 0);
   const amount = price * shares;
   document.getElementById('qtyVal').textContent = STATE.tradeQty;
   document.getElementById('qtyShares').textContent = shares;
@@ -2242,19 +2339,35 @@ function confirmTrade() {
   const t = STATE.tradeTarget;
   if (!t) return;
   const price = t.latestClose || t.currentPrice || t.price || t.cost;
-  const shares = STATE.tradeQty * 100;
   const direction = t.isSell ? 'SELL' : 'BUY';
 
   if (IS_ANDROID) {
-    const posNow = STATE.positions[t.code];
-    const sellableNow = posNow ? (posNow.sellableQty !== undefined ? posNow.sellableQty : posNow.qty) : 0;
-    const tradeShares = t.isSell
-        ? Math.min(shares, sellableNow)
-        : shares;
-    if (t.isSell && tradeShares <= 0) {
-      showToast('❌ 该持仓当日买入部分尚未过T+1，暂无可卖股数');
-      return;
+    let tradeShares;
+    if (t.isSell) {
+      // 卖出前重新拉一次最新持仓，不信任弹窗打开那一刻缓存的sellableQty——
+      // 之前就是信了缓存值，跟Java端实时算出来的可卖数量对不上，
+      // 导致先报"可卖数量不够"又报"T+1限制"这种confusing的连环错误。
+      let freshSellable = 0;
+      try {
+        const list = JSON.parse(Android.getPositions());
+        const freshPos = list.find(p => p.code === t.code);
+        freshSellable = freshPos ? (freshPos.sellableQty !== undefined ? freshPos.sellableQty : freshPos.qty) : 0;
+      } catch (e) { console.error('[Trade] refresh sellable failed', e); }
+
+      const atMax = STATE.tradeQty >= (STATE.tradeMaxLots || 0);
+      const wantShares = STATE.tradeQty * 100 + (atMax ? (STATE.tradeOddShares || 0) : 0);
+      tradeShares = Math.min(wantShares, freshSellable);
+
+      if (tradeShares <= 0) {
+        showToast('❌ 当前可卖股数为0（可能已被卖出或全部为今日买入尚未过T+1）');
+        closeModal();
+        renderPositions();
+        return;
+      }
+    } else {
+      tradeShares = STATE.tradeQty * 100;
     }
+
     const id = Android.recordTrade(
         t.code, t.name, direction, price, tradeShares,
         t.signal || 'MANUAL', t.score || 0
@@ -2289,6 +2402,9 @@ function confirmTrade() {
     } catch (e) { console.error('[Trade] reload positions failed', e); }
     refreshAccountSummary();
     renderPositions();
+    refreshAgentStats();
+    loadPendingReviews();
+    loadRecentTrades();
     closeModal();
     return;
   }
@@ -3127,6 +3243,7 @@ function switchTab(tab) {
 
   if (tab === 'home') { drawKline(); drawPnlChart(); }
   if (tab === 'position') renderPositions();
+  if (tab === 'agent') { refreshAgentStats(); loadPendingReviews(); }
 }
 
 // ═══════════════════════════════════════
@@ -3371,6 +3488,14 @@ function openTradeModal(code, stockObj) {
   STATE.tradeTarget=stock;
   STATE.tradeQty=1;
   const price=stock.latestClose||stock.price||0;
+  // 买入时按现金算步进器上限，不能让+按钮点到一个明知会因资金不足而失败的数量。
+  // 1.003留一点手续费安全边距，最终能买多少以Android.recordTrade()的实际拒绝为准，
+  // 这里只是给档位给个合理上限，避免用户把档位拉得过高先看到金额再发现买不起。
+  let cashAvail = STATE.cash;
+  if (IS_ANDROID) {
+    try { cashAvail = JSON.parse(Android.getAccountSummary()).cash; } catch (e) {}
+  }
+  STATE.tradeMaxLots = price > 0 ? Math.max(1, Math.floor(cashAvail / (price * 100 * 1.003))) : 9999;
   const bp=price>0?(price+0.25).toFixed(2):'--';
   document.getElementById('modalTitle').textContent='模拟买入';
   document.getElementById('modalStockName').textContent=stock.name||code;
@@ -3383,6 +3508,7 @@ function openTradeModal(code, stockObj) {
   document.getElementById('modalConfirmBtn').className='modal-confirm';
   document.getElementById('modalConfirmBtn').textContent='确认买入';
   updateModalAmount();
+  updateQtyButtonState();
   document.getElementById('tradeModal').classList.add('show');
 }
 
@@ -3393,24 +3519,32 @@ function openSellModal(code){
   const pnl=(curP-pos.cost)*pos.qty;
   const sellableQty=(pos.sellableQty!==undefined?pos.sellableQty:pos.qty);
   STATE.tradeTarget={...pos,code,isSell:true,latestClose:curP,price:curP};
-  STATE.tradeQty=sellableQty>=100?Math.floor(sellableQty/100):1;
+  // 卖出默认卖出全部可卖股数（含不足一手的零股），不用用户自己拼手数；
+  // 档位只能往下减，+按钮到顶禁用，不能点出超过持仓的数量。
+  STATE.tradeMaxLots = Math.floor(sellableQty / 100);
+  STATE.tradeOddShares = sellableQty - STATE.tradeMaxLots * 100;
+  STATE.tradeQty = STATE.tradeMaxLots > 0 ? STATE.tradeMaxLots : (STATE.tradeOddShares > 0 ? 1 : 0);
   document.getElementById('modalTitle').textContent='模拟卖出';
   document.getElementById('modalStockName').textContent=pos.name;
   document.getElementById('modalPrice').textContent=`¥${curP.toFixed(2)}`;
   const pnlStr=pnl>=0?`盈利 +¥${pnl.toFixed(0)}`:`亏损 -¥${Math.abs(pnl).toFixed(0)}`;
   document.getElementById('modalScore').textContent=pnlStr;
   document.getElementById('modalScore').style.color=pnl>=0?'var(--up-red)':'var(--down-green)';
-  let advice=pnl>=0?`持仓盈利${((curP-pos.cost)/pos.cost*100).toFixed(2)}%，可分批减仓`
-           :'持仓亏损，跌破SAR请止损出局';
+  let advice=pnl>=0?`持仓盈利${((curP-pos.cost)/pos.cost*100).toFixed(2)}%，默认卖出全部可卖股数，可点“−”减少`
+           :'持仓亏损，默认卖出全部可卖股数，可点“−”减少';
   if (pos.lockedQty > 0) {
     advice += sellableQty > 0
       ? `；🔒${pos.lockedQty}股为今日买入，T+1前不可卖，本次最多可卖${sellableQty}股`
       : `；🔒全部${pos.qty}股均为今日买入，T+1前不可卖出`;
   }
+  if (sellableQty <= 0) {
+    advice += '；当前无可卖股数';
+  }
   document.getElementById('modalAdvice').textContent = advice;
   document.getElementById('modalConfirmBtn').className='modal-confirm sell';
   document.getElementById('modalConfirmBtn').textContent='确认卖出';
   updateModalAmount();
+  updateQtyButtonState();
   document.getElementById('tradeModal').classList.add('show');
 }
 
@@ -3479,6 +3613,170 @@ function refreshAccountSummary() {
     if (elHold) elHold.textContent = acc.positionCount;
   } catch (e) { console.error('[Account] refresh failed', e); }
 }
+
+// “AI大脑”页的真实数据——updateAssetDisplay()里那块statDecisions/statWins/statAlpha/winRate
+// 在IS_ANDROID时早已return掉了，从来没跑过，所以等级/胜率一直卡在初始占位值。
+// 这个函数才是真正取真实数据刷新的入口，跟 refreshAccountSummary() 同一套样式。
+function refreshAgentStats() {
+  if (!IS_ANDROID) return;
+  try {
+    const stats = JSON.parse(Android.getStats());
+    const decisions = stats.decisions || 0;
+    const wins = stats.wins || 0;
+    const winRate = stats.winRate || 0;
+    const alpha = (winRate - 0.5) * 2;
+
+    const elDec = document.getElementById('statDecisions');
+    if (elDec) elDec.textContent = decisions;
+    const elWin = document.getElementById('statWins');
+    if (elWin) elWin.textContent = wins;
+    const elAlpha = document.getElementById('statAlpha');
+    if (elAlpha) elAlpha.textContent = alpha.toFixed(2);
+    const elWr = document.getElementById('winRate');
+    if (elWr) elWr.textContent = decisions > 0 ? (winRate * 100).toFixed(0) + '%' : '--';
+  } catch (e) { console.error('[AgentStats] refresh failed', e); }
+
+  try {
+    const st = JSON.parse(Android.getAgentStatus());
+    const level = st.level || 1;
+    const exp = st.exp || 0;
+    const title = st.levelTitle || '';
+    const currExp = st.currLevelExp || 0;
+    const nextExp = st.nextLevelExp || 100;
+
+    const elLv = document.getElementById('agentLevelText');
+    if (elLv) elLv.textContent = `Level ${level} · ${title}`;
+    const elFill = document.getElementById('agentExpFill');
+    if (elFill) {
+      const span = Math.max(1, nextExp - currExp);
+      const pct = Math.min(100, Math.max(0, (exp - currExp) / span * 100));
+      elFill.style.width = pct + '%';
+    }
+  } catch (e) { console.error('[AgentLevel] refresh failed', e); }
+}
+
+// ══ 待复盘交易周期══
+
+function loadPendingReviews() {
+  if (!IS_ANDROID) return;
+  try {
+    const list = JSON.parse(Android.getPendingTradeReviews());
+    renderPendingReviews(list);
+  } catch (e) { console.error('[PendingReview] load failed', e); }
+}
+
+// ══ 首页最近交易 + 全部交易历史详情 ══
+
+function loadRecentTrades() {
+  if (!IS_ANDROID) return;
+  try {
+    const list = JSON.parse(Android.getTradeHistory(5));
+    renderTradeList(list, 'recentTradesList', false);
+  } catch (e) { console.error('[Trades] load failed', e); }
+}
+
+/** 列表/详情页共用的交易行渲染，detailed=true时多显示手续费和信号来源 */
+function renderTradeList(list, containerId, detailed) {
+  const box = document.getElementById(containerId);
+  if (!box) return;
+  if (!list || !list.length) {
+    box.innerHTML = '<div style="padding:16px 0;text-align:center;color:var(--text-dim);font-size:11px;">还没有交易记录</div>';
+    return;
+  }
+  box.innerHTML = list.map(t => {
+    const dirText = t.direction === 'BUY' ? '买入' : '卖出';
+    const dirColor = t.direction === 'BUY' ? 'var(--up-red)' : 'var(--down-green)';
+    const pos = STATE.positions[t.code];
+    const curQty = pos ? pos.qty : 0;
+    let rightLine;
+    if (t.direction === 'SELL') {
+      const pnlColor = t.pnl >= 0 ? 'var(--up-red)' : 'var(--down-green)';
+      const pnlText = (t.pnl >= 0 ? '+' : '') + '¥' + t.pnl.toFixed(2);
+      rightLine = `<span style="color:${pnlColor};">本笔盈亏${pnlText}</span>`;
+    } else {
+      rightLine = `<span style="color:var(--text-dim);">花费¥${t.amount.toFixed(2)}</span>`;
+    }
+    const feeLine = detailed
+      ? `<div style="font-size:9px;color:var(--text-dim);margin-top:2px;">手续费¥${t.fee.toFixed(2)} · ${t.signal || 'MANUAL'}</div>`
+      : '';
+    return `
+    <div style="padding:8px 0;border-bottom:1px solid var(--border);">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <span style="color:var(--text-prime);font-weight:600;">${t.name}</span>
+          <span style="color:${dirColor};font-size:11px;margin-left:6px;">${dirText}${t.qty}股</span>
+        </div>
+        <div style="font-size:10px;color:var(--text-dim);">${t.time || t.date}</div>
+      </div>
+      <div style="font-size:11px;margin-top:3px;display:flex;justify-content:space-between;">
+        <span style="color:var(--text-dim);">当前持仓${curQty}股</span>
+        ${rightLine}
+      </div>
+      ${feeLine}
+    </div>`;
+  }).join('');
+}
+
+function openTradeHistoryModal() {
+  if (!IS_ANDROID) { showToast('该功能需要在App中运行'); return; }
+  try {
+    const list = JSON.parse(Android.getTradeHistory(500));
+    renderTradeList(list, 'tradeHistoryFullList', true);
+  } catch (e) { console.error('[Trades] load full failed', e); }
+  document.getElementById('tradeHistoryModal').classList.add('show');
+}
+
+function closeTradeHistoryModal() {
+  document.getElementById('tradeHistoryModal').classList.remove('show');
+}
+
+function renderPendingReviews(list) {
+  const box = document.getElementById('pendingReviewList');
+  const countEl = document.getElementById('pendingReviewCount');
+  if (!box) return;
+  if (!list || !list.length) {
+    box.innerHTML = '<div>暂无待复盘的交易——某支股票卖到清仓后会出现在这里</div>';
+    if (countEl) countEl.textContent = '';
+    return;
+  }
+  if (countEl) countEl.textContent = `共${list.length}笔`;
+  box.innerHTML = list.map(item => {
+    const pnlColor = item.totalPnl >= 0 ? 'var(--up-red)' : 'var(--down-green)';
+    const pnlText = (item.totalPnl >= 0 ? '盈利' : '亏损') + '¥' + Math.abs(item.totalPnl).toFixed(2);
+    return `
+    <div id="pendingReview_${item.id}" style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <div>
+        <div style="color:var(--text-prime);font-weight:600;">${item.name} <span style="color:var(--text-dim);font-size:10px;">${item.code}</span></div>
+        <div style="font-size:10px;color:var(--text-dim);">持有${item.holdDays}天 · <span style="color:${pnlColor};">${pnlText}</span></div>
+      </div>
+      <button onclick="startTradeReview(${item.id})" style="padding:6px 12px;border-radius:6px;border:1px solid var(--accent-cyan);background:transparent;color:var(--accent-cyan);font-size:11px;white-space:nowrap;">生成复盘</button>
+    </div>`;
+  }).join('');
+}
+
+function startTradeReview(id) {
+  if (!IS_ANDROID) { showToast('该功能需要在App中运行'); return; }
+  const el = document.getElementById('pendingReview_' + id);
+  if (el) {
+    const btn = el.querySelector('button');
+    if (btn) { btn.disabled = true; btn.textContent = 'AI思考中…'; btn.style.opacity = '0.6'; }
+  }
+  Android.startTradeReview(id);
+}
+
+window.onTradeReviewToken = function(token) {
+  // 不做逐字展示，等完成后一次性刷新列表即可，避免列表频繁抖动
+};
+
+window.onTradeReviewDone = function(id, resultText) {
+  showToast('✅ 复盘生成完成');
+  loadPendingReviews(); // 这条已经复盘完，会从待复盘列表消失
+};
+
+window.onTradeReviewError = function(msg) {
+  showToast('⚠️ ' + msg);
+  loadPendingReviews(); // 恢复按钮状态
+};
 
 // 首页默认股票：优先展示持仓里浮盈最高的股票，没有持仓才退回大盘指数
 function pickDefaultHomeStock() {

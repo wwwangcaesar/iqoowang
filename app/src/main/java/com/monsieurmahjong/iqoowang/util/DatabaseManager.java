@@ -239,6 +239,17 @@ public class DatabaseManager {
         return (double) wins / sells.size();
     }
 
+    /** 已实现盈利的卖出笔数（精确计数，不是比例），配合getWinRate()一起用，供AI大脑面板展示“盈利次数” */
+    public long getWinCount() {
+        List<TradeRecord> sells = mDaoSession.getTradeRecordDao()
+                .queryBuilder()
+                .where(TradeRecordDao.Properties.Direction.eq("SELL"))
+                .list();
+        long wins = 0;
+        for (TradeRecord t : sells) if (t.getRealizedPnl() > 0) wins++;
+        return wins;
+    }
+
     // ──────────────────────────────────────────
     // 账户资金（唯一真相来源——完全从交易流水推算，不依赖任何外部传入/缓存）
     // ──────────────────────────────────────────
@@ -543,6 +554,7 @@ public class DatabaseManager {
                 .queryBuilder()
                 .orderDesc(TradeRecordDao.Properties.TradeTime)
                 .limit(limit).list();
+        java.text.SimpleDateFormat timeFmt = new java.text.SimpleDateFormat("MM-dd HH:mm", Locale.CHINA);
         JSONArray arr = new JSONArray();
         for (TradeRecord t : list) {
             try {
@@ -559,6 +571,7 @@ public class DatabaseManager {
                 obj.put("signal", t.getSignalType());
                 obj.put("score", t.getAiScore());
                 obj.put("date", t.getTradeDate());
+                obj.put("time", timeFmt.format(new Date(t.getTradeTime())));
                 arr.put(obj);
             } catch (Exception ignored) {}
         }
@@ -594,4 +607,17 @@ public class DatabaseManager {
     }
 
     public DaoSession getSession() { return mDaoSession; }
+
+    /**
+     * 【危险操作】清空全部交易/持仓/每日资产历史，恢复到"从未交易过"的初始状态
+     * （现金会自动回到初始资金，因为getCashBalance是实时从交易流水推算的，没了流水自然就回到初始值）。
+     * 由StockBridge.clearAllTradingData()经二次确认后调用，不清WisdomManager手动教的话术，
+     * 也不清决策日志（那个有自己独立的14天保留机制）。
+     */
+    public void clearAllTradingData() {
+        mDaoSession.getTradeRecordDao().deleteAll();
+        mDaoSession.getPositionDao().deleteAll();
+        mDaoSession.getDailyAssetDao().deleteAll();
+        Log.i(TAG, "已清空全部交易/持仓/资产历史数据");
+    }
 }

@@ -224,8 +224,27 @@ public class StockBridge implements RealtimeMonitorService.Listener {
     @JavascriptInterface
     public long recordTrade(String code, String name, String direction,
                             double price, int quantity, String signalType, int aiScore) {
+        int sellableBefore = "SELL".equals(direction) ? mDb.getSellableQuantity(code) : 0;
         try {
-            return mDb.insertTrade(code, name, direction, price, quantity, signalType, aiScore);
+            long id = mDb.insertTrade(code, name, direction, price, quantity, signalType, aiScore);
+            try {
+                DecisionLogger.get().logManualTrade(name, code, direction, price, quantity, id, sellableBefore);
+            } catch (Exception e) {
+                Log.e(TAG, "写手动交易日志失败", e);
+            }
+            if (id > 0 && "SELL".equals(direction)) {
+                // 卖出成交后：按真实盈亏给本地AI加经验，并检查这次卖出是否让持仓彻底清零——
+                // 清零说明"买入到卖出"一个完整周期结束了，记一条待复盘，不自动跑AI
+                com.monsieurmahjong.iqoowang.dao.TradeRecord justInserted = findTradeById(id);
+                double realizedPnl = justInserted != null ? justInserted.getRealizedPnl() : 0;
+                mAgent.gainExpFromTrade(realizedPnl);
+
+                com.monsieurmahjong.iqoowang.dao.Position posAfter = mDb.getPositionByCode(code);
+                if (posAfter == null || posAfter.getQuantity() <= 0) {
+                    TradeLessonManager.get().markCycleClosed(code, name, id, System.currentTimeMillis());
+                }
+            }
+            return id;
         } catch (Exception e) {
             Log.e(TAG, "recordTrade error", e);
             return -1;
@@ -296,6 +315,7 @@ public class StockBridge implements RealtimeMonitorService.Listener {
             JSONObject obj = new JSONObject();
             obj.put("totalPnl", mDb.getTotalRealizedPnl());
             obj.put("winRate", mDb.getWinRate());
+            obj.put("wins", mDb.getWinCount());
             obj.put("decisions", mDb.queryAllTrades().size());
             return obj.toString();
         } catch (Exception e) {
@@ -501,6 +521,47 @@ public class StockBridge implements RealtimeMonitorService.Listener {
     @JavascriptInterface
     public String getWisdomLog() {
         return com.monsieurmahjong.iqoowang.util.WisdomManager.get().getAllJson();
+    }
+
+    // ══ 交易周期复盘（买入到清仓完整走完后手动触发AI总结）══
+
+    /** 待复盘的交易周期列表（买入到清仓已经完整走完，但用户还没点"生成复盘"的） */
+    @JavascriptInterface
+    public String getPendingTradeReviews() {
+        return TradeLessonManager.get().getPendingJson();
+    }
+
+    /** 已复盘的交易周期列表，供"AI大脑"页展示历史复盘记录 */
+    @JavascriptInterface
+    public String getReviewedTradeLessons() {
+        return TradeLessonManager.get().getReviewedJson();
+    }
+
+    /**
+     * 用户在"AI大脑"页手动点击某条待复盘记录，触发本地AI生成复盘总结。
+     * 不自动执行，需要人主动点击，避免卡顿。
+     * JS调用：Android.startTradeReview(lessonId)
+     * 回调：window.onTradeReviewToken(token) / window.onTradeReviewDone(lessonId, resultText) / window.onTradeReviewError(msg)
+     */
+    @JavascriptInterface
+    public void startTradeReview(long lessonId) {
+        mAgent.summarizeTradeCycle(lessonId, new LocalAIAgent.AICallback() {
+            @Override
+            public void onToken(String token) {
+                String escaped = token.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
+                evalJs("window.onTradeReviewToken && window.onTradeReviewToken('" + escaped + "')");
+            }
+            @Override
+            public void onComplete(String fullText) {
+                String escaped = fullText.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n");
+                evalJs("window.onTradeReviewDone && window.onTradeReviewDone(" + lessonId + ",'" + escaped + "')");
+            }
+            @Override
+            public void onError(String msg) {
+                String esc = msg.replace("'", "\\'");
+                evalJs("window.onTradeReviewError && window.onTradeReviewError('" + esc + "')");
+            }
+        });
     }
 
     // ══════════════════════════════════════════════
@@ -815,7 +876,8 @@ public class StockBridge implements RealtimeMonitorService.Listener {
     }
 
     /** 一支处理完成（无论成功/失败/超时）都走这里：回填AI结论+写日志+推进到下一支，
-     *  确保无论哪种结局都能让队列继续前进。 */
+     *  确保无论哪种结局都能让队列继续前进。AI明确支持时补一条确认通知（跟后台自动复核
+     *  同样的缺口：之前手动AI审核确认支持后也从不推通知，用户只能靠自己打开App才发现）。 */
     private void finishOneReview(List<WatchlistManager.WatchlistItem> queue, int index,
                                   WatchlistManager.WatchlistItem fresh,
                                   LocalAIAgent.VerifyResult vr, String fullText) {
@@ -828,6 +890,14 @@ public class StockBridge implements RealtimeMonitorService.Listener {
                     vr.confirmed, vr.reason, fullText);
         } catch (Exception e) {
             Log.e(TAG, "写AI审核日志失败", e);
+        }
+        if (vr.confirmed) {
+            try {
+                RealtimeMonitorService.fireConfirmedAlert(mContext, fresh.code, fresh.name,
+                        actionLabel, vr.reason, fresh.pendingPrice);
+            } catch (Exception e) {
+                Log.e(TAG, "发送AI确认通知失败", e);
+            }
         }
         String status = "AI_TIMEOUT".equals(fullText) ? "TIMEOUT" : (vr.confirmed ? "CONFIRMED" : "DOUBTED");
         pushAiReviewProgress(fresh.code, fresh.name, status, vr.confirmed, vr.reason, fullText);
@@ -915,6 +985,28 @@ public class StockBridge implements RealtimeMonitorService.Listener {
                 .getString(key, defaultVal);
     }
 
+    /**
+     * 【危险操作】清空全部交易/持仓/资产历史数据，重新开始记录真实操盘营收。
+     * 不清WisdomManager手动教过的话术（那是你教的操盘经验，跟"营收/持仓"是两回事），
+     * 也不清决策日志（那个有自己独立的14天保留机制）。
+     * 会一并清空交易周期复盘记录，并重置本地AI的等级/经验——以后经验完全由真实盈亏
+     * 驱动，交易记录都清空了，旧经验留着对不上号。前端必须先做二次确认再调这个接口。
+     * JS调用：Android.clearAllTradingData()，返回是否成功
+     */
+    @JavascriptInterface
+    public boolean clearAllTradingData() {
+        try {
+            mDb.clearAllTradingData();
+            TradeLessonManager.get().clearAll();
+            mAgent.resetLevelAndExp();
+            Log.i(TAG, "用户触发：已清空全部交易数据（交易/持仓/资产历史/复盘记录/AI等级经验）");
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "clearAllTradingData失败", e);
+            return false;
+        }
+    }
+
     // ══════════════════════════════════════════════
     // 内部工具
     // ══════════════════════════════════════════════
@@ -922,6 +1014,16 @@ public class StockBridge implements RealtimeMonitorService.Listener {
     /** 在主线程执行JS */
     private void evalJs(final String js) {
         mWebView.post(() -> mWebView.evaluateJavascript(js, null));
+    }
+
+    /** 按id查单笔交易记录——insertTrade()只返回id，不返回完整记录，
+     *  recordTrade()需要拿到刚刚那笔卖出的realizedPnl才能给本地AI加经验。
+     *  只在卖出成交时调用，频率低，线性查找足够快。 */
+    private com.monsieurmahjong.iqoowang.dao.TradeRecord findTradeById(long id) {
+        for (com.monsieurmahjong.iqoowang.dao.TradeRecord t : mDb.queryAllTrades()) {
+            if (t.getId() == id) return t;
+        }
+        return null;
     }
 
     /** 持仓行情自动刷新 */

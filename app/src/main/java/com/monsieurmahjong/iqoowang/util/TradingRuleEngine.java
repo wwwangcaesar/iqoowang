@@ -235,7 +235,7 @@ public class TradingRuleEngine {
         boolean underwater = quote.price < waterLine;
         if (!underwater) {
             result.note = String.format(Locale.CHINA,
-                    "现价¥%.2f已在水线¥%.2f上方，底仓条件为【水下+站上VWAP】，请等待回踩或考虑加仓逻辑",
+                    "现价¥%.2f已在水线¥%.2f上方，底仓条件为【水下+站上VWAP】，本轮不满足——这支股票还没买过，“突破水线加仓”那一条只适用于已持底仓的股票，对这里不适用。如果它回踩到水线以下并站稳VWAP，会重新进入底仓判定；如果一直强势不回踩，按本套规则就不会触发买入，这是预期内的。",
                     quote.price, waterLine);
             return result;
         }
@@ -264,8 +264,9 @@ public class TradingRuleEngine {
 
         if (!vol.confirmed) {
             result.note = String.format(Locale.CHINA,
-                    "水下+站上VWAP已满足，但%s，暂不触发底仓信号",
-                    vol.shrinkBreak ? "缩量突破，需等待放量确认" : "量比未达阈值");
+                    "水下+站上VWAP已满足，但%s，暂不触发底仓信号（日量比%.2fx／近5分钟量比%.2fx，需达到%.2fx）",
+                    vol.shrinkBreak ? "缩量突破，需等待放量确认" : "量比未达阈值",
+                    vol.dayRatio, vol.recent5Ratio, vol.threshold);
             return result;
         }
 

@@ -226,6 +226,34 @@ public class DecisionLogger {
     }
 
     /**
+     * 手动买卖弹窗成交/拒绝时记一笔——之前手动交易完全没进决策日志，一旦出现“点了卖出却报错，
+     * 之后持仓又不见了”这类情况，根本无从核实到底发生了什么。现在无论成功还是被拒绝，
+     * 都留下一条记录，以后好核实。
+     */
+    public void logManualTrade(String name, String code, String direction, double price, int quantity,
+                                long resultId, int sellableBeforeTrade) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[").append(mTimeFmt.format(new java.util.Date())).append("] ");
+        sb.append(name).append("(").append(code).append(") ");
+        sb.append("【手动").append("BUY".equals(direction) ? "买入" : "卖出").append("】");
+        sb.append(String.format(Locale.CHINA, "请求%d股 @¥%.2f", quantity, price));
+        if ("SELL".equals(direction)) {
+            sb.append(String.format(Locale.CHINA, "，下单前可卖%d股", sellableBeforeTrade));
+        }
+        if (resultId > 0) {
+            sb.append("\n结果：成交，交易记录id=").append(resultId);
+        } else if (resultId == -1) {
+            sb.append("\n结果：拒绝（资金不足，未写入任何数据）");
+        } else if (resultId == -2) {
+            sb.append("\n结果：拒绝（T+1限制，未写入任何数据）");
+        } else {
+            sb.append("\n结果：拒绝（id=").append(resultId).append("，未写入任何数据）");
+        }
+        sb.append("\n").append(repeat('-', 72)).append("\n");
+        appendToFile(sb.toString());
+    }
+
+    /**
      * 只保留最近keepDays天的决策日志，避免无限堆积。在监控服务每次启动时调用一次即可，
      * 不需要单独的定时任务——用户不开监控的时候本来也不会有新日志，没必要清理。
      */

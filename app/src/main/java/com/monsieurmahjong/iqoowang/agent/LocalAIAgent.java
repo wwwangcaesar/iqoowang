@@ -10,6 +10,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.util.Date;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -48,7 +49,10 @@ public class LocalAIAgent {
      *  永久性地弹"AI正在思考中" */
     private static final long INFER_WATCHDOG_MS = 200_000; // 3分钟，实测本地模型单次推理需约90秒，这个阈值必须明显高于它，否则会把还在正常推理的误判为卡死而提前强制解锁，让新请求与旧推理并发争用MNN资源
 
-    // Agent 进化状态
+    // Agent 进化状态——等级/经验现在会持久化（SharedPreferences），不再每次重启App都归零
+    private static final String AGENT_PREFS = "agent_level_prefs";
+    private static final String KEY_LEVEL = "level";
+    private static final String KEY_EXP = "exp";
     private int mLevel = 1;
     private int mExp   = 0;
     private boolean mEngineReady = false;
@@ -73,6 +77,8 @@ public class LocalAIAgent {
         mCtxBuilder  = new AIContextBuilder(context);
         mExecutor    = Executors.newSingleThreadExecutor();
         mMainHandler = new Handler(Looper.getMainLooper());
+
+        loadLevelExp();
 
         // 异步加载模型，不阻塞主线程
         mExecutor.execute(this::initEngine);
@@ -423,6 +429,7 @@ public class LocalAIAgent {
         } catch (Exception ignored) {}
         if (!trend.isEmpty()) sb.append("近期走势：").append(trend).append("\n");
         if (!histNote.isEmpty()) sb.append("历史交易：").append(histNote).append("\n");
+        sb.append(safeTradeLessonBlock(code, action));
 
         // 信号方向显式告知——避免出现“判断确认了，却又用观望/等企稳这类话术搪塞”的方向错位，
         // 这正是之前太极集团那条抛压预警确认却写“建议等放量回踩VWAP企稳再议”的根因。
@@ -599,6 +606,110 @@ public class LocalAIAgent {
     private String fallbackSummary(String rawText) {
         String s = rawText.replaceAll("\\s+", "");
         return s.length() > 30 ? s.substring(0, 30) + "..." : s;
+    }
+
+    // ──────────────────────────────
+    // 交易周期复盘（买入到清仓的完整周期结束后，用户手动点击才会触发，不自动跑）
+    // ──────────────────────────────
+
+    /**
+     * 对一次已经完整走完"买入到清仓"的交易周期做复盘总结。只用结构化交易数据
+     * （开仓/平仓价格、时间、持有天数、真实盈亏），不引入决策日志逐条历史文本——后者
+     * 信息量大且格式分散，硬塞进4B模型的prompt容易信息过载、拼凑瞎总结。
+     * 由用户在"AI大脑"页手动点击触发，不自动执行。
+     */
+    public void summarizeTradeCycle(long lessonId, AICallback cb) {
+        com.monsieurmahjong.iqoowang.util.TradeLessonManager.LessonEntry lesson =
+                com.monsieurmahjong.iqoowang.util.TradeLessonManager.get().getById(lessonId);
+        if (lesson == null) {
+            cb.onError("找不到这条待复盘记录");
+            return;
+        }
+        if (!tryAcquireInferLock()) {
+            cb.onError("AI正在思考中，请稍后");
+            return;
+        }
+        mExecutor.execute(() -> {
+            try {
+                String prompt = buildTradeSummaryPrompt(lesson);
+                if (mEngine.isReady()) {
+                    mEngine.reset();
+                    runTradeSummaryStream(lesson, prompt, cb);
+                } else {
+                    mInferring.set(false);
+                    cb.onError("本地AI模型未就绪，暂时无法生成复盘");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "summarizeTradeCycle", e);
+                mInferring.set(false);
+                mMainHandler.post(() -> cb.onError(e.getMessage()));
+            }
+        });
+    }
+
+    private String buildTradeSummaryPrompt(com.monsieurmahjong.iqoowang.util.TradeLessonManager.LessonEntry lesson) {
+        long holdDays = Math.max(1, Math.round((lesson.closedAt - lesson.openedAt) / 86400000.0));
+        java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA);
+        StringBuilder sb = new StringBuilder();
+        sb.append(getCorePersona());
+        sb.append("【复盘任务】下面是你（本地AI）经手过的一次真实交易，从建仓到清仓已经完整走完，");
+        sb.append("现在需要你结合这次的真实盈亏结果，做一次诚实的复盘总结，供以后再遇到这支股票或类似情况时参考。\n\n");
+        sb.append("股票：").append(lesson.stockName).append("(").append(lesson.stockCode).append(")\n");
+        sb.append("开仓时间：").append(fmt.format(new Date(lesson.openedAt))).append("\n");
+        sb.append("清仓时间：").append(fmt.format(new Date(lesson.closedAt))).append("\n");
+        sb.append("持有天数：约").append(holdDays).append("天\n");
+        sb.append(String.format(Locale.CHINA, "本轮真实盈亏：%s¥%.2f\n",
+                lesson.totalPnl >= 0 ? "盈利" : "亏损", Math.abs(lesson.totalPnl)));
+        sb.append("\n【输出要求】严格按下面三行输出，不要多写：\n");
+        sb.append("分类：从[BUY_STARTER, ADD_HALF, BUY_FULL, WARN_PRESSURE, STOP_LOSS, GENERAL]中选一个，")
+                .append("代表这次交易最主要跟哪类判断有关（不确定就选GENERAL）\n");
+        sb.append("摘要：不超过40字，一句话总结这次交易的核心经验教训\n");
+        sb.append("复盘：不超过150字，说清楚这次为什么赚/为什么亏，下次遇到类似情况该怎么做得更好，")
+                .append("语气诚实、不要为亏损找借口，也不要因为盈利就盲目自信\n");
+        return sb.toString();
+    }
+
+    private static final java.util.regex.Pattern TRADE_SUMMARY_PATTERN = java.util.regex.Pattern.compile(
+            "摘要[:：]\\s*([^\\n]+)");
+    private static final java.util.regex.Pattern TRADE_REVIEW_PATTERN = java.util.regex.Pattern.compile(
+            "复盘[:：]\\s*([\\s\\S]+)");
+
+    private void runTradeSummaryStream(com.monsieurmahjong.iqoowang.util.TradeLessonManager.LessonEntry lesson,
+                                        String prompt, AICallback cb) {
+        final StringBuilder full = new StringBuilder();
+        mEngine.chatStream(prompt, new LlmEngine.Callback() {
+            @Override
+            public void onToken(String token) {
+                full.append(token);
+                mMainHandler.post(() -> cb.onToken(token));
+            }
+            @Override
+            public void onFinish(String fullText) {
+                mInferring.set(false);
+                String result = fullText.isEmpty() ? full.toString() : fullText;
+                boolean parseFailed = result.startsWith("[response") || result.startsWith("[推理")
+                        || result.startsWith("[签名") || result.trim().isEmpty();
+                String category;
+                String summary;
+                String reviewText;
+                if (parseFailed) {
+                    category = "";
+                    summary = (lesson.totalPnl >= 0 ? "盈利" : "亏损") + "复盘生成失败，模型未正常返回";
+                    reviewText = "AI未能正常生成复盘（模型未就绪或推理异常），仅记录本轮真实盈亏数据。";
+                } else {
+                    category = parseCategoryOrGuess(result, result);
+                    java.util.regex.Matcher sm = TRADE_SUMMARY_PATTERN.matcher(result);
+                    summary = sm.find() ? sm.group(1).trim() : fallbackSummary(result);
+                    java.util.regex.Matcher rm = TRADE_REVIEW_PATTERN.matcher(result);
+                    reviewText = rm.find() ? rm.group(1).trim() : result.trim();
+                }
+                com.monsieurmahjong.iqoowang.util.TradeLessonManager.get()
+                        .markReviewed(lesson.id, category, summary, reviewText);
+                final String finalSummary = summary;
+                final String finalReview = reviewText;
+                mMainHandler.post(() -> cb.onComplete(finalSummary + "\n\n" + finalReview));
+            }
+        });
     }
 
     // ──────────────────────────────────────────
@@ -798,6 +909,7 @@ public class LocalAIAgent {
         } catch (Exception e) {
             sb.append("（获取实时数据时出错：").append(e.getMessage()).append("）\n");
         }
+        sb.append(safeTradeLessonBlock(code, null));
         return sb.toString();
     }
 
@@ -873,6 +985,15 @@ public class LocalAIAgent {
         return safeWisdomBlock(null);
     }
 
+    /** 安全获取"这支股票过去复盘"知识块，TradeLessonManager未初始化或异常时返回空字符串 */
+    private String safeTradeLessonBlock(String code, String actionKey) {
+        try {
+            return com.monsieurmahjong.iqoowang.util.TradeLessonManager.get().buildInjectBlock(code, actionKey);
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     /** 粗略判断一句话是不是在问股票/交易相关的问题——只有这种情况才把详细公式/经验塞进去，日常对话保持轻量、回复快 */
     private boolean looksTradingRelated(String message) {
         if (message == null) return false;
@@ -889,11 +1010,67 @@ public class LocalAIAgent {
 
     public void gainExp(int exp) {
         mExp += exp;
-        int[] thresholds = {0, 100, 250, 500, 900, 1500, 2500};
-        for (int i = thresholds.length - 1; i >= 0; i--) {
-            if (mExp >= thresholds[i]) { mLevel = i + 1; break; }
+        recalcLevel();
+        persistLevelExp();
+    }
+
+    /**
+     * 按卖出的真实已实现盈亏给经验——只应该在SELL成交且有真实盈亏时调用。
+     * 盈利：每¥100经验+1（向上取整）；亏损或打平：固定给 2 点参与经验，
+     * 不能靠亏钱刷经验值，但一次真实决策也值得记一笔。
+     */
+    public void gainExpFromTrade(double realizedPnl) {
+        int expGain = realizedPnl > 0 ? (int) Math.ceil(realizedPnl / 100.0) : 2;
+        gainExp(expGain);
+    }
+
+    /** 升到第level级一共需要的累计经验——三角数×100，逐级递增且不设上限 */
+    private long cumExpToReach(int level) {
+        return 100L * level * (level - 1) / 2;
+    }
+
+    private void recalcLevel() {
+        int level = 1;
+        while (cumExpToReach(level + 1) <= mExp) level++;
+        mLevel = level;
+    }
+
+    private static final String[] LEVEL_TITLES = {
+            "", "初级分析师", "量化研究员", "策略交易员", "风控专家", "资深操盘手",
+            "宗师级操盘手", "传奇操盘手", "操盘大师", "股林高手", "操盘之神"
+    };
+
+    /** 等级称号——超出预设称号列表后，用数字续番，不会出现空白 */
+    private String levelTitle(int level) {
+        if (level < LEVEL_TITLES.length) return LEVEL_TITLES[level];
+        return "操盘之神·" + (level - LEVEL_TITLES.length + 2) + "重";
+    }
+
+    private void loadLevelExp() {
+        try {
+            android.content.SharedPreferences sp = mContext.getSharedPreferences(AGENT_PREFS, Context.MODE_PRIVATE);
+            mExp = sp.getInt(KEY_EXP, 0);
+            recalcLevel();
+        } catch (Exception e) {
+            Log.e(TAG, "loadLevelExp失败", e);
         }
-        mLevel = Math.min(mLevel, 6);
+    }
+
+    private void persistLevelExp() {
+        try {
+            mContext.getSharedPreferences(AGENT_PREFS, Context.MODE_PRIVATE).edit()
+                    .putInt(KEY_EXP, mExp).putInt(KEY_LEVEL, mLevel).apply();
+        } catch (Exception e) {
+            Log.e(TAG, "persistLevelExp失败", e);
+        }
+    }
+
+    /** 【危险操作】清空真实交易数据时一并重置——以后经验完全由真实盈亏驱动，
+     *  交易记录清空了留着旧经验对不上号，见StockBridge.clearAllTradingData() */
+    public void resetLevelAndExp() {
+        mExp = 0;
+        mLevel = 1;
+        persistLevelExp();
     }
 
     public String getStatusJson() {
@@ -903,8 +1080,11 @@ public class LocalAIAgent {
             // 合并错误信息：.so加载错误 + nativeInit调试信息
             String errInfo = LlmEngine.getLoadError();
             JSONObject obj = new JSONObject();
-            obj.put("level",      mLevel);
-            obj.put("exp",        mExp);
+            obj.put("level",         mLevel);
+            obj.put("exp",           mExp);
+            obj.put("levelTitle",    levelTitle(mLevel));
+            obj.put("currLevelExp",  cumExpToReach(mLevel));
+            obj.put("nextLevelExp",  cumExpToReach(mLevel + 1));
             obj.put("modelName",  mEngineReady ? "Qwen3.5-4B-Instruct-INT4" : "专家规则系统");
             obj.put("ready",      true);
             obj.put("llmReady",   mEngine.isReady());

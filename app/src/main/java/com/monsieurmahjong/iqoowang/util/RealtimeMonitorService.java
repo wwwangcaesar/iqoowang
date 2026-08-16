@@ -58,6 +58,21 @@ public class RealtimeMonitorService extends Service {
     private static final String PREFS_NAME = "monitor_prefs";
     private static final String KEY_LAST_TICK_AT = "last_tick_at";
 
+    // 并发保护：如果短时间内onStartCommand被重复触发两次（实测确实会发生，决策日志里
+    // 每次"监控服务启动"都是成对出现的，且两份"监控快照"股票顺序不一致，说明真的有两轮tick
+    // 并发跑了），单靠mHandler.removeCallbacksAndMessages预防不住——它只能取消还没开始执行的回调，
+    // 如果第一次的mTick.run()已经开始执行（异步行情请求已经发出），就取消不了了。
+    // 现加一层显式的"上一轮tick是否还在跑"旗位，从根上避免两轮tick并发评估同一批股票，
+    // 避免产生重复/错乱的日志和潜在的数据竞争。
+    private volatile boolean mTickInFlight = false;
+    private volatile long mTickStartedAt = 0;
+    private static final long TICK_STUCK_THRESHOLD_MS = 90_000; // tick本身只是几个网络请求，不该超过这个时长，超过说明卡住了，强制重置
+
+    // 同样的并发保护也加在onStartCommand自身上——短时间内重复调用就跳过重复初始化，
+    // 不再重复重置handler、不再重复写"监控服务启动"日志。
+    private volatile long mLastStartCommandAt = 0;
+    private static final long START_COMMAND_DEBOUNCE_MS = 2000;
+
     // 周期性监控快照：不管有没有信号，定期把所有股票的现价/参考价/判断记一笔，
     // 证明监控确实在跑，不能靠“通知栏还在”来判断
     private static final long SNAPSHOT_INTERVAL_MS = 15 * 60_000; // 15分钟一次
@@ -121,6 +136,14 @@ public class RealtimeMonitorService extends Service {
             mIntervalMs = intent.getLongExtra(EXTRA_INTERVAL_MS, DEFAULT_INTERVAL_MS);
         }
         startForeground(NOTIFICATION_ID, buildNotification("监控已启动", "正在获取行情..."));
+
+        long nowMs = System.currentTimeMillis();
+        if (nowMs - mLastStartCommandAt < START_COMMAND_DEBOUNCE_MS) {
+            Log.i(TAG, "短时间内重复的onStartCommand，跳过重复初始化");
+            return START_STICKY;
+        }
+        mLastStartCommandAt = nowMs;
+
         mHandler.removeCallbacksAndMessages(null);
         mHandler.post(mTick);
         Log.i(TAG, "监控服务启动，间隔=" + mIntervalMs + "ms");
@@ -178,6 +201,17 @@ public class RealtimeMonitorService extends Service {
     };
 
     private void doTick() {
+        long tickNow = System.currentTimeMillis();
+        if (mTickInFlight) {
+            if (tickNow - mTickStartedAt < TICK_STUCK_THRESHOLD_MS) {
+                Log.w(TAG, "上一轮tick还在进行中，跳过本次并发触发");
+                return;
+            }
+            Log.w(TAG, "上一轮tick超过" + (TICK_STUCK_THRESHOLD_MS / 1000) + "秒未结束，强制重置继续");
+        }
+        mTickInFlight = true;
+        mTickStartedAt = tickNow;
+
         mTickCount++;
         // 心跳戳记：无论交易时间内外都写，证明tick自身还在正常跑。
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
@@ -196,6 +230,7 @@ public class RealtimeMonitorService extends Service {
                 int posCount = DatabaseManager.get().getAllPositions().size();
                 sListener.onTick(watchCount, posCount, timeStr + "（非交易时段，已暂停）");
             }
+            mTickInFlight = false;
             return;
         }
 
@@ -213,7 +248,10 @@ public class RealtimeMonitorService extends Service {
         updateNotification(watchItems.size(), positions.size(), timeStr);
         if (sListener != null) sListener.onTick(watchItems.size(), positions.size(), timeStr);
 
-        if (codes.isEmpty()) return;
+        if (codes.isEmpty()) {
+            mTickInFlight = false;
+            return;
+        }
 
         RealtimeQuoteManager.get().fetchBatch(codes, (quotes, failed) -> {
             if (!failed.isEmpty()) Log.w(TAG, "本轮" + failed.size() + "支行情获取失败: " + failed);
@@ -235,6 +273,21 @@ public class RealtimeMonitorService extends Service {
             }
             for (WatchlistManager.WatchlistItem item : watchItems) {
                 if (isPendingStatus(item.status)) {
+                    // 待确认状态：不重新跑规则引擎（避免对同一个已推送信号重复判定/重复弹卡片），
+                    // 但仍然要有实时价格快照——之前这里直接跳过，导致一支股票只要挂着未确认，
+                    // 就完全从监控日志里消失，哪怕它还有真实仓位暴露在市场风险里。quotes里已经有它的
+                    // 行情（codes列表本来就包含了所有持仓代码），不用额外发请求。
+                    RealtimeQuoteManager.Quote pendingQuote = quotes.get(item.code);
+                    if (pendingQuote != null && snapshotLines != null) {
+                        Position pendingPos = DatabaseManager.get().getPositionByCode(item.code);
+                        boolean pendingHolding = pendingPos != null && pendingPos.getQuantity() > 0;
+                        double pendingHoldCost = pendingHolding ? pendingPos.getAvgCost() : 0;
+                        String judgment = String.format(java.util.Locale.CHINA,
+                                "待确认·%s（触发价¥%.2f，等待你确认/忽略）",
+                                item.pendingAction != null ? item.pendingAction : "?", item.pendingPrice);
+                        String line = buildSnapshotLine(item, pendingQuote, pendingHolding, pendingHoldCost, judgment);
+                        if (line != null) snapshotLines.add(line);
+                    }
                     if (pending.decrementAndGet() == 0) finishTickBatch(snapshotLines);
                     continue;
                 }
@@ -265,6 +318,7 @@ public class RealtimeMonitorService extends Service {
 
     /** 本轮tick所有股票都评估完了才会走到这里。snapshotLines为null表示本轮还没到写快照的时间，直接跳过。 */
     private void finishTickBatch(List<String> snapshotLines) {
+        mTickInFlight = false;
         if (snapshotLines == null || snapshotLines.isEmpty()) return;
         mLastSnapshotAt = System.currentTimeMillis();
         try {
@@ -589,8 +643,10 @@ public class RealtimeMonitorService extends Service {
     }
 
     /**
-     * AI 异步分析完成：只回填 pending 记录的 AI 结论 + 写补充日志，不再决定要不要通知
-     * （通知已在规则命中那一刻发出）。用户若在 AI 完成前已确认/忽略，updatePendingAiResult 会跳过。
+     * AI 异步分析完成：回填 pending 记录的 AI 结论 + 写补充日志，不再决定要不要初始通知
+     * （初始通知已在规则命中那一刻发出）。但AI明确支持并给出具体操作建议时，这本身就是
+     * 值得推送的新信息，不能只能靠用户自己点开App才发现——补一条确认通知。存疑不补通知，
+     * 那本来就是不确定、自己判断，补通知反而是噪声。用户若在 AI 完成前已确认/忽略，updatePendingAiResult 会跳过。
      */
     private void handleAiAnalysisComplete(WatchlistManager.WatchlistItem item,
                                            TradingRuleEngine.RuleResult result,
@@ -604,6 +660,14 @@ public class RealtimeMonitorService extends Service {
                     vr.confirmed, vr.reason, aiFullText);
         } catch (Exception e) {
             Log.e(TAG, "写AI补充日志失败", e);
+        }
+
+        if (vr.confirmed) {
+            try {
+                fireConfirmedAlert(this, item.code, item.name, result.actionLabel, vr.reason, result.triggerPrice);
+            } catch (Exception e) {
+                Log.e(TAG, "发送AI确认通知失败", e);
+            }
         }
 
         Log.i(TAG, "AI补充分析完成: " + item.code + " "
@@ -677,6 +741,49 @@ public class RealtimeMonitorService extends Service {
                     vib.vibrate(VibrationEffect.createWaveform(new long[]{0, 200, 100, 200, 100, 200}, -1));
                 } else {
                     vib.vibrate(new long[]{0, 200, 100, 200, 100, 200}, -1);
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * AI明确支持时的补充确认通知——跟fireAlert()共用同一个通知ID（code.hashCode()），
+     * 会直接覆盖掉原来那条"待确认，AI分析中"的通知，用更具体的操作建议把它更新掉，
+     * 而不是叠加出两条通知。存疑时不调用这个方法——那本来就是"不确定，自己判断"，补一条通知
+     * 反而是噪声。同时供后台自动复核（本类内部）和StockBridge手动"AI分析审核"共用，
+     * 所以做成静态方法，自己传Context进来。
+     */
+    public static void fireConfirmedAlert(Context ctx, String code, String name, String actionLabel,
+                                           String aiReason, double price) {
+        ensureChannel(ctx);
+        NotificationManager nm = ctx.getSystemService(NotificationManager.class);
+        String title = "✅ " + name + "(" + code + ") " + actionLabel + " · AI已确认";
+        String content = String.format(java.util.Locale.CHINA, "¥%.2f · %s", price, aiReason);
+
+        Intent tapIntent = new Intent(ctx, MainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(ctx, code.hashCode(), tapIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        Notification n = new NotificationCompat.Builder(ctx, CHANNEL_ID)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(content))
+                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build();
+        nm.notify(code.hashCode(), n);
+
+        try {
+            Vibrator vib = (Vibrator) ctx.getSystemService(Context.VIBRATOR_SERVICE);
+            if (vib != null && vib.hasVibrator()) {
+                // 用一次长震动区分于最初那条规则信号的三段震动，让用户不看屏幕光靠手感就能分辨
+                // “新信号刚触发”还是“AI刚确认了一个已有的信号”。
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vib.vibrate(VibrationEffect.createOneShot(300, VibrationEffect.DEFAULT_AMPLITUDE));
+                } else {
+                    vib.vibrate(300);
                 }
             }
         } catch (Exception ignored) {}
