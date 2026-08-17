@@ -75,6 +75,17 @@
             android:hint="添加备注 (选填)" />
     </com.google.android.material.textfield.TextInputLayout>
 
+    <!-- 位置信息：只有摇一摇/NFC记账时自动定位到的记录才会显示这一行（默认gone，
+         运行时根据是否有经纬度决定）。长按可改名，点击跳转地图页面。 -->
+    <TextView
+        android:id="@+id/tv_edit_location"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:textColor="#2E7D32"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
     <Button
         android:id="@+id/btn_save_changes"
         android:layout_width="match_parent"

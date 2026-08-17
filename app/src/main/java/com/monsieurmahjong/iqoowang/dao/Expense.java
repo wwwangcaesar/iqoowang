@@ -26,8 +26,24 @@ public class Expense {
     @ColumnInfo(name = "remark")
     private String remark;
 
+    // 2026-08 新增：摇一摇/NFC记账时自动定位。用装箱 Double 而不是 primitive double，
+    // 是为了让"没有定位数据"能用 null 表示，不用 0.0 当哨兵值——
+    // 0.0/0.0 在地图上是几内亚湾外海一个真实存在的坐标点，用它表示"无数据"
+    // 是地理类 App 里一个经典的坑，这里直接避开。
+    private Double latitude;
+    private Double longitude;
+    // 位置显示名称：默认取逆地理编码结果，支持用户在详情弹窗长按改名
+    private String locationName;
+
     public String getRemark() { return remark; }
     public void setRemark(String remark) { this.remark = remark; }
+
+    public Double getLatitude() { return latitude; }
+    public void setLatitude(Double latitude) { this.latitude = latitude; }
+    public Double getLongitude() { return longitude; }
+    public void setLongitude(Double longitude) { this.longitude = longitude; }
+    public String getLocationName() { return locationName; }
+    public void setLocationName(String locationName) { this.locationName = locationName; }
 
     public void setAmount(long amount) { this.amount = amount; }
     public void setCategoryName(String categoryName) { this.categoryName = categoryName; }

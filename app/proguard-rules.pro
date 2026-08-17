@@ -19,3 +19,10 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# 高德定位 SDK（当前 minifyEnabled=false 用不上这几行，但先加上，
+# 免得以后哪天开混淆构建 release 包时，定位功能因为类被裁剪/改名而莫名其妙失效）
+-keep class com.amap.api.location.**{*;}
+-keep class com.amap.api.fence.**{*;}
+-keep class com.loc.**{*;}
+-keep class com.autonavi.aps.amapapi.model.**{*;}

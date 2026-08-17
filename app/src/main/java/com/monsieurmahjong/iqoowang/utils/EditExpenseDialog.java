@@ -2,6 +2,7 @@ package com.monsieurmahjong.iqoowang.utils;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -20,6 +21,7 @@ import com.google.android.material.textfield.TextInputEditText;
 import com.monsieurmahjong.iqoowang.R;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
+import com.monsieurmahjong.iqoowang.map.LocationMapActivity;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -35,6 +37,10 @@ import java.util.Locale;
  *
  * 分类字段是单选下拉菜单：点击弹出已有分类列表供选择，
  * 列表最后一项是"新增分类"，选中后弹出小输入框让用户新增一个分类名称。
+ *
+ * 2026-08 新增位置信息展示（仅编辑模式）：只有摇一摇/NFC记账时自动定位到的记录才会
+ * 显示这一行，长按可改名，点击跳转独立地图页面。新增模式（补录旧日期）不涉及定位，
+ * 不显示这一行——补录的是过去某一天的账，"现在的定位"跟那天没有意义上的关联。
  */
 public class EditExpenseDialog {
 
@@ -60,6 +66,24 @@ public class EditExpenseDialog {
 
         setupCategoryDropdown(activity, db, dv.etCategory, currentCategory);
 
+        // 位置信息：只有已经有经纬度的记录才显示这一行。currentLocationName 用单元素数组包一层，
+        // 是因为长按改名要在内部的 AlertDialog 回调里改这个值，保存按钮的回调里还要读到改名后的
+        // 结果——lambda 里能捕获的局部变量必须是"事实上的 final"，包一层数组绕开这个限制。
+        Double lat = expense.getLatitude();
+        Double lon = expense.getLongitude();
+        final String[] currentLocationName = {expense.getLocationName()};
+        if (lat != null && lon != null) {
+            dv.tvLocation.setVisibility(View.VISIBLE);
+            refreshLocationText(dv.tvLocation, currentLocationName[0]);
+
+            dv.tvLocation.setOnLongClickListener(v -> {
+                showRenameLocationDialog(activity, dv.tvLocation, currentLocationName);
+                return true;
+            });
+            dv.tvLocation.setOnClickListener(v ->
+                    openLocationMap(activity, lat, lon, currentLocationName[0]));
+        }
+
         dv.btnSave.setOnClickListener(v -> {
             try {
                 double newAmountDouble = Double.parseDouble(dv.etAmount.getText().toString());
@@ -75,6 +99,9 @@ public class EditExpenseDialog {
                 expense.setAmount(newAmountCents);
                 expense.setCategoryName(newCategory.isEmpty() ? "其他支出" : newCategory);
                 expense.setRemark(newRemark);
+                if (lat != null && lon != null) {
+                    expense.setLocationName(currentLocationName[0]);
+                }
 
                 new Thread(() -> {
                     db.expenseDao().updateExpense(expense);
@@ -110,6 +137,7 @@ public class EditExpenseDialog {
         dv.btnSave.setText("确认添加");
 
         setupCategoryDropdown(activity, db, dv.etCategory, "");
+        // 补录的是过去某一天，不涉及"现在的定位"，位置信息这一行保持默认的 gone
 
         dv.btnSave.setOnClickListener(v -> {
             try {
@@ -188,6 +216,7 @@ public class EditExpenseDialog {
         dv.etAmount = view.findViewById(R.id.et_edit_amount);
         dv.etCategory = view.findViewById(R.id.et_edit_category);
         dv.etRemark = view.findViewById(R.id.et_edit_remark);
+        dv.tvLocation = view.findViewById(R.id.tv_edit_location);
         dv.btnSave = view.findViewById(R.id.btn_save_changes);
 
         // 让 BottomSheet 背景透明以展示自绘的圆角背景
@@ -250,6 +279,38 @@ public class EditExpenseDialog {
                 .show();
     }
 
+    /** 位置文字的统一渲染：加个📍前缀，空名字兜底显示"未命名地点" */
+    private static void refreshLocationText(TextView tvLocation, String name) {
+        tvLocation.setText("📍 " + (name != null && !name.trim().isEmpty() ? name : "未命名地点"));
+    }
+
+    /** 长按位置信息弹出的重命名输入框，和"新增分类"用的是同一套 AlertDialog+EditText 模式 */
+    private static void showRenameLocationDialog(Context ctx, TextView tvLocation, String[] currentLocationName) {
+        EditText input = new EditText(ctx);
+        input.setHint("位置名称");
+        if (currentLocationName[0] != null) input.setText(currentLocationName[0]);
+
+        new AlertDialog.Builder(ctx)
+                .setTitle("修改位置名称")
+                .setView(input)
+                .setPositiveButton("确定", (d, which) -> {
+                    String newName = input.getText().toString().trim();
+                    currentLocationName[0] = newName.isEmpty() ? null : newName;
+                    refreshLocationText(tvLocation, currentLocationName[0]);
+                })
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    /** 跳转到独立的地图页面，展示这笔账单记录时的位置 */
+    private static void openLocationMap(Activity activity, double lat, double lon, String name) {
+        Intent intent = new Intent(activity, LocationMapActivity.class);
+        intent.putExtra(LocationMapActivity.EXTRA_LAT, lat);
+        intent.putExtra(LocationMapActivity.EXTRA_LON, lon);
+        intent.putExtra(LocationMapActivity.EXTRA_NAME, name);
+        activity.startActivity(intent);
+    }
+
     /** 弹窗内控件的简单集合，供 buildDialogShell() 返回，编辑/新增两种模式各自在其上继续操作 */
     private static class DialogViews {
         BottomSheetDialog dialog;
@@ -257,6 +318,7 @@ public class EditExpenseDialog {
         TextInputEditText etAmount;
         AutoCompleteTextView etCategory;
         TextInputEditText etRemark;
+        TextView tvLocation;
         Button btnSave;
     }
 }

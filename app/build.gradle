@@ -46,5 +46,7 @@ dependencies {
     // Gson JSON解析
     implementation 'com.google.code.gson:gson:2.10.1'
     implementation 'com.github.bumptech.glide:glide:4.16.0'
+    // 高德定位 SDK：摇一摇/NFC 记账时自动拿经纬度+地点名称，后续地图导航页面也会复用同一套 SDK
+    implementation 'com.amap.api:location:6.5.0'
 
 }

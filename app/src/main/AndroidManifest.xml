@@ -2,6 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- 导航按钮需要检测/拉起高德地图 App，Android 11+ 包可见性限制下不声明这个的话，
+         即使安装了高德地图，resolveActivity 也可能查不到，误判成未安装 -->
+    <queries>
+        <package android:name="com.autonavi.minimap" />
+    </queries>
+
     <uses-permission android:name="android.permission.CAMERA" />
 
     <uses-feature android:name="android.hardware.camera.any" />
@@ -17,6 +23,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- 摇一摇/NFC 记账时自动定位用：按高德官方文档要求，Android 12+ 上不能单独只请求 FINE，
+         要和 COARSE 一起请求，否则部分系统版本会忽略请求 -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
@@ -81,6 +91,9 @@
             android:theme="@style/Theme.TransparentLog"></activity>
         <activity
             android:name=".search.SearchActivity"
+            android:exported="false" />
+        <activity
+            android:name=".map.LocationMapActivity"
             android:exported="false" />
         <activity
             android:name=".piggy.PiggyBankActivity"

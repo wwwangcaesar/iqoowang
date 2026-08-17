@@ -72,6 +72,7 @@ import android.Manifest; // 必须是这个 Android 系统包
 import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.monsieurmahjong.iqoowang.server.ScreenshotService;
+import com.monsieurmahjong.iqoowang.utils.LocationHelper;
 import com.monsieurmahjong.iqoowang.view.CyberpunkBgView;
 
 public class QuickLogActivity extends AppCompatActivity {
@@ -85,6 +86,10 @@ public class QuickLogActivity extends AppCompatActivity {
 
     private String payTypeName="";
     private static final String TAG = "NFC_Screenshot_Activity";
+    private static final int LOCATION_PERMISSION_REQUEST_CODE = 1002;
+    /** 异步定位结果暂存，保存账单时才一起落库；volatile 是因为它在主线程的定位回调里被写，
+     * 在 saveAndExit() 的子线程里被读，需要保证跨线程可见性 */
+    private volatile LocationHelper.LocationResult pendingLocation;
 
     private BroadcastReceiver screenshotReceiver = new BroadcastReceiver() {
         @Override
@@ -107,6 +112,11 @@ public class QuickLogActivity extends AppCompatActivity {
         ContextCompat.registerReceiver(this, screenshotReceiver,
                 new IntentFilter(ScreenshotService.ACTION_SCREENSHOT_DONE), ContextCompat.RECEIVER_EXPORTED);
         Log.d(TAG, "📡 成功注册完成截图的广播监听器");
+
+        // 定位和截图/OCR并行进行，不互相阻塞：权限已经给过就直接发起，此时Activity可能还处于
+        // 全透明隐身阶段也没关系，定位请求本身不会有任何界面表现。权限还没给的情况放到
+        // showRealUI() 里再补，避免权限弹窗出现在隐身截图这个阶段，看起来会很奇怪。
+        requestLocationIfPermitted();
 
         handleNfcIntent(getIntent());
     }
@@ -158,6 +168,7 @@ public class QuickLogActivity extends AppCompatActivity {
         db = AppDatabase.getDatabase(this);
 
         checkStoragePermissionAndProcess();
+        requestLocationPermissionIfNeeded();
 
         // 🚨【已删除】：删除了导致无限死循环的 handleNfcIntent(getIntent());
 
@@ -177,6 +188,28 @@ public class QuickLogActivity extends AppCompatActivity {
         if (imagePath != null) {
             // TODO: 将截图路径渲染到你的 ImageView 上
             Toast.makeText(this, "凭证已自动截取！", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** 已有定位权限时才发起请求；没权限先不管，等 showRealUI() 里再补要权限 */
+    private void requestLocationIfPermitted() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                == PackageManager.PERMISSION_GRANTED) {
+            LocationHelper.requestOnce(this, result -> pendingLocation = result);
+        }
+    }
+
+    /**
+     * 定位权限申请放在这里（真实 UI 已经显示之后），不放在 onCreate() 那个全透明隐身阶段——
+     * 避免系统权限弹窗出现在"看起来还是上一个App"的隐身截图过程中，用户会很困惑。
+     * 高德官方建议 FINE 和 COARSE 一起申请，不要只申请 FINE，否则部分 Android 12 系统会忽略请求。
+     */
+    private void requestLocationPermissionIfNeeded() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this,
+                    new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION},
+                    LOCATION_PERMISSION_REQUEST_CODE);
         }
     }
 
@@ -289,10 +322,24 @@ public class QuickLogActivity extends AppCompatActivity {
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == PERMISSION_REQUEST_CODE && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            startScreenshotOcrWorkflow();
-        } else {
-            Toast.makeText(this, "未授予读取相册权限，无法自动识别金额", Toast.LENGTH_SHORT).show();
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                startScreenshotOcrWorkflow();
+            } else {
+                Toast.makeText(this, "未授予读取相册权限，无法自动识别金额", Toast.LENGTH_SHORT).show();
+            }
+        } else if (requestCode == LOCATION_PERMISSION_REQUEST_CODE) {
+            boolean granted = false;
+            for (int r : grantResults) {
+                if (r == PackageManager.PERMISSION_GRANTED) { granted = true; break; }
+            }
+            if (granted) {
+                // 权限刚给，用户接下来还要看金额、点分类，这段时间足够定位跑完，
+                // 顺手把这一次也接上，不用等下一次打开才有定位
+                LocationHelper.requestOnce(this, result -> pendingLocation = result);
+            } else {
+                Log.d(TAG, "用户未授予定位权限，本次及后续记账暂不带位置信息");
+            }
         }
     }
     /**
@@ -381,6 +428,15 @@ public class QuickLogActivity extends AppCompatActivity {
                         todayStr,
                         recordSource
                 );
+
+                // 点分类保存这一刻，把之前异步定位到的结果（如果有）一起存进这笔账单；
+                // 定位没跑完/失败时 pendingLocation 是 null，字段留空，不影响正常记账
+                LocationHelper.LocationResult loc = pendingLocation;
+                if (loc != null) {
+                    expense.setLatitude(loc.latitude);
+                    expense.setLongitude(loc.longitude);
+                    expense.setLocationName(loc.locationName);
+                }
 
                 db.expenseDao().insertExpense(expense);
 

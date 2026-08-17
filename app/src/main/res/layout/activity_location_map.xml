@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0A0E17"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <TextView
+        android:id="@+id/tv_map_back"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="32dp"
+        android:padding="4dp"
+        android:text="‹ 返回"
+        android:textColor="#00FFC6"
+        android:textSize="15sp" />
+
+    <TextView
+        android:id="@+id/tv_map_location_name"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="32dp"
+        android:textColor="#FFFFFF"
+        android:textSize="24sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tv_map_coords"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:textColor="#505F76"
+        android:textSize="13sp" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="24dp"
+        android:layout_marginBottom="24dp"
+        android:background="#1AFFFFFF" />
+
+    <!-- 地图预览+路线绘制需要高德3D地图/搜索SDK的Key，Key申请下来之前先用文字占位，
+         不影响下面"导航"按钮——那个走的是URI Scheme唤起高德App，不需要Key，现在就能用 -->
+    <TextView
+        android:id="@+id/tv_map_placeholder"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:gravity="center"
+        android:text="地图预览开发中\n（等高德 Key 配置好会加上）"
+        android:textColor="#505F76"
+        android:textSize="14sp" />
+
+    <Button
+        android:id="@+id/btn_map_navigate"
+        android:layout_width="match_parent"
+        android:layout_height="54dp"
+        android:layout_marginTop="24dp"
+        android:backgroundTint="#00FFC6"
+        android:text="导航前往"
+        android:textColor="#0A0E17"
+        android:textStyle="bold" />
+
+</LinearLayout>
