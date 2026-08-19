@@ -77,6 +77,9 @@ import com.monsieurmahjong.iqoowang.view.CyberpunkBgView;
 
 public class QuickLogActivity extends AppCompatActivity {
 
+    /** 摇一摇触发的专用 action，由 ShakeDetectService 发出，走和 NFC 同样的隐身截图链路 */
+    public static final String ACTION_SHAKE_LOG = "com.monsieurmahjong.iqoowang.action.SHAKE_LOG";
+
     private EditText etAmount;
     private GridLayout gridCategories;
     private AppDatabase db;
@@ -87,6 +90,8 @@ public class QuickLogActivity extends AppCompatActivity {
     private String payTypeName="";
     private static final String TAG = "NFC_Screenshot_Activity";
     private static final int LOCATION_PERMISSION_REQUEST_CODE = 1002;
+    /** 触发来源，最终写进 recordSource：NFC触摸 / 摇一摇 / 手动录入 三选一 */
+    private String entrySource = "手动录入";
     /** 异步定位结果暂存，保存账单时才一起落库；volatile 是因为它在主线程的定位回调里被写，
      * 在 saveAndExit() 的子线程里被读，需要保证跨线程可见性 */
     private volatile LocationHelper.LocationResult pendingLocation;
@@ -107,6 +112,15 @@ public class QuickLogActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         Log.d(TAG, "📱 onCreate 启动");
+
+        // 允许在锁屏上直接显示并点亮屏幕：摇一摇触发时手机很可能在口袋里屏幕已经息屏/锁屏，
+        // 不加这两行的话摇完手机只会在后台静静截图，用户什么都看不到。
+        // NFC/手动打开的情况下屏幕本来就是亮的，这两行调用没有副作用，不需要按触发来源区分。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true);
+            setTurnScreenOn(true);
+        }
+
         supportRequestWindowFeature(Window.FEATURE_NO_TITLE);
 
         ContextCompat.registerReceiver(this, screenshotReceiver,
@@ -131,13 +145,23 @@ public class QuickLogActivity extends AppCompatActivity {
 
     private boolean isNfc=true;
     private void handleNfcIntent(Intent intent) {
-        if (intent != null && NfcAdapter.ACTION_NDEF_DISCOVERED.equals(intent.getAction())) {
-            Log.d(TAG, "⚡ NFC 碰卡触发！当前 Activity 处于【全透明隐身状态】，正在向后台无障碍发截图命令...");
-            isNfc=true;
+        String action = intent != null ? intent.getAction() : null;
+        // NFC 碰卡和摇一摇触发走同一条链路：先保持全透明不 setContentView，发广播让无障碍服务截图，
+        // 收到截图完成广播后才真正显示 UI 并跑 OCR。两者唯一的区别是 isNfc/entrySource，
+        // 最终体现在入库的 recordSource 上，方便以后区分这笔账是怎么记上的。
+        boolean triggeredByScreenshot = NfcAdapter.ACTION_NDEF_DISCOVERED.equals(action)
+                || ACTION_SHAKE_LOG.equals(action);
+
+        if (triggeredByScreenshot) {
+            isNfc = NfcAdapter.ACTION_NDEF_DISCOVERED.equals(action);
+            entrySource = isNfc ? "NFC触摸" : "摇一摇";
+            Log.d(TAG, (isNfc ? "⚡ NFC 碰卡触发！" : "📳 摇一摇触发！")
+                    + "当前 Activity 处于【全透明隐身状态】，正在向后台无障碍发截图命令...");
             sendBroadcast(new Intent(ScreenshotService.ACTION_REQUEST_SCREENSHOT));
         } else {
-            Log.d(TAG, "👆 正常点击图标或非 NFC 唤醒，无需隐身截图，直接展示 UI");
-            isNfc=false;
+            Log.d(TAG, "👆 正常点击图标或非截图类唤醒，无需隐身截图，直接展示 UI");
+            isNfc = false;
+            entrySource = "手动录入";
             showRealUI(null);
         }
     }
@@ -414,12 +438,7 @@ public class QuickLogActivity extends AppCompatActivity {
         new Thread(new Runnable() {
             @Override
             public void run() {
-                String recordSource = triggerSource + "[" + detectedCardUid + "]";
-                if (isNfc){
-                    recordSource="NFC触摸";
-                }else {
-                    recordSource="手动录入";
-                }
+                String recordSource = entrySource;
                 Expense expense = new Expense(
                         0,
                         amountInCents,

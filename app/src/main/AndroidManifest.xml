@@ -27,6 +27,13 @@
          要和 COARSE 一起请求，否则部分系统版本会忽略请求 -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <!-- 摇一摇记账用：前台Service必需的基础权限 + Android 14 specialUse 类型专属权限 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- 摇晃触发时如果手机在锁屏/后台，需要这个权限才能弹全屏通知直接唤起记账页；
+         没有这个权限也不会崩，只是触发时退化成普通通知，需要用户自己点一下 -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
@@ -117,6 +124,15 @@
 
         </activity>
 
+        <service
+            android:name=".service.ShakeDetectService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="shake_gesture_quick_expense_logging" />
+        </service>
         <service
             android:name=".server.ScreenshotService"
             android:exported="true"
