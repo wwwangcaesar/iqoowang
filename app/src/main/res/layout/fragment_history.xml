@@ -19,7 +19,6 @@
             android:id="@+id/top_bar"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingVertical="@dimen/stack_sm"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintEnd_toEndOf="parent">
@@ -37,7 +36,6 @@
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="@dimen/stack_sm"
                 android:orientation="vertical"
                 app:layout_constraintBottom_toBottomOf="@id/iv_avatar"
                 app:layout_constraintStart_toEndOf="@id/iv_avatar"
@@ -48,7 +46,7 @@
                     android:layout_height="wrap_content"
                     android:text="每日打卡"
                     android:textColor="@color/on_surface"
-                    android:textSize="@dimen/headline_md"
+                    android:textSize="20sp"
                     android:textStyle="bold"/>
 
                 <TextView
@@ -58,7 +56,7 @@
                     android:layout_marginTop="2dp"
                     android:text="Serene Ledger"
                     android:textColor="@color/on_surface_variant"
-                    android:textSize="@dimen/body_md"/>
+                    android:textSize="12sp"/>
 
             </LinearLayout>
 
@@ -67,15 +65,6 @@
                 android:layout_width="75dp"
                 android:layout_height="75dp"
                 android:src="@drawable/sousuo"
-                app:layout_constraintBottom_toBottomOf="@id/iv_avatar"
-                app:layout_constraintEnd_toStartOf="@id/iv_piggy_bank"
-                app:layout_constraintTop_toTopOf="@id/iv_avatar"/>
-
-            <ImageView
-                android:id="@+id/iv_piggy_bank"
-                android:layout_width="75dp"
-                android:layout_height="75dp"
-                android:src="@drawable/ic_piggy_bank"
                 app:layout_constraintBottom_toBottomOf="@id/iv_avatar"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintTop_toTopOf="@id/iv_avatar"/>

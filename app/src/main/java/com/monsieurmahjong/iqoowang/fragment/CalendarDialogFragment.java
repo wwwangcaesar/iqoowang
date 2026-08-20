@@ -194,7 +194,7 @@ public class CalendarDialogFragment extends DialogFragment {
 
         // 日历图标（Material Symbol 文本图标，与主界面保持一致）
         TextView tvIcon = new TextView(requireContext());
-        tvIcon.setText("calendar_month");
+        tvIcon.setText("");
         tvIcon.setTextColor(Color.parseColor("#003527"));
         tvIcon.setTextSize(20);
         LinearLayout.LayoutParams iconP = new LinearLayout.LayoutParams(

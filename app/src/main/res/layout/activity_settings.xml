@@ -99,7 +99,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:gravity="center_vertical"
-                        android:orientation="horizontal"
+                        android:orientation="vertical"
                         android:padding="20dp">
 
                         <ImageView
@@ -109,21 +109,20 @@
                             android:scaleType="centerCrop"
                             android:src="@drawable/pixiu"
                             />
-
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="钱宝"
+                            android:textColor="#111c2d"
+                            android:layout_marginLeft="18dp"
+                            android:textSize="16sp" />
                         <LinearLayout
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_marginLeft="12dp"
                             android:layout_weight="1"
+                            android:visibility="gone"
                             android:orientation="vertical">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="钱宝"
-                                android:textColor="#111c2d"
-                                android:textSize="16sp" />
-
                             <TextView
                                 android:id="@+id/tv_streak_days"
                                 android:layout_width="wrap_content"
@@ -140,6 +139,29 @@
                             android:text="chevron_right"
                             android:visibility="invisible"
                             android:textColor="#b0b8c1"
+                            android:textSize="16sp" />
+                    </LinearLayout>
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="right"
+                        android:orientation="vertical"
+                        android:padding="20dp"
+                        >
+
+                        <ImageView
+                            android:id="@+id/iv_piggy_bank"
+                            android:layout_width="68dp"
+                            android:layout_height="68dp"
+                            android:scaleType="centerCrop"
+                            android:src="@drawable/ic_piggy_bank"
+                            />
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="多宝"
+                            android:layout_marginRight="18dp"
+                            android:textColor="#111c2d"
                             android:textSize="16sp" />
                     </LinearLayout>
                 </androidx.cardview.widget.CardView>

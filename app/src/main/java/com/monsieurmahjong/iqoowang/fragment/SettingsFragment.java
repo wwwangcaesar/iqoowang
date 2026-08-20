@@ -29,6 +29,7 @@ import com.monsieurmahjong.iqoowang.dao.AchievementManager;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
 import com.monsieurmahjong.iqoowang.pet.PetActivity;
+import com.monsieurmahjong.iqoowang.piggy.PiggyBankActivity;
 import com.monsieurmahjong.iqoowang.streak.StreakActivity;
 import com.monsieurmahjong.iqoowang.utils.AchievementCelebrationDialog;
 import com.monsieurmahjong.iqoowang.utils.CheckInManager;
@@ -73,6 +74,7 @@ public class SettingsFragment extends Fragment {
 
     private CardView cardStreakEntry;
     private TextView tvStreakDays;
+    private ImageView iv_piggy_bank;
     private final StreakManager streakManager = StreakManager.getInstance();
 
     // ── 数据 ─────────────────────────────────────────────
@@ -149,7 +151,7 @@ public class SettingsFragment extends Fragment {
         llAchievementHeader  = view.findViewById(R.id.ll_achievement_header);
         cardStreakEntry      = view.findViewById(R.id.card_streak_entry);
         tvStreakDays         = view.findViewById(R.id.tv_streak_days);
-
+        iv_piggy_bank        = view.findViewById(R.id.iv_piggy_bank);
         // ── 工具初始化 ───────────────────────────────────
         sharedPreferences = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         db            = AppDatabase.getDatabase(requireContext());
@@ -170,7 +172,10 @@ public class SettingsFragment extends Fragment {
         if (cardStreakEntry != null) {
             cardStreakEntry.setOnClickListener(v -> startActivity(new Intent(requireContext(), PetActivity.class)));
         }
-
+        if (iv_piggy_bank != null) {
+            iv_piggy_bank.setOnClickListener(v -> startActivity(new Intent(requireContext(), PiggyBankActivity.class)));
+            playPiggyIconShake(iv_piggy_bank);
+        }
         setupBudgetSlider();
 
         // 加载家庭新闻（模拟网络请求）
@@ -655,7 +660,15 @@ public class SettingsFragment extends Fragment {
         d.setColor(Color.parseColor(colorHex));
         return d;
     }
-
+    private void playPiggyIconShake(View iconView) {
+        iconView.animate().cancel();
+        iconView.setRotation(0f);
+        android.animation.ObjectAnimator anim = android.animation.ObjectAnimator.ofFloat(
+                iconView, "rotation", 0f, -14f, 11f, -8f, 5f, -2f, 0f);
+        anim.setDuration(650);
+        anim.setStartDelay(200);
+        anim.start();
+    }
     private int getDaysInCurrentMonth() {
         return Calendar.getInstance().getActualMaximum(Calendar.DAY_OF_MONTH);
     }

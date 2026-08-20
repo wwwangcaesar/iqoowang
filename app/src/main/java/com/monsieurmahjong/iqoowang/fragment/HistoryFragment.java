@@ -115,24 +115,7 @@ public class HistoryFragment extends Fragment {
             ivSearch.setOnClickListener(v -> startActivity(new Intent(requireContext(), SearchActivity.class)));
         }
 
-        // 存钱罐入口：点击跳转到心愿储蓄罐，页面加载时播一次晃动动画提醒用户可以点击
-        ImageView ivPiggyBank = view.findViewById(R.id.iv_piggy_bank);
-        if (ivPiggyBank != null) {
-            ivPiggyBank.setOnClickListener(v -> startActivity(new Intent(requireContext(), PiggyBankActivity.class)));
-            playPiggyIconShake(ivPiggyBank);
-        }
         return view;
-    }
-
-    /** 存钱罐图标晃动提醒：HistoryFragment 页面加载时播放一次，不影响任何数据 */
-    private void playPiggyIconShake(View iconView) {
-        iconView.animate().cancel();
-        iconView.setRotation(0f);
-        android.animation.ObjectAnimator anim = android.animation.ObjectAnimator.ofFloat(
-                iconView, "rotation", 0f, -14f, 11f, -8f, 5f, -2f, 0f);
-        anim.setDuration(650);
-        anim.setStartDelay(200);
-        anim.start();
     }
 
     private void openActvity() {
