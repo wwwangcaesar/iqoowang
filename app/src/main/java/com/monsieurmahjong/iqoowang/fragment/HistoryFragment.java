@@ -28,7 +28,9 @@ import com.monsieurmahjong.iqoowang.dao.Expense;
 import com.monsieurmahjong.iqoowang.pet.PetActivity;
 import com.monsieurmahjong.iqoowang.piggy.PiggyBankActivity;
 import com.monsieurmahjong.iqoowang.search.SearchActivity;
+import com.monsieurmahjong.iqoowang.streak.StreakActivity;
 import com.monsieurmahjong.iqoowang.utils.AnimationUtils;
+import com.monsieurmahjong.iqoowang.utils.StreakManager;
 import com.monsieurmahjong.iqoowang.view.CircularProgressView;
 import com.monsieurmahjong.iqoowang.view.LinearProgressView;
 
@@ -66,7 +68,9 @@ public class HistoryFragment extends Fragment {
     private AppDatabase db;
     private static final String PREFS_NAME = "SereneLedgerConfig";
     private static final String KEY_MONTHLY_BUDGET = "monthly_budget_cents";
+    private final StreakManager streakManager = StreakManager.getInstance();
 
+    private TextView tvStreakDays;
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
@@ -76,6 +80,7 @@ public class HistoryFragment extends Fragment {
         tvCircularText = view.findViewById(R.id.tv_circular_percent);
         tvMonthSpent = view.findViewById(R.id.tv_month_spent);
         tvMonthLeft = view.findViewById(R.id.tv_month_left);
+        tvStreakDays= view.findViewById(R.id.tv_streak_days);
         TextView btnCancel =view.findViewById(R.id.tv_more);
         if (btnCancel != null) btnCancel.setOnClickListener(v -> toAC());
 
@@ -131,7 +136,7 @@ public class HistoryFragment extends Fragment {
     }
 
     private void openActvity() {
-        Intent intent = new Intent(getActivity(), PetActivity.class);
+        Intent intent = new Intent(getActivity(), StreakActivity.class);
         startActivity(intent);
     }
     @Override
@@ -146,6 +151,7 @@ public class HistoryFragment extends Fragment {
         super.onResume();
         // 关键打通：每次用户切换切回本 Fragment 瞬间强制迫使观察者管线重绘刷新，解决不退出不刷新痛点！
         buildReactiveDataPipelines();
+        refreshStreakDisplay();
     }
 
     private void buildReactiveDataPipelines() {
@@ -576,7 +582,18 @@ public class HistoryFragment extends Fragment {
         super.onDestroyView();
         stopBudgetBreathingWarning();
     }
-
+    private void refreshStreakDisplay() {
+        if (tvStreakDays == null || getContext() == null) return;
+        int streak = streakManager.getCurrentStreak(requireContext());
+        boolean checkedToday = streakManager.isCheckedToday(requireContext());
+        if (streak <= 0) {
+            tvStreakDays.setText("还没有打卡记录，点击点亮第一天的火苗");
+        } else if (checkedToday) {
+            tvStreakDays.setText(String.format(Locale.getDefault(), "连续 %d 天，今天已经点亮啦", streak));
+        } else {
+            tvStreakDays.setText(String.format(Locale.getDefault(), "连续 %d 天，点击点亮今天的火苗", streak));
+        }
+    }
 
     private void toAC(){
         Intent intent = new Intent(requireContext(), HistoryGalleryActivity.class);

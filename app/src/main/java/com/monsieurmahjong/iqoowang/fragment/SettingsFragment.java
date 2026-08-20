@@ -28,6 +28,7 @@ import com.monsieurmahjong.iqoowang.connect.Achievement;
 import com.monsieurmahjong.iqoowang.dao.AchievementManager;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
+import com.monsieurmahjong.iqoowang.pet.PetActivity;
 import com.monsieurmahjong.iqoowang.streak.StreakActivity;
 import com.monsieurmahjong.iqoowang.utils.AchievementCelebrationDialog;
 import com.monsieurmahjong.iqoowang.utils.CheckInManager;
@@ -167,7 +168,7 @@ public class SettingsFragment extends Fragment {
 
         // 4. 连续打卡卡片 → 跳转到打卡火苗页面（与消费记录完全独立）
         if (cardStreakEntry != null) {
-            cardStreakEntry.setOnClickListener(v -> startActivity(new Intent(requireContext(), StreakActivity.class)));
+            cardStreakEntry.setOnClickListener(v -> startActivity(new Intent(requireContext(), PetActivity.class)));
         }
 
         setupBudgetSlider();
@@ -182,7 +183,7 @@ public class SettingsFragment extends Fragment {
         syncBudgetDisplay();
         calculateRealTimeCheckIn();
         updateAchievementsState();
-        refreshStreakDisplay();
+//        refreshStreakDisplay();
     }
 
     // ─────────────────────────────────────────────────────

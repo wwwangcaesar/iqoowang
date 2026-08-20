@@ -48,6 +48,7 @@
             android:focusable="true"
             android:foreground="?android:attr/selectableItemBackground"
             android:padding="8dp"
+            android:visibility="invisible"
             android:text="calendar_month"
             android:textColor="#003527"
             android:textSize="24sp" />
@@ -77,7 +78,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="连续打卡"
+                    android:text="宠物"
                     android:textAllCaps="true"
                     android:textColor="#707974"
                     android:textSize="12sp" />
@@ -101,18 +102,13 @@
                         android:orientation="horizontal"
                         android:padding="20dp">
 
-                        <LinearLayout
-                            android:layout_width="48dp"
-                            android:layout_height="48dp"
-                            android:background="@drawable/bg_round_12dp"
-                            android:gravity="center">
-
-                            <TextView
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:text="🔥"
-                                android:textSize="22sp" />
-                        </LinearLayout>
+                        <ImageView
+                            android:id="@+id/iv_avatar"
+                            android:layout_width="68dp"
+                            android:layout_height="68dp"
+                            android:scaleType="centerCrop"
+                            android:src="@drawable/pixiu"
+                            />
 
                         <LinearLayout
                             android:layout_width="0dp"
@@ -124,7 +120,7 @@
                             <TextView
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
-                                android:text="每日打卡"
+                                android:text="钱宝"
                                 android:textColor="#111c2d"
                                 android:textSize="16sp" />
 
@@ -133,7 +129,7 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="4dp"
-                                android:text="连续 0 天，点击点亮今天的火苗"
+                                android:text="Serene Ledger"
                                 android:textColor="#505f76"
                                 android:textSize="12sp" />
                         </LinearLayout>
@@ -142,6 +138,7 @@
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="chevron_right"
+                            android:visibility="invisible"
                             android:textColor="#b0b8c1"
                             android:textSize="16sp" />
                     </LinearLayout>
@@ -417,6 +414,7 @@
                                     android:layout_height="wrap_content"
                                     android:layout_marginLeft="4dp"
                                     android:text="chevron_right"
+                                    android:visibility="gone"
                                     android:textColor="#b0b8c1"
                                     android:textSize="16sp" />
                             </LinearLayout>

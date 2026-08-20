@@ -146,7 +146,7 @@ public class AchievementDialogFragment extends DialogFragment {
 
         // 奖杯图标
         TextView tvIcon = new TextView(requireContext());
-        tvIcon.setText("emoji_events");
+        tvIcon.setText("");
         tvIcon.setTextSize(22);
         tvIcon.setTextColor(Color.parseColor("#e0a800"));
         LinearLayout.LayoutParams iconP = new LinearLayout.LayoutParams(

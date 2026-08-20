@@ -29,7 +29,7 @@
                 android:layout_width="75dp"
                 android:layout_height="75dp"
                 android:scaleType="centerCrop"
-                android:src="@drawable/pixiu"
+                android:src="@drawable/daka"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toTopOf="parent"/>
@@ -46,12 +46,13 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="钱宝"
+                    android:text="每日打卡"
                     android:textColor="@color/on_surface"
                     android:textSize="@dimen/headline_md"
                     android:textStyle="bold"/>
 
                 <TextView
+                    android:id="@+id/tv_streak_days"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
@@ -63,18 +64,17 @@
 
             <ImageView
                 android:id="@+id/iv_search"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:layout_marginEnd="18dp"
-                android:src="@drawable/ic_search"
+                android:layout_width="75dp"
+                android:layout_height="75dp"
+                android:src="@drawable/sousuo"
                 app:layout_constraintBottom_toBottomOf="@id/iv_avatar"
                 app:layout_constraintEnd_toStartOf="@id/iv_piggy_bank"
                 app:layout_constraintTop_toTopOf="@id/iv_avatar"/>
 
             <ImageView
                 android:id="@+id/iv_piggy_bank"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
+                android:layout_width="75dp"
+                android:layout_height="75dp"
                 android:src="@drawable/ic_piggy_bank"
                 app:layout_constraintBottom_toBottomOf="@id/iv_avatar"
                 app:layout_constraintEnd_toEndOf="parent"
