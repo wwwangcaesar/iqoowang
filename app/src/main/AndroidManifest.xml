@@ -49,6 +49,13 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.ExpenseTracker"
         android:usesCleartextTraffic="true">
+
+        <!-- 高德地图/定位/搜索 SDK 公用的 Key，值从 build.gradle 里的 manifestPlaceholders 注入，
+             实际值来自 local.properties 里的 AMAP_KEY 一行，不硬编码在这里 -->
+        <meta-data
+            android:name="com.amap.api.v2.apikey"
+            android:value="${AMAP_KEY}" />
+
         <!-- 首页 Dashboard -->
         <activity
             android:name=".MainActivity"
@@ -80,6 +87,17 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
 
+                <data
+                    android:host="quicklog"
+                    android:scheme="iqoowang" />
+            </intent-filter>
+
+            <!-- 【修复】NFC 扫描触发的系统广播 action 永远是 NDEF_DISCOVERED，不是 ACTION_VIEW；
+                 上面那个 ACTION_VIEW 过滤器只对"点击超链接"这类场景有效，对扫标签无效。
+                 用 NFC Tools 这类工具写的 URL/URI 类型记录，实际触发的是这条。 -->
+            <intent-filter>
+                <action android:name="android.nfc.action.NDEF_DISCOVERED" />
+                <category android:name="android.intent.category.DEFAULT" />
                 <data
                     android:host="quicklog"
                     android:scheme="iqoowang" />

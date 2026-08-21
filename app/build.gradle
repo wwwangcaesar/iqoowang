@@ -2,6 +2,15 @@ plugins {
     alias(libs.plugins.androidApplication)
 }
 
+// 从 local.properties 读高德Key，不把Key直接写进 build.gradle/manifest 里提交到版本控制。
+// 只需要在 local.properties 里加一行 AMAP_KEY=你的Key 就能生效，那个文件本身已经被 .gitignore 排除了。
+def localProps = new Properties()
+def localPropsFile = rootProject.file('local.properties')
+if (localPropsFile.exists()) {
+    localProps.load(new FileInputStream(localPropsFile))
+}
+def amapKey = localProps.getProperty('AMAP_KEY', '')
+
 android {
     namespace "com.monsieurmahjong.iqoowang"
     compileSdk 34
@@ -15,6 +24,7 @@ android {
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
+        manifestPlaceholders["AMAP_KEY"] = amapKey
         ndk {
             // X5内核仅支持这两个架构，必须明确指定
             abiFilters 'armeabi-v7a', 'arm64-v8a'
