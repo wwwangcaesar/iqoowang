@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -18,6 +19,7 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.widget.SwitchCompat;
 import androidx.cardview.widget.CardView;
 import androidx.fragment.app.Fragment;
 
@@ -31,6 +33,8 @@ import com.monsieurmahjong.iqoowang.dao.Expense;
 import com.monsieurmahjong.iqoowang.pet.PetActivity;
 import com.monsieurmahjong.iqoowang.piggy.PiggyBankActivity;
 import com.monsieurmahjong.iqoowang.streak.StreakActivity;
+import com.monsieurmahjong.iqoowang.service.ShakeDetectService;
+import com.monsieurmahjong.iqoowang.utils.AccessibilityStatusUtils;
 import com.monsieurmahjong.iqoowang.utils.AchievementCelebrationDialog;
 import com.monsieurmahjong.iqoowang.utils.CheckInManager;
 import com.monsieurmahjong.iqoowang.utils.SpBudgetUtils;
@@ -76,6 +80,9 @@ public class SettingsFragment extends Fragment {
     private TextView tvStreakDays;
     private ImageView iv_piggy_bank;
     private final StreakManager streakManager = StreakManager.getInstance();
+
+    private SwitchCompat switchShakeLog;
+    private TextView tvShakeStatus;
 
     // ── 数据 ─────────────────────────────────────────────
     /** 完整成就列表（含已解锁/未解锁），用于传递给 DialogFragment */
@@ -152,6 +159,8 @@ public class SettingsFragment extends Fragment {
         cardStreakEntry      = view.findViewById(R.id.card_streak_entry);
         tvStreakDays         = view.findViewById(R.id.tv_streak_days);
         iv_piggy_bank        = view.findViewById(R.id.iv_piggy_bank);
+        switchShakeLog       = view.findViewById(R.id.switch_shake_log);
+        tvShakeStatus        = view.findViewById(R.id.tv_shake_status);
         // ── 工具初始化 ───────────────────────────────────
         sharedPreferences = requireContext().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
         db            = AppDatabase.getDatabase(requireContext());
@@ -177,6 +186,7 @@ public class SettingsFragment extends Fragment {
             playPiggyIconShake(iv_piggy_bank);
         }
         setupBudgetSlider();
+        setupShakeToggle();
 
         // 加载家庭新闻（模拟网络请求）
         loadFamilyNews();
@@ -210,6 +220,52 @@ public class SettingsFragment extends Fragment {
     // ─────────────────────────────────────────────────────
     //  日历对话框
     // ─────────────────────────────────────────────────────
+
+    private void setupShakeToggle() {
+        if (switchShakeLog == null || getContext() == null) return;
+
+        SharedPreferences shakePrefs = requireContext()
+                .getSharedPreferences(ShakeDetectService.PREFS, Context.MODE_PRIVATE);
+        boolean enabled = shakePrefs.getBoolean(ShakeDetectService.KEY_ENABLED, false);
+        boolean accessibilityOn = AccessibilityStatusUtils.isScreenshotServiceEnabled(requireContext());
+        if (enabled && !accessibilityOn) {
+            enabled = false;
+            shakePrefs.edit().putBoolean(ShakeDetectService.KEY_ENABLED, false).apply();
+            requireContext().stopService(new Intent(requireContext(), ShakeDetectService.class));
+        }
+        switchShakeLog.setOnCheckedChangeListener(null);
+        switchShakeLog.setChecked(enabled);
+        updateShakeStatusText(enabled);
+
+        switchShakeLog.setOnCheckedChangeListener((buttonView, isChecked) -> {
+            if (isChecked && !AccessibilityStatusUtils.isScreenshotServiceEnabled(requireContext())) {
+                switchShakeLog.setChecked(false);
+                Toast.makeText(requireContext(), "请先在系统设置里给本 App 开启无障碍服务，摇一摇才能截图识别金额", Toast.LENGTH_LONG).show();
+                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                return;
+            }
+
+            shakePrefs.edit().putBoolean(ShakeDetectService.KEY_ENABLED, isChecked).apply();
+            updateShakeStatusText(isChecked);
+
+            Intent serviceIntent = new Intent(requireContext(), ShakeDetectService.class);
+            if (isChecked) {
+                if (android.os.Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(
+                        requireContext(), android.Manifest.permission.POST_NOTIFICATIONS)
+                        != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 2001);
+                }
+                androidx.core.content.ContextCompat.startForegroundService(requireContext(), serviceIntent);
+            } else {
+                requireContext().stopService(serviceIntent);
+            }
+        });
+    }
+
+    private void updateShakeStatusText(boolean enabled) {
+        if (tvShakeStatus == null) return;
+        tvShakeStatus.setText(enabled ? "已开启，用力摇晃手机可快速打开记账页" : "开启后，用力摇晃手机可快速打开记账页");
+    }
 
     private void openCalendarDialog() {
         // 异步查询当前月份支出，再弹出日历
