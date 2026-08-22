@@ -26,3 +26,9 @@
 -keep class com.amap.api.fence.**{*;}
 -keep class com.loc.**{*;}
 -keep class com.autonavi.aps.amapapi.model.**{*;}
+
+# 高德地图/搜索 SDK（同样先加上备用，当前 minifyEnabled=false 暂时用不到）
+-keep class com.amap.api.maps.**{*;}
+-keep class com.amap.api.services.**{*;}
+-keep class com.autonavi.**{*;}
+-keep class com.amap.api.trace.**{*;}

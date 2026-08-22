@@ -56,7 +56,12 @@ dependencies {
     // Gson JSON解析
     implementation 'com.google.code.gson:gson:2.10.1'
     implementation 'com.github.bumptech.glide:glide:4.16.0'
-    // 高德定位 SDK：摇一摇/NFC 记账时自动拿经纬度+地点名称，后续地图导航页面也会复用同一套 SDK
-    implementation 'com.amap.api:location:6.5.0'
+    // 高德地图/定位/搜索 SDK：官方从某版本起推荐用合并包（地图+定位+搜索三合一）而不是分别引入三个独立包，
+    // 避免重复类冲突。之前 Phase 2 单独加的 com.amap.api:location 现在换成这个合并包（已经包含定位能力，
+    // 不需要再单独保留）。版本号用 latest.integration 而不是锁死具体版本号，是因为官方文档里给的示例版本号
+    // 格式比较特殊（如 10.1.200_loc6.4.9_sea9.7.4），不确定当前时间点的准确最新值，用 latest.integration 让
+    // Gradle 自己解析真实可用的最新版本比我猜一个数字更稳妥——个人项目非商业发布场景下这个取舍可以接受，
+    // 如果以后想锁版本可以去高德官网下载页查当前具体号换上去。
+    implementation 'com.amap.api:3dmap-location-search:latest.integration'
 
 }
