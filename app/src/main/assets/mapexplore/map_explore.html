@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>消费足迹地图</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { width:100%; height:100%; background:#0A0E17; overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif; }
+  #chart { width:100%; height:100%; }
+
+  #breadcrumb { position:fixed; top:0; left:0; right:0; z-index:10;
+    display:flex; align-items:center; gap:8px; padding:16px 20px; padding-top:40px; }
+  .crumb { color:#505F76; font-size:14px; }
+  .crumb.active { color:#00FFC6; font-weight:700; }
+  .crumb-sep { color:#333d4d; }
+
+  #loading { position:fixed; inset:0; z-index:20; background:#0A0E17;
+    display:flex; align-items:center; justify-content:center;
+    color:#00FFC6; font-size:14px; letter-spacing:1px; transition:opacity .3s ease; }
+  #loading.hide { opacity:0; pointer-events:none; }
+
+  #toast { position:fixed; bottom:36px; left:50%; transform:translateX(-50%);
+    background:rgba(21,27,43,0.95); color:#fff; padding:10px 20px; border-radius:20px;
+    font-size:13px; opacity:0; transition:opacity .3s ease; z-index:15; pointer-events:none;
+    white-space:nowrap; border:1px solid rgba(0,255,198,0.25); }
+  #toast.show { opacity:1; }
+
+  #pointCard { position:fixed; z-index:25; background:#151B2B; border:1px solid #00FFC6;
+    border-radius:10px; padding:8px 14px; color:#fff; font-size:12px; pointer-events:none;
+    transform:translate(-50%,-100%) scale(0); opacity:0; white-space:nowrap; }
+  #pointCard.show { animation:bounceIn .45s cubic-bezier(.34,1.56,.64,1) forwards; }
+  @keyframes bounceIn {
+    0%   { transform:translate(-50%,-100%) scale(0);    opacity:0; }
+    60%  { transform:translate(-50%,-110%) scale(1.15);  opacity:1; }
+    100% { transform:translate(-50%,-100%) scale(1);     opacity:1; }
+  }
+
+  #backBtn { position:fixed; top:40px; right:20px; z-index:10; color:#00FFC6; font-size:13px;
+    background:rgba(21,27,43,0.8); border:1px solid rgba(0,255,198,0.3); border-radius:16px;
+    padding:8px 14px; display:none; }
+</style>
+</head>
+<body>
+  <div id="loading">加载地图数据…</div>
+  <div id="breadcrumb"></div>
+  <div id="backBtn" onclick="goBack()">‹ 返回</div>
+  <div id="chart"></div>
+  <div id="toast"></div>
+  <div id="pointCard"></div>
+
+<script>
+/**
+ * ============================================================================
+ * 消费足迹地图 —— 纯前端视觉/动效原型
+ * ============================================================================
+ * 当前阶段只验证"全国 → 省 → 市"三层下钻 + 缩放动效 + 气泡点交互的观感，
+ * 不接任何真实消费数据。DEMO_PROVINCE_DATA / DEMO_POINTS 都是占位假数据，
+ * 等这版视觉效果确认没问题，再把这两个换成从 Android 端注入的真实消费地点。
+ *
+ * 地图引擎：ECharts（省市下钻这个场景的标准工具，内置地图组件、下钻动画、
+ * 带涟漪特效的散点系列，比自己用 Canvas/D3 手撸省事很多）。
+ * 边界数据：阿里 DataV 的公开 GeoJSON 接口，按需加载——点哪个省才拉哪个省的
+ * 市级边界，不需要把全国所有省市边界数据提前打包进这个文件。这意味着这个页面
+ * 运行时需要联网，纯离线环境下打不开地图。
+ *
+ * 层级和展示规则：
+ * - 全国层（country）：省份色块 + 消费占比（每个省份不同颜色），点省份 → 下钻
+ * - 省层（province，"倒数第二层"）：该省内的消费地点以气泡点+地名展示，
+ *   点气泡有跳动动画反馈；点省内某个有记录的市 → 继续下钻
+ * - 市层（city，最深一层）：镜头进一步拉近，气泡点展示规则不变
+ */
+
+const DATAV_BASE = 'https://geo.datav.aliyun.com/areas_v3/bound/';
+
+// ============================================================================
+// 占位假数据区（最后会替换成真实消费记录，接口形状可能还会调整）
+// ============================================================================
+const DEMO_PROVINCE_DATA = [
+  { name: '广东省', adcode: 440000, percent: 32 },
+  { name: '浙江省', adcode: 330000, percent: 18 },
+  { name: '江苏省', adcode: 320000, percent: 15 },
+  { name: '四川省', adcode: 510000, percent: 12 },
+  { name: '北京市', adcode: 110000, percent: 10 },
+  { name: '上海市', adcode: 310000, percent: 8 },
+  { name: '福建省', adcode: 350000, percent: 5 },
+];
+
+const DEMO_POINTS = {
+  '广东省': [
+    { name: '示例·深圳湾体育中心', city: '深圳市', cityAdcode: 440300, lng: 113.9455, lat: 22.5232 },
+    { name: '示例·广州塔',       city: '广州市', cityAdcode: 440100, lng: 113.3245, lat: 23.1066 },
+    { name: '示例·珠海长隆',     city: '珠海市', cityAdcode: 440400, lng: 113.5767, lat: 22.1155 },
+  ],
+  '浙江省': [
+    { name: '示例·西湖',   city: '杭州市', cityAdcode: 330100, lng: 120.1551, lat: 30.2489 },
+    { name: '示例·乌镇',   city: '嘉兴市', cityAdcode: 330400, lng: 120.4970, lat: 30.7469 },
+  ],
+  '北京市': [
+    { name: '示例·三里屯', city: '北京市', cityAdcode: 110100, lng: 116.4551, lat: 39.9368 },
+  ],
+};
+
+const PALETTE = ['#00FFC6','#FF6B9D','#FFC145','#5B8DEF','#9D65FF','#FF8A5B','#4ECDC4','#F7B801','#7BDFF2','#B892FF'];
+// ============================================================================
+
+const chart = echarts.init(document.getElementById('chart'));
+const loadingEl = document.getElementById('loading');
+const breadcrumbEl = document.getElementById('breadcrumb');
+const toastEl = document.getElementById('toast');
+const pointCardEl = document.getElementById('pointCard');
+const backBtnEl = document.getElementById('backBtn');
+
+const geoCache = {}; // adcode -> geoJson，避免同一区域重复请求
+let state = { level: 'country', provinceName: null, provinceAdcode: null, cityName: null };
+
+async function fetchGeo(adcode) {
+  if (geoCache[adcode]) return geoCache[adcode];
+  const resp = await fetch(DATAV_BASE + adcode + '_full.json');
+  if (!resp.ok) throw new Error('地图数据请求失败: ' + adcode);
+  const json = await resp.json();
+  geoCache[adcode] = json;
+  return json;
+}
+
+function setLoading(show) { loadingEl.classList.toggle('hide', !show); }
+
+function showToast(text) {
+  toastEl.textContent = text;
+  toastEl.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(() => toastEl.classList.remove('show'), 1800);
+}
+
+function showPointCard(name, x, y) {
+  pointCardEl.textContent = name;
+  pointCardEl.style.left = x + 'px';
+  pointCardEl.style.top = y + 'px';
+  pointCardEl.classList.remove('show');
+  void pointCardEl.offsetWidth; // 强制重排，确保动画能重新触发（哪怕连续点同一个点）
+  pointCardEl.classList.add('show');
+  clearTimeout(showPointCard._t);
+  showPointCard._t = setTimeout(() => pointCardEl.classList.remove('show'), 2200);
+}
+
+function renderBreadcrumb() {
+  let html = `<span class="crumb${state.level==='country'?' active':''}" onclick="goToCountry()">全国</span>`;
+  if (state.provinceName) {
+    html += `<span class="crumb-sep">›</span><span class="crumb${state.level==='province'?' active':''}" onclick="goToProvince()">${state.provinceName}</span>`;
+  }
+  if (state.cityName) {
+    html += `<span class="crumb-sep">›</span><span class="crumb active">${state.cityName}</span>`;
+  }
+  breadcrumbEl.innerHTML = html;
+  backBtnEl.style.display = state.level === 'country' ? 'none' : 'block';
+}
+
+// ============================================================================
+// 全国层：省份色块 + 占比
+// ============================================================================
+async function renderCountry() {
+  setLoading(true);
+  state = { level: 'country', provinceName: null, provinceAdcode: null, cityName: null };
+  renderBreadcrumb();
+
+  const china = await fetchGeo(100000);
+  echarts.registerMap('china', china);
+
+  const percentMap = {};
+  DEMO_PROVINCE_DATA.forEach(p => percentMap[p.name] = p.percent);
+
+  const data = china.features.map((f, i) => ({
+    name: f.properties.name,
+    value: percentMap[f.properties.name] || 0,
+    center: f.properties.center, // 省份几何中心，点击下钻时用于镜头推近动画
+    itemStyle: { areaColor: PALETTE[i % PALETTE.length] },
+  }));
+
+  chart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item',
+      formatter: p => (p.data && p.data.value)
+        ? `${p.name}<br/>消费占比 ${p.data.value}%`
+        : `${p.name}<br/>暂无记录`,
+      backgroundColor: 'rgba(10,14,23,0.92)',
+      borderColor: '#00FFC6',
+      textStyle: { color: '#fff', fontSize: 12 },
+    },
+    geo: null,
+    series: [{
+      type: 'map',
+      map: 'china',
+      roam: true,
+      zoom: 1,
+      label: { show: false },
+      itemStyle: { borderColor: '#0A0E17', borderWidth: 1 },
+      emphasis: {
+        label: { show: true, color: '#fff', fontSize: 12 },
+        itemStyle: { shadowBlur: 20, shadowColor: 'rgba(0,255,198,0.6)' },
+      },
+      data,
+    }],
+    animationDurationUpdate: 500,
+    animationEasingUpdate: 'cubicOut',
+  }, true);
+
+  setLoading(false);
+}
+
+// ============================================================================
+// 省/市层：地点气泡（effectScatter 自带涟漪特效，点击额外弹一个跳动小卡片）
+// ============================================================================
+async function renderPointsLayer(mapKey, geo, points) {
+  echarts.registerMap(mapKey, geo);
+
+  chart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: { show: false },
+    geo: {
+      map: mapKey,
+      roam: true,
+      itemStyle: {
+        areaColor: 'rgba(0,255,198,0.07)',
+        borderColor: 'rgba(0,255,198,0.35)',
+        borderWidth: 1,
+      },
+      emphasis: { itemStyle: { areaColor: 'rgba(0,255,198,0.16)' } },
+    },
+    series: [{
+      type: 'effectScatter',
+      coordinateSystem: 'geo',
+      symbolSize: 12,
+      rippleEffect: { brushType: 'stroke', scale: 3.2, period: 3 },
+      itemStyle: { color: '#00FFC6', shadowBlur: 10, shadowColor: '#00FFC6' },
+      label: {
+        show: true, position: 'top', formatter: p => p.data.name,
+        color: '#fff', fontSize: 11, distance: 8,
+      },
+      data: points.map(pt => ({ name: pt.name, value: [pt.lng, pt.lat] })),
+    }],
+    animationDurationUpdate: 500,
+    animationEasingUpdate: 'cubicOut',
+  }, true);
+}
+
+/** 点击省份 → 先在当前视图上把镜头朝这个省推近（制造"缩放靠近"的观感），
+ *  数据请求和推近动画并行进行，动画播完、数据也到位后再切换成省级图层 */
+async function drillIntoProvince(name, adcode, center) {
+  showToast('正在进入 ' + name + '…');
+
+  if (center) {
+    chart.dispatchAction({ type: 'geoRoam', componentType: 'series', seriesIndex: 0, zoom: 5, center });
+  }
+  const geoPromise = fetchGeo(adcode);
+  await sleep(480);
+  const geo = await geoPromise;
+
+  state = { level: 'province', provinceName: name, provinceAdcode: adcode, cityName: null };
+  renderBreadcrumb();
+  setLoading(false);
+
+  const points = DEMO_POINTS[name] || [];
+  await renderPointsLayer('region_' + adcode, geo, points);
+}
+
+/** 点击省内某个市 → 同样先推近镜头再切换，只是这次是在省级图层基础上继续放大 */
+async function drillIntoCity(cityName, cityAdcode, cityCenter) {
+  if (cityCenter) {
+    chart.dispatchAction({ type: 'geoRoam', componentType: 'geo', zoom: 3, center: cityCenter });
+  }
+  await sleep(420);
+
+  state.level = 'city';
+  state.cityName = cityName;
+  renderBreadcrumb();
+
+  const points = (DEMO_POINTS[state.provinceName] || []).filter(pt => pt.city === cityName);
+  // 城市层直接复用当前已经加载的省级地图做背景，只是镜头更近、点更聚焦，
+  // 不需要再单独请求区县级边界数据——demo阶段这个精度已经够用
+  await renderPointsLayer('region_' + state.provinceAdcode, geoCache[state.provinceAdcode], points);
+}
+
+function goToCountry() { if (state.level !== 'country') renderCountry(); }
+function goToProvince() {
+  if (state.level !== 'city') return;
+  drillIntoProvince(state.provinceName, state.provinceAdcode);
+}
+function goBack() {
+  if (state.level === 'city') goToProvince();
+  else if (state.level === 'province') goToCountry();
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// ============================================================================
+// 点击事件统一分发
+// ============================================================================
+chart.on('click', params => {
+  if (params.componentType === 'series' && params.seriesType === 'effectScatter') {
+    const evt = params.event && params.event.event;
+    const x = evt ? evt.offsetX : window.innerWidth / 2;
+    const y = evt ? evt.offsetY : window.innerHeight / 2;
+    showPointCard(params.data.name, x, y);
+    return;
+  }
+
+  if (state.level === 'country') {
+    const target = DEMO_PROVINCE_DATA.find(p => p.name === params.name);
+    if (!target) { showToast(params.name + ' 暂无记录'); return; }
+    drillIntoProvince(target.name, target.adcode, params.data && params.data.center);
+    return;
+  }
+
+  if (state.level === 'province') {
+    const clickedAdcode = params.data && params.data.adcode;
+    const hit = (DEMO_POINTS[state.provinceName] || []).find(pt => pt.city === params.name);
+    if (!hit) { showToast(params.name + ' 暂无记录'); return; }
+    drillIntoCity(params.name, clickedAdcode || hit.cityAdcode, params.data && params.data.center);
+  }
+});
+
+window.addEventListener('resize', () => chart.resize());
+
+renderCountry().catch(err => {
+  setLoading(false);
+  showToast('地图数据加载失败，检查一下网络');
+  console.error(err);
+});
+</script>
+</body>
+</html>

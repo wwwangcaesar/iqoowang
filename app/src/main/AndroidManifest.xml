@@ -121,6 +121,9 @@
             android:name=".map.LocationMapActivity"
             android:exported="false" />
         <activity
+            android:name=".map.MapExploreActivity"
+            android:exported="false" />
+        <activity
             android:name=".piggy.PiggyBankActivity"
             android:exported="false" />
         <activity
