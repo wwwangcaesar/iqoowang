@@ -15,9 +15,14 @@ import java.util.List;
 @Dao
 public interface ExpenseDao {
 
-    // 插入新花费（必须在后台线程调用）
+    // 插入新花费（必须在后台线程调用），返回自增主键 id
+    // 【location回填修复】以前返回void，现在改返回long是为了配合
+    // QuickLogActivity 里定位还没跑完就先保存了账单的情况：定位迟到后，需要拿到
+    // 刚刚插入那行的 id 才能回头补一次 updateLocation。这个改动向后兼容：
+    // 之前不关心返回值的调用点（直接写 db.expenseDao().insertExpense(expense);，不接收返回值）
+    // 仍然编译通过，不用改。
     @Insert
-    void insertExpense(Expense expense);
+    long insertExpense(Expense expense);
 
     // 获取特定日期的总花费（返回分，前端再除以100）
     // IFNULL(SUM(amount), 0)：无数据时返回0，彻底避免null指针
@@ -69,6 +74,11 @@ public interface ExpenseDao {
 
     @Update
     void updateExpense(Expense expense);
+
+    /** 定位迟到时，把已经存好的那笔账单补一次位置信息，不需要把整个 Expense 对象重新读出来再 update。
+     * 见 QuickLogActivity：记账流程本身很快，定位往往跟不上这个节奏，才需要这条事后补充的路径。 */
+    @Query("UPDATE expense_table SET latitude = :lat, longitude = :lon, locationName = :name WHERE id = :id")
+    void updateLocation(long id, double lat, double lon, String name);
 
     @Delete
     void deleteExpense(Expense expense);

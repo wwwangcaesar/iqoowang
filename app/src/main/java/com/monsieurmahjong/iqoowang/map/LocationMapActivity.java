@@ -92,7 +92,11 @@ public class LocationMapActivity extends AppCompatActivity implements RouteSearc
         mapView.onCreate(savedInstanceState); // MapView 生命周期必须和 Activity 同步转发，官方要求
         initMap();
 
-        routeSearch = new RouteSearch(this);
+        try {
+            routeSearch = new RouteSearch(this);
+        } catch (AMapException e) {
+            throw new RuntimeException(e);
+        }
         routeSearch.setRouteSearchListener(this);
 
         // 当前定位是"尽力而为"：拿不到也不影响目标点正常显示在地图上，只是没有路线可画

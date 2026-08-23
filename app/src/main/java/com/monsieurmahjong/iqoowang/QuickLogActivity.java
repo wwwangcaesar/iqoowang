@@ -95,6 +95,9 @@ public class QuickLogActivity extends AppCompatActivity {
     /** 异步定位结果暂存，保存账单时才一起落库；volatile 是因为它在主线程的定位回调里被写，
      * 在 saveAndExit() 的子线程里被读，需要保证跨线程可见性 */
     private volatile LocationHelper.LocationResult pendingLocation;
+    /** 已保存账单的 id，-1 表示还没保存。定位如果比保存动作还慢，这个字段让定位回调知道
+     * 要回头补哪一行。同样需要 volatile 保证跨线程可见性。 */
+    private volatile long savedExpenseId = -1;
 
     private BroadcastReceiver screenshotReceiver = new BroadcastReceiver() {
         @Override
@@ -219,7 +222,24 @@ public class QuickLogActivity extends AppCompatActivity {
     private void requestLocationIfPermitted() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
                 == PackageManager.PERMISSION_GRANTED) {
-            LocationHelper.requestOnce(this, result -> pendingLocation = result);
+            LocationHelper.requestOnce(this, this::onLocationResolved);
+        }
+    }
+
+    /**
+     * 【location回填修复】定位结果的统一入口，不管它比保存先到还是后到都能正确处理：
+     * - 还没保存（savedExpenseId 还是 -1）：只设置 pendingLocation，等 saveAndExit() 自己带上
+     * - 已经保存了（说明这次记账比定位跑完得快）：直接回头把那一行补上位置信息，
+     *   不用等下一次记账才有定位
+     */
+    private void onLocationResolved(LocationHelper.LocationResult result) {
+        if (result == null) return; // 定位失败/超时，两边都不用管，维持原来"没定位也能正常记账"的兼容
+        pendingLocation = result;
+
+        long id = savedExpenseId;
+        if (id > 0) {
+            new Thread(() -> db.expenseDao().updateLocation(
+                    id, result.latitude, result.longitude, result.locationName)).start();
         }
     }
 
@@ -360,7 +380,7 @@ public class QuickLogActivity extends AppCompatActivity {
             if (granted) {
                 // 权限刚给，用户接下来还要看金额、点分类，这段时间足够定位跑完，
                 // 顺手把这一次也接上，不用等下一次打开才有定位
-                LocationHelper.requestOnce(this, result -> pendingLocation = result);
+                LocationHelper.requestOnce(this, this::onLocationResolved);
             } else {
                 Log.d(TAG, "用户未授予定位权限，本次及后续记账暂不带位置信息");
             }
@@ -457,7 +477,8 @@ public class QuickLogActivity extends AppCompatActivity {
                     expense.setLocationName(loc.locationName);
                 }
 
-                db.expenseDao().insertExpense(expense);
+                long newId = db.expenseDao().insertExpense(expense);
+                savedExpenseId = newId; // 万一定位比这次保存还慢，onLocationResolved() 回来时能找到这一行补上
 
                 runOnUiThread(new Runnable() {
                     @Override
