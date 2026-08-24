@@ -60,7 +60,14 @@ public class LocationHelper {
 
         AMapLocationClientOption option = new AMapLocationClientOption();
         option.setLocationMode(AMapLocationClientOption.AMapLocationMode.Hight_Accuracy);
-        option.setOnceLocation(true);   // 只定位一次，拿到结果后 SDK 自动停止，不需要手动维护连续定位状态
+        option.setOnceLocation(true);       // 只定位一次，拿到结果后 SDK 自动停止，不需要手动维护连续定位状态
+        // 【精度修复】开启后 SDK 会在内部持续采样最近 3 秒，最后返回这 3 秒内精度最高的那一次结果，
+        // 而不是像之前那样一拿到第一个结果就立即返回——第一个结果很多时候还没被多方校正过，
+        // 这是实测下来定位误差达到100+米的主因之一。没开 setGpsFirst(true)：那个会让 SDK
+        // 优先等GPS，30秒内拿不到才降级用网络定位，但记账场景大概率在室内（店里付完款），
+        // GPS很可能根本锁不上星，结合下面 TIMEOUT_MS 只有10秒的超时预算，开了反而可能变成
+        // “直接超时拿不到任何定位”，比现在“定位不准但至少有”更差。
+        option.setOnceLocationLatest(true);
         option.setNeedAddress(true);    // 回调里直接带地址信息（SDK 默认就是 true，这里显式声明便于阅读）
         option.setHttpTimeOut(TIMEOUT_MS);
         client.setLocationOption(option);
@@ -93,6 +100,12 @@ public class LocationHelper {
                     callback.onResult(null);
                     return;
                 }
+                // 把定位类型和精度半径记下来，以后实测发现定位不准时可以直接查 Logcat 确认原因：
+                // getLocationType() 返回1/2类GPS、4类WiFi、5类基站/6类缓存等，类型越靠后面精度越差；
+                // getAccuracy() 是 SDK 自己估算的精度半径（米），数字越大说明这次定位越不可靠。
+                Log.i(TAG, String.format(java.util.Locale.CHINA,
+                        "定位成功：类型=%d 精度半径≈%.0f米",
+                        location.getLocationType(), location.getAccuracy()));
                 callback.onResult(new LocationResult(
                         location.getLatitude(), location.getLongitude(), pickDisplayName(location)));
             }
