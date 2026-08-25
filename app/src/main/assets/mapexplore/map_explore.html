@@ -7,7 +7,11 @@
 <!-- ECharts 5.5.1 & ECharts GL 2.0.9 -->
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
-<!-- 高德地图 JS API 1.4.x：不需要 securityJsCode，与本项目 Key 完全兼容 -->
+<!-- MuGuiLin/3D-Earth 动效库 (本地 assets 离线极速加载) -->
+<script src="./d3-timer.min.js"></script>
+<script src="./d3-geo.min.js"></script>
+<script src="./d3-contour.min.js"></script>
+<!-- 高德地图 JS API 1.4.x：无需 securityJsCode，Key 完全兼容 -->
 <script src="https://webapi.amap.com/maps?v=1.4.15&key=02efb122ff3481185e944e78cfe411be&plugin=AMap.Scale,AMap.ToolBar"></script>
 <style>
   :root {
@@ -198,18 +202,19 @@
   }
 
   #actionChip {
-    background: rgba(15, 23, 42, 0.92);
-    border: 1px solid rgba(0, 255, 198, 0.45);
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(6, 11, 20, 0.95) 100%);
+    border: 1px solid rgba(0, 255, 198, 0.5);
     backdrop-filter: blur(14px);
     -webkit-backdrop-filter: blur(14px);
     color: #F1F5F9;
-    padding: 10px 20px;
+    padding: 11px 22px;
     border-radius: 24px;
     font-size: 13px;
+    font-weight: 600;
     display: flex;
     align-items: center;
     gap: 8px;
-    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6), 0 0 16px rgba(0, 255, 198, 0.25);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.65), 0 0 16px rgba(0, 255, 198, 0.3);
     cursor: pointer;
     pointer-events: auto;
     transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
@@ -737,11 +742,11 @@
     </div>
   </div>
 
-  <!-- 底部提示与快捷操作胶囊 -->
+  <!-- 底部提示与快捷操作胶囊 (只有点击此处才触发穿梭进入中国地图) -->
   <div id="bottomBar">
     <div id="actionChip" onclick="handleActionChipClick()">
       <div class="pulse-dot"></div>
-      <span id="chipText">点击地球或此处，穿梭进入中国地图</span>
+      <span id="chipText">🚀 点击穿梭进入中国地图</span>
     </div>
   </div>
 
@@ -777,7 +782,7 @@
     <div class="drawer-spot-list" id="drawerSpotList">
       <!-- 动态生成足迹点列表 -->
     </div>
-    <div class="drawer-actions">
+    <div class="drawer-actions" id="drawerActions">
       <div class="action-btn btn-secondary" onclick="zoomInCurrentDistrict()">🔍 放大聚焦</div>
       <div class="action-btn btn-primary" onclick="openExternalMapNav()">🧭 唤起外部地图导航</div>
     </div>
@@ -786,7 +791,7 @@
 <script>
 /**
  * ============================================================================
- * 消费足迹地图：3D 炫酷地球 + 2D 省市区县多级下钻 + 高德街区专属详情图层
+ * 消费足迹地图：MuGuiLin/3D-Earth 炫酷地球 + 2D 省市区县多级下钻 + 独立高德街区图层
  * ============================================================================
  */
 
@@ -846,7 +851,7 @@ const PALETTE_BORDER = [
   '#00FFC6', '#38BDF8', '#818CF8', '#C084FC', '#FBBF24', '#34D399', '#60A5FA', '#2DD4BF'
 ];
 
-// 全球主要枢纽（用于 3D-Earth 跨洋飞线）
+// 全球主要枢纽（用于 3D 跨洋飞线）
 const GLOBAL_HUBS = [
   { name: '北京', coord: [116.4074, 39.9042] },
   { name: '上海', coord: [121.4737, 31.2304] },
@@ -905,6 +910,7 @@ const drawerDistrictCodeEl = document.getElementById('drawerDistrictCode');
 const statTotalSpentEl = document.getElementById('statTotalSpent');
 const statSpotCountEl = document.getElementById('statSpotCount');
 const drawerSpotListEl = document.getElementById('drawerSpotList');
+const drawerActionsEl = document.getElementById('drawerActions');
 
 let globeChart = null;
 let mapChart = null;
@@ -991,7 +997,7 @@ async function fetchGeo(adcode) {
 }
 
 // ============================================================================
-// 1. 3D 炫酷地球引擎 (MuGuiLin/3D-Earth 多彩大幅度磁场光轨 + 慢速流光粒子)
+// 1. 3D 科技地球引擎 (MuGuiLin/3D-Earth 动态背光轮廓层 + 多彩立体磁轨)
 // ============================================================================
 
 function generateMuGuiLinGlobeLines() {
@@ -1084,7 +1090,110 @@ function generateMuGuiLinGlobeLines() {
   return { flightSeries, magneticSeries };
 }
 
-let globePulseTimer = null;
+let contourChart = null;
+let d3TimerInstance = null;
+
+/** 构建 MuGuiLin/3D-Earth 动态背光轮廓图层 (60fps 流畅动效) */
+function setupMuGuiLinContourBackLight(onReady) {
+  if (typeof d3 === 'undefined' || !d3.contours) {
+    if (onReady) onReady(null);
+    return;
+  }
+
+  const config = {
+    color: '#00FFC6',
+    levels: 1,
+    intensity: 3.2,
+    threshold: 0.01
+  };
+
+  const canvas = document.createElement('canvas');
+  canvas.width = 682;
+  canvas.height = 341;
+  const context = canvas.getContext('2d');
+  context.lineWidth = 0.4;
+  context.strokeStyle = config.color;
+  context.fillStyle = config.color;
+  context.shadowColor = config.color;
+
+  const image = new Image();
+  image.src = './earth-bg.png';
+  image.onload = function () {
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = Math.floor(image.width / 8);
+    tempCanvas.height = Math.floor(image.height / 8);
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCtx.drawImage(image, 0, 0, tempCanvas.width, tempCanvas.height);
+    const imgData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+
+    const m = imgData.height;
+    const n = imgData.width;
+    const values = new Array(n * m);
+    const contours = d3.contours().size([n, m]).smooth(true);
+    const projection = d3.geoIdentity().scale(canvas.width / n);
+    const path = d3.geoPath(projection, context);
+
+    for (let j = 0, k = 0; j < m; ++j) {
+      for (let i = 0; i < n; ++i, ++k) {
+        values[k] = imgData.data[(k << 2)] / 255;
+      }
+    }
+
+    const imgGraphic = new echarts.graphic.Image({
+      style: {
+        image: canvas,
+        x: -1,
+        y: -1,
+        width: canvas.width + 2,
+        height: canvas.height + 2
+      }
+    });
+
+    if (!contourChart) {
+      contourChart = echarts.init(document.createElement('canvas'), null, {
+        width: 682,
+        height: 341
+      });
+      contourChart.getZr().add(imgGraphic);
+    }
+
+    function redraw(mu) {
+      mu.forEach(function (d, idx) {
+        context.beginPath();
+        path(d);
+        context.globalAlpha = 1;
+        context.stroke();
+        if (idx > config.levels / 5 * 3) {
+          context.globalAlpha = 0.01;
+          context.fill();
+        }
+      });
+      imgGraphic.dirty();
+    }
+
+    function backLight(threshold, levels) {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      const thresholds = [];
+      for (let i = 0; i < levels; i++) {
+        thresholds.push((threshold + 1 / levels * i) % 1);
+      }
+      redraw(contours.thresholds(thresholds)(values));
+    }
+
+    if (d3TimerInstance) d3TimerInstance.stop();
+    d3TimerInstance = d3.timer(function (t) {
+      if (state.mode !== 'globe' || !globeChart) return;
+      const threshold = (t % 10000) / 10000;
+      backLight(threshold, 1);
+    });
+
+    backLight(config.threshold, config.levels);
+    if (onReady) onReady(contourChart);
+  };
+  image.onerror = function() {
+    if (onReady) onReady(null);
+  };
+}
 
 function initGlobe() {
   if (!globeChart) {
@@ -1117,23 +1226,31 @@ function initGlobe() {
         color: '#00E5FF',
       },
       light: {
-        ambient: { intensity: 0.45 },
-        main: { intensity: 1.25, shadow: false },
+        ambient: { intensity: 0.55 },
+        main: { intensity: 1.45, shadow: false, alpha: 40, beta: -30 },
       },
       viewControl: {
         autoRotate: true,
-        autoRotateSpeed: 3.5,
+        autoRotateSpeed: 4.0,       // 优雅流畅旋转
         autoRotateAfterStill: 2.0,
-        rotateSensitivity: [1, 1],
-        zoomSensitivity: 1.0,
+        rotateSensitivity: [1, 1],  // 原生支持自由拖拽旋转
+        zoomSensitivity: 1.0,       // 原生支持自如手势缩放
         panSensitivity: 0,
-        distance: 210,
+        distance: 220,
         minDistance: 90,
         maxDistance: 400,
-        alpha: 25,
-        beta: 155,
+        alpha: 28,
+        beta: 160,
         targetCoord: CHINA_CENTER,
       },
+      postEffect: {
+        enable: true,
+        SSAO: {
+          radius: 1,
+          intensity: 1,
+          enable: true
+        }
+      }
     },
     series: [
       ...magneticSeries,
@@ -1178,39 +1295,27 @@ function initGlobe() {
   };
 
   globeChart.setOption(option, true);
-  startContinentBreathing();
   updateUIForGlobe();
-}
 
-/** 大陆板块微光呼吸动效（忽明忽暗） */
-function startContinentBreathing() {
-  if (globePulseTimer) clearInterval(globePulseTimer);
-  let step = 0;
-  globePulseTimer = setInterval(() => {
-    if (state.mode !== 'globe' || !globeChart) return;
-    step += 0.1;
-    const baseOpacity = 0.55 + Math.sin(step) * 0.35;
-    const baseSize = 5 + Math.sin(step) * 2.8;
-    
-    globeChart.setOption({
-      series: [{
-        id: 'continentScatter',
-        symbolSize: baseSize,
-        itemStyle: { opacity: baseOpacity },
-      }],
-    });
-  }, 100);
-}
-
-function stopContinentBreathing() {
-  if (globePulseTimer) {
-    clearInterval(globePulseTimer);
-    globePulseTimer = null;
-  }
+  // 挂载 MuGuiLin 动态背光轮廓图层
+  setupMuGuiLinContourBackLight(cChart => {
+    if (cChart && globeChart) {
+      globeChart.setOption({
+        globe: {
+          layers: [{
+            type: 'blend',
+            blendTo: 'emission',
+            texture: cChart,
+            intensity: 3.2
+          }]
+        }
+      });
+    }
+  });
 }
 
 // ============================================================================
-// 3D 地球手势与点击判定系统
+// 3D 地球手势系统 (纯粹自由观赏/旋转/缩放，点击地球不触发页面跳转)
 // ============================================================================
 let touchTracker = {
   startX: 0,
@@ -1252,12 +1357,11 @@ function setupGlobeInteractions() {
       touchTracker.isPinching = false;
       return;
     }
-    if (state.mode !== 'globe' || state.isTransitioning) return;
     const elapsed = Date.now() - touchTracker.startTime;
+    // 短促点击仅生成视觉涟漪，不触发切页
     if (!touchTracker.isMoved && elapsed < 280) {
       const touch = e.changedTouches[0];
       spawnRipple(touch.clientX, touch.clientY);
-      triggerFlyIntoChina();
     }
   }, { passive: true });
 
@@ -1276,15 +1380,13 @@ function setupGlobeInteractions() {
   });
 
   el.addEventListener('mouseup', e => {
-    if (state.mode !== 'globe' || state.isTransitioning) return;
     if (!mouseMoved && (Date.now() - mouseStartTime < 280)) {
       spawnRipple(e.clientX, e.clientY);
-      triggerFlyIntoChina();
     }
   });
 }
 
-/** 俯冲进入中国地图动画 */
+/** 仅在点击穿梭胶囊时触发：俯冲进入中国地图动画 */
 async function triggerFlyIntoChina() {
   if (state.mode !== 'globe' || state.isTransitioning) return;
   state.isTransitioning = true;
@@ -1309,7 +1411,6 @@ async function triggerFlyIntoChina() {
   await withVeil(async () => {
     globeContainer.classList.add('hidden');
     mapContainer.classList.remove('hidden');
-    stopContinentBreathing();
     state.mode = 'map';
     state.isTransitioning = false;
     await renderCountryMap();
@@ -1348,8 +1449,8 @@ async function exitToGlobeMode() {
   globeChart.setOption({
     globe: {
       viewControl: {
-        distance: 210,
-        alpha: 25,
+        distance: 220,
+        alpha: 28,
         autoRotate: true,
         animation: true,
         animationDurationUpdate: 900,
@@ -1358,7 +1459,6 @@ async function exitToGlobeMode() {
     },
   });
 
-  startContinentBreathing();
   state.isTransitioning = false;
 }
 
@@ -1412,7 +1512,7 @@ function updateBreadcrumb() {
 
 function updateUIForGlobe() {
   updateBreadcrumb();
-  chipTextEl.textContent = '点击地球或此处，穿梭进入中国地图';
+  chipTextEl.textContent = '🚀 点击穿梭进入中国地图';
   actionChipEl.style.display = 'flex';
 }
 
@@ -1892,13 +1992,17 @@ function openDistrictDrawer(dName, dCode, points) {
   statTotalSpentEl.textContent = '¥ ' + total.toFixed(2);
   statSpotCountEl.textContent = spotList.length + ' 处';
 
+  // 没有消费记录的地区：不显示放大聚焦和唤起外部地图导航按钮，展示友好提示
   if (spotList.length === 0) {
     drawerSpotListEl.innerHTML = `
-      <div style="text-align:center;color:#64748B;font-size:12px;padding:16px 0;">
-        该区县暂无预设消费记录，点击下方“放大聚焦”可打开高德街区图层探索
+      <div style="text-align:center;color:#94A3B8;font-size:13px;padding:24px 0;line-height:1.6;">
+        <div style="font-size:24px;margin-bottom:6px;">📍</div>
+        该区域暂无消费记录与坐标定位
       </div>
     `;
+    if (drawerActionsEl) drawerActionsEl.style.display = 'none';
   } else {
+    if (drawerActionsEl) drawerActionsEl.style.display = 'flex';
     drawerSpotListEl.innerHTML = spotList.map((pt) => `
       <div class="spot-item" onclick="openAmapDetailForSpot('${pt.name}', ${pt.lng}, ${pt.lat}, '${pt.amount}', '${pt.cat}', '${pt.time}')">
         <div>
@@ -1919,7 +2023,7 @@ function closeDistrictDrawer() {
 }
 
 // ============================================================================
-// 3. 独立高德地图街区图层引擎 (AMap 2.0 3D 深度探索)
+// 3. 独立高德地图街区图层引擎 (AMap 1.4.x 3D 深度探索)
 // ============================================================================
 
 /** 点击“🔍 放大聚焦”：立即关闭抽屉，平滑切换至高德地图街区图层 */
@@ -1927,8 +2031,11 @@ function zoomInCurrentDistrict() {
   closeDistrictDrawer();
   const provPoints = DEMO_POINTS[state.provinceName] || [];
   const districtPoints = provPoints.filter(p => p.district === state.districtName || p.districtAdcode === state.districtAdcode);
-  const targetSpot = districtPoints.length > 0 ? districtPoints[0] : null;
-
+  if (districtPoints.length === 0) {
+    showToast('该地区暂无消费坐标');
+    return;
+  }
+  const targetSpot = districtPoints[0];
   openAmapDetailLayer(state.districtName, state.districtAdcode, targetSpot, districtPoints);
 }
 
@@ -1941,11 +2048,21 @@ function openAmapDetailForSpot(name, lng, lat, amount, cat, time) {
 
 /** 打开高德地图独立街区图层 */
 async function openAmapDetailLayer(districtName, districtAdcode, spot, spotList) {
+  if (!spot || !spot.lng || !spot.lat) {
+    showToast('该地区暂无消费坐标');
+    return;
+  }
+
   showToast(`🔍 正在加载 ${districtName || '当前区县'} 高德街区图层…`);
 
   const provPoints = DEMO_POINTS[state.provinceName] || [];
   const allSpots = spotList || provPoints.filter(p => p.district === districtName || p.districtAdcode === districtAdcode);
-  const activeSpot = spot || (allSpots.length > 0 ? allSpots[0] : { name: districtName, lng: 113.9488, lat: 22.5288, amount: '—', cat: '区县中心', time: '现在' });
+  const activeSpot = spot || (allSpots.length > 0 ? allSpots[0] : null);
+
+  if (!activeSpot) {
+    showToast('该地区暂无消费坐标');
+    return;
+  }
 
   state.selectedSpot = activeSpot;
   updateAmapBottomCard(activeSpot);
@@ -1960,7 +2077,7 @@ async function openAmapDetailLayer(districtName, districtAdcode, spot, spotList)
     state.mode = 'amap';
   });
 
-  // 等过渡完成后再初始化/更新 AMap，确保容器尺寸已经确立
+  // 等待过渡完成容器尺寸稳定后初始化/更新 AMap
   await sleep(100);
   initOrUpdateAmap(activeSpot.lng, activeSpot.lat, allSpots);
 }
@@ -1988,7 +2105,7 @@ function initOrUpdateAmap(centerLng, centerLat, spots) {
     amapInstance = new AMap.Map('amapDetailContainer', {
       zoom: 16,
       center: [centerLng, centerLat],
-      mapStyle: 'amap://styles/dark', // 暗夜底图，1.4.x 支持
+      mapStyle: 'amap://styles/dark', // 暗夜底图，1.4.x 原生支持
       showLabel: true,
     });
 
@@ -1998,9 +2115,7 @@ function initOrUpdateAmap(centerLng, centerLat, spots) {
     amapInstance.setZoomAndCenter(16, [centerLng, centerLat]);
   }
 
-  // 容器在展示后可能刚完成 CSS 过渡，强制触发一次 resize 确保瓦片正确铺满
   setTimeout(() => { if (amapInstance) amapInstance.resize(); }, 300);
-
 
   // 清除旧 Markers 并添加当前区县所有消费点 Markers
   if (amapMarkers.length > 0) {
@@ -2037,7 +2152,7 @@ function handleAmapMarkerClick(name) {
     state.selectedSpot = found;
     updateAmapBottomCard(found);
     if (amapInstance) {
-      amapInstance.setZoomAndCenter(16.5, [found.lng, found.lat], false, 500);
+      amapInstance.setZoomAndCenter(16.5, [found.lng, found.lat]);
     }
   }
 }
@@ -2050,20 +2165,27 @@ function updateAmapBottomCard(spot) {
 
 /** 触发原生 Android LocationMapActivity 路线规划页面 */
 function triggerNativeAmapRoute() {
-  const spot = state.selectedSpot || { name: '目标位置', lng: 113.9488, lat: 22.5288 };
+  const spot = state.selectedSpot;
+  if (!spot || !spot.lng || !spot.lat) {
+    showToast('该地区暂无消费坐标');
+    return;
+  }
   showToast(`🚗 正在拉起原生高德规划: ${spot.name}`);
 
   if (window.MapBridge && window.MapBridge.openLocationMap) {
     window.MapBridge.openLocationMap(spot.name, spot.lat, spot.lng);
   } else {
-    // 降级为外部唤起
     openExternalMapNav();
   }
 }
 
 /** 唤起外部高德地图 App 真实路线导航 */
 function openExternalMapNav() {
-  const spot = state.selectedSpot || { name: state.districtName || '目标区域', lng: 113.9488, lat: 22.5288 };
+  const spot = state.selectedSpot;
+  if (!spot || !spot.lng || !spot.lat) {
+    showToast('该地区暂无消费坐标');
+    return;
+  }
   showToast(`🧭 正在唤起高德地图导航: ${spot.name}`);
 
   const amapUrl = `https://uri.amap.com/marker?position=${spot.lng},${spot.lat}&name=${encodeURIComponent(spot.name)}&src=iqoowang&coordinate=gaode&callnative=1`;
