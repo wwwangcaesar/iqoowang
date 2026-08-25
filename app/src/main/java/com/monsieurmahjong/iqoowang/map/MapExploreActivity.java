@@ -1,26 +1,38 @@
 package com.monsieurmahjong.iqoowang.map;
 
+import android.content.Intent;
+import android.content.pm.ApplicationInfo;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.view.Window;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 
 import androidx.appcompat.app.AppCompatActivity;
 
 /**
- * 消费足迹地图的宿主 Activity——纯 WebView 容器，目前不挂任何 JS Bridge。
- * 页面本身（map_explore.html）现阶段只用假数据验证省市下钻+缩放动效，
- * 等视觉效果确认下来，需要真实消费地点数据时再补一个类似 StreakBridge 的
- * 桥接类，把 Android 端的 Expense 位置数据序列化传进去。
+ * 消费足迹地图的宿主 Activity。
+ * 挂载 MapBridge JSBridge，支持在 H5 探索地图中点击具体地点直接调起原生高德地图页面 LocationMapActivity，
+ * 并支持向 H5 提供 Android 端配置的高德地图 Key。
  */
 public class MapExploreActivity extends AppCompatActivity {
 
     private WebView webView;
+    private String amapKey = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         supportRequestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        try {
+            ApplicationInfo appInfo = getPackageManager().getApplicationInfo(getPackageName(), PackageManager.GET_META_DATA);
+            if (appInfo.metaData != null) {
+                amapKey = appInfo.metaData.getString("com.amap.api.v2.apikey", "");
+            }
+        } catch (Exception ignored) {
+        }
 
         webView = new WebView(this);
         setContentView(webView);
@@ -28,18 +40,32 @@ public class MapExploreActivity extends AppCompatActivity {
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
-        // 地图边界数据是运行时按需从阿里 DataV 拉取的，页面本身虽然是本地 file:// 资源，
-        // 但必须允许联网请求，纯离线环境下这个页面打不开地图（只会停在加载中）
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
+
+        webView.addJavascriptInterface(new MapBridge(), "MapBridge");
 
         webView.loadUrl("file:///android_asset/mapexplore/map_explore.html");
     }
 
+    public class MapBridge {
+        @JavascriptInterface
+        public void openLocationMap(String name, double lat, double lon) {
+            Intent intent = new Intent(MapExploreActivity.this, LocationMapActivity.class);
+            intent.putExtra(LocationMapActivity.EXTRA_NAME, name);
+            intent.putExtra(LocationMapActivity.EXTRA_LAT, lat);
+            intent.putExtra(LocationMapActivity.EXTRA_LON, lon);
+            startActivity(intent);
+        }
+
+        @JavascriptInterface
+        public String getAmapKey() {
+            return amapKey != null ? amapKey : "";
+        }
+    }
+
     @Override
     public void onBackPressed() {
-        // 地图页面自己有面包屑/返回按钮做层级回退，这里的系统返回键直接关闭整个页面，
-        // 不需要在 WebView 历史栈里回退（这个页面没有多个"网页"，只有一份文档在切换状态）
         super.onBackPressed();
     }
 

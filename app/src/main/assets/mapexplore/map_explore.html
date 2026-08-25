@@ -3,273 +3,1342 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-<title>消费足迹地图</title>
+<title>消费足迹地图 - 3D科技地球与高德街区图层</title>
+<!-- ECharts 5.5.1 & ECharts GL 2.0.9 -->
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
+<!-- 高德地图 JS API 1.4.x：不需要 securityJsCode，与本项目 Key 完全兼容 -->
+<script src="https://webapi.amap.com/maps?v=1.4.15&key=02efb122ff3481185e944e78cfe411be&plugin=AMap.Scale,AMap.ToolBar"></script>
 <style>
-  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html,body { width:100%; height:100%; background:#000308; overflow:hidden;
-    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif; }
-
-  #globeChart, #mapChart { position:fixed; inset:0; width:100%; height:100%; }
-  #mapChart { background:#0A0E17; }
-  .hidden { visibility:hidden; pointer-events:none; }
-
-  #enterHint { position:fixed; bottom:56px; left:50%; transform:translateX(-50%); z-index:12;
-    color:#8fb8ff; font-size:13px; text-align:center; opacity:.85;
-    animation:pulse 2s ease-in-out infinite; }
-  @keyframes pulse { 0%,100%{opacity:.5;} 50%{opacity:.95;} }
-
-  #breadcrumb { position:fixed; top:0; left:0; right:0; z-index:10;
-    display:flex; align-items:center; gap:8px; padding:16px 20px; padding-top:40px; }
-  .crumb { color:#505F76; font-size:14px; }
-  .crumb.active { color:#00FFC6; font-weight:700; }
-  .crumb-sep { color:#333d4d; }
-
-  #loading { position:fixed; inset:0; z-index:20; background:#000308;
-    display:flex; align-items:center; justify-content:center;
-    color:#00FFC6; font-size:14px; letter-spacing:1px; transition:opacity .3s ease; }
-  #loading.hide { opacity:0; pointer-events:none; }
-
-  #toast { position:fixed; bottom:36px; left:50%; transform:translateX(-50%);
-    background:rgba(21,27,43,0.95); color:#fff; padding:10px 20px; border-radius:20px;
-    font-size:13px; opacity:0; transition:opacity .3s ease; z-index:15; pointer-events:none;
-    white-space:nowrap; border:1px solid rgba(0,255,198,0.25); }
-  #toast.show { opacity:1; }
-
-  #pointCard { position:fixed; z-index:25; background:#151B2B; border:1px solid #00FFC6;
-    border-radius:10px; padding:8px 14px; color:#fff; font-size:12px; pointer-events:none;
-    transform:translate(-50%,-100%) scale(0); opacity:0; white-space:nowrap; }
-  #pointCard.show { animation:bounceIn .45s cubic-bezier(.34,1.56,.64,1) forwards; }
-  @keyframes bounceIn {
-    0%   { transform:translate(-50%,-100%) scale(0);    opacity:0; }
-    60%  { transform:translate(-50%,-110%) scale(1.15);  opacity:1; }
-    100% { transform:translate(-50%,-100%) scale(1);     opacity:1; }
+  :root {
+    --primary: #00FFC6;
+    --primary-glow: rgba(0, 255, 198, 0.5);
+    --accent-blue: #38BDF8;
+    --accent-purple: #C084FC;
+    --accent-pink: #F472B6;
+    --accent-gold: #FBBF24;
+    --bg-dark: #000308;
+    --card-bg: rgba(15, 23, 42, 0.94);
+    --border-color: rgba(0, 255, 198, 0.32);
   }
 
-  #backBtn { position:fixed; top:40px; right:20px; z-index:10; color:#00FFC6; font-size:13px;
-    background:rgba(21,27,43,0.8); border:1px solid rgba(0,255,198,0.3); border-radius:16px;
-    padding:8px 14px; display:none; }
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+  }
 
-  /* 模式切换时的全屏黑幕，用来盖住"两套渲染引擎互相顶替"那一瞬间的接缝 */
-  #transitionVeil { position:fixed; inset:0; z-index:30; background:#000308;
-    opacity:0; pointer-events:none; transition:opacity .35s ease; }
-  #transitionVeil.show { opacity:1; pointer-events:all; }
+  html, body {
+    width: 100%;
+    height: 100%;
+    background: var(--bg-dark);
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    color: #fff;
+  }
+
+  /* 容器与画布 */
+  #globeContainer, #mapContainer, #amapDetailLayer {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  #globeContainer {
+    z-index: 2;
+    touch-action: pan-x pan-y pinch-zoom;
+  }
+
+  #mapContainer {
+    z-index: 3;
+    background: radial-gradient(circle at 50% 50%, #0b1528 0%, #040812 75%, #000308 100%);
+    touch-action: pan-x pan-y pinch-zoom;
+  }
+
+  /* 高德地图独立街区图层 */
+  #amapDetailLayer {
+    z-index: 10;
+    background: #060B14;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #amapDetailContainer {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    background: #060B14;
+  }
+
+  .hidden {
+    opacity: 0 !important;
+    pointer-events: none !important;
+    transform: scale(0.94);
+  }
+
+  /* 顶部导航栏 / 面包屑 */
+  #headerBar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    padding-top: max(14px, env(safe-area-inset-top, 14px));
+    pointer-events: none;
+  }
+
+  #breadcrumb {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    padding: 7px 14px;
+    border-radius: 20px;
+    pointer-events: auto;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 10px rgba(0, 255, 198, 0.15);
+    max-width: 76%;
+  }
+
+  .crumb {
+    font-size: 13px;
+    color: #94A3B8;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    white-space: nowrap;
+  }
+
+  .crumb:active {
+    color: #fff;
+    transform: scale(0.96);
+  }
+
+  .crumb.active {
+    color: var(--primary);
+    font-weight: 700;
+    text-shadow: 0 0 10px var(--primary-glow);
+  }
+
+  .crumb-sep {
+    color: #475569;
+    font-size: 11px;
+  }
+
+  /* 右侧控制区 */
+  #rightControls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    pointer-events: auto;
+  }
+
+  #levelBadge {
+    background: rgba(0, 255, 198, 0.12);
+    border: 1px solid var(--primary);
+    color: var(--primary);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 5px 10px;
+    border-radius: 12px;
+    letter-spacing: 0.5px;
+    box-shadow: 0 0 10px rgba(0, 255, 198, 0.2);
+  }
+
+  #backBtn {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 6px 14px;
+    border-radius: 16px;
+    cursor: pointer;
+    display: none;
+    transition: all 0.2s ease;
+  }
+
+  #backBtn:active {
+    background: rgba(0, 255, 198, 0.25);
+    border-color: var(--primary);
+    transform: scale(0.95);
+  }
+
+  /* 底部状态胶囊 / 操作提示 */
+  #bottomBar {
+    position: fixed;
+    bottom: max(20px, env(safe-area-inset-bottom, 20px));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    pointer-events: none;
+    width: 90%;
+    max-width: 380px;
+    transition: transform 0.3s ease, opacity 0.3s ease;
+  }
+
+  #actionChip {
+    background: rgba(15, 23, 42, 0.92);
+    border: 1px solid rgba(0, 255, 198, 0.45);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    color: #F1F5F9;
+    padding: 10px 20px;
+    border-radius: 24px;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6), 0 0 16px rgba(0, 255, 198, 0.25);
+    cursor: pointer;
+    pointer-events: auto;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    animation: chipFloat 3.5s ease-in-out infinite;
+  }
+
+  #actionChip:active {
+    transform: scale(0.94);
+    border-color: var(--primary);
+    box-shadow: 0 0 24px var(--primary-glow);
+  }
+
+  .pulse-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--primary);
+    border-radius: 50%;
+    box-shadow: 0 0 10px var(--primary);
+    animation: pulseRing 1.8s infinite;
+  }
+
+  @keyframes pulseRing {
+    0% { transform: scale(0.85); opacity: 0.6; }
+    50% { transform: scale(1.35); opacity: 1; box-shadow: 0 0 18px var(--primary); }
+    100% { transform: scale(0.85); opacity: 0.6; }
+  }
+
+  @keyframes chipFloat {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
+  }
+
+  /* 即时点击光圈波纹 */
+  .click-ripple {
+    position: fixed;
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 999;
+    border: 2px solid var(--primary);
+    background: radial-gradient(circle, rgba(0, 255, 198, 0.4) 0%, transparent 70%);
+    transform: translate(-50%, -50%) scale(0.2);
+    animation: rippleExpand 0.55s cubic-bezier(0.1, 0.8, 0.3, 1) forwards;
+  }
+
+  @keyframes rippleExpand {
+    0% {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(0.2);
+    }
+    100% {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(2.8);
+    }
+  }
+
+  /* Loading 遮罩层 */
+  #loading {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: rgba(0, 3, 8, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    transition: opacity 0.3s ease, visibility 0.3s;
+  }
+
+  #loading.hide {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+  }
+
+  .loader-spinner {
+    width: 44px;
+    height: 44px;
+    border: 3px solid rgba(0, 255, 198, 0.15);
+    border-top: 3px solid var(--primary);
+    border-right: 3px solid var(--accent-blue);
+    border-bottom: 3px solid var(--accent-purple);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    box-shadow: 0 0 20px rgba(0, 255, 198, 0.3);
+  }
+
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+
+  .loader-text {
+    font-size: 13px;
+    letter-spacing: 0.8px;
+    color: #E2E8F0;
+  }
+
+  /* Toast 提示 */
+  #toast {
+    position: fixed;
+    top: 76px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-10px);
+    background: rgba(15, 23, 42, 0.95);
+    border: 1px solid var(--border-color);
+    color: #F8FAFC;
+    padding: 8px 18px;
+    border-radius: 20px;
+    font-size: 13px;
+    opacity: 0;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    z-index: 40;
+    pointer-events: none;
+    white-space: nowrap;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6);
+  }
+
+  #toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* 点位小气泡卡片 */
+  #pointCard {
+    position: fixed;
+    z-index: 35;
+    background: var(--card-bg);
+    border: 1px solid var(--primary);
+    border-radius: 12px;
+    padding: 9px 15px;
+    color: #fff;
+    font-size: 12px;
+    pointer-events: auto;
+    transform: translate(-50%, -100%) scale(0.6);
+    opacity: 0;
+    white-space: nowrap;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.7), 0 0 20px rgba(0, 255, 198, 0.25);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+
+  #pointCard.show {
+    transform: translate(-50%, -120%) scale(1);
+    opacity: 1;
+  }
+
+  #pointCard .point-title {
+    font-weight: 600;
+    color: var(--primary);
+    font-size: 13px;
+    margin-bottom: 2px;
+  }
+
+  #pointCard .point-sub {
+    color: #94A3B8;
+    font-size: 11px;
+  }
+
+  /* 区县级专属详情抽屉 (Bottom Sheet) */
+  #districtDrawer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 45;
+    background: rgba(13, 20, 36, 0.96);
+    border-top: 1px solid var(--primary);
+    box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.85), 0 0 30px rgba(0, 255, 198, 0.25);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-radius: 24px 24px 0 0;
+    padding: 18px 20px;
+    padding-bottom: max(20px, env(safe-area-inset-bottom, 20px));
+    transform: translateY(105%);
+    transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  #districtDrawer.open {
+    transform: translateY(0);
+  }
+
+  .drawer-handle {
+    width: 36px;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 2px;
+    margin: 0 auto 12px;
+  }
+
+  .drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .drawer-title-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .drawer-title {
+    font-size: 17px;
+    font-weight: 700;
+    color: #FFF;
+  }
+
+  .drawer-code-tag {
+    font-size: 11px;
+    color: var(--primary);
+    background: rgba(0, 255, 198, 0.15);
+    border: 1px solid rgba(0, 255, 198, 0.35);
+    padding: 2px 8px;
+    border-radius: 10px;
+  }
+
+  .drawer-close {
+    width: 28px;
+    height: 28px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    color: #94A3B8;
+    cursor: pointer;
+  }
+
+  .drawer-close:active {
+    background: rgba(255, 255, 255, 0.2);
+    color: #FFF;
+  }
+
+  .drawer-stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+
+  .stat-card {
+    background: rgba(30, 41, 59, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 8px 10px;
+    text-align: center;
+  }
+
+  .stat-val {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--primary);
+    margin-bottom: 2px;
+  }
+
+  .stat-label {
+    font-size: 11px;
+    color: #94A3B8;
+  }
+
+  .drawer-spot-list {
+    max-height: 140px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 14px;
+    padding-right: 4px;
+  }
+
+  .spot-item {
+    background: rgba(30, 41, 59, 0.45);
+    border: 1px solid rgba(0, 255, 198, 0.2);
+    border-radius: 10px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    cursor: pointer;
+  }
+
+  .spot-item:active {
+    background: rgba(0, 255, 198, 0.15);
+    border-color: var(--primary);
+  }
+
+  .spot-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: #F8FAFC;
+    margin-bottom: 2px;
+  }
+
+  .spot-desc {
+    font-size: 11px;
+    color: #94A3B8;
+  }
+
+  .spot-price {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent-gold);
+  }
+
+  .drawer-actions {
+    display: flex;
+    gap: 10px;
+  }
+
+  .action-btn {
+    flex: 1;
+    padding: 10px;
+    border-radius: 14px;
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+  }
+
+  .btn-primary {
+    background: linear-gradient(135deg, #00FFC6 0%, #00B4D8 100%);
+    color: #000308;
+    border: none;
+    box-shadow: 0 4px 15px rgba(0, 255, 198, 0.35);
+  }
+
+  .btn-secondary {
+    background: rgba(30, 41, 59, 0.8);
+    color: #E2E8F0;
+    border: 1px solid rgba(255, 255, 255, 0.15);
+  }
+
+  .action-btn:active {
+    transform: scale(0.96);
+  }
+
+  /* 高德地图详细图层专属覆盖 UI */
+  #amapTopBar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 15;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    padding-top: max(14px, env(safe-area-inset-top, 14px));
+    pointer-events: none;
+  }
+
+  .amap-back-btn {
+    background: var(--card-bg);
+    border: 1px solid var(--primary);
+    color: #FFF;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 20px;
+    cursor: pointer;
+    pointer-events: auto;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+  }
+
+  .amap-badge {
+    background: rgba(13, 20, 36, 0.9);
+    border: 1px solid rgba(0, 255, 198, 0.4);
+    color: var(--primary);
+    font-size: 12px;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: 16px;
+    pointer-events: auto;
+  }
+
+  #amapBottomCard {
+    position: absolute;
+    left: 16px;
+    right: 16px;
+    bottom: max(20px, env(safe-area-inset-bottom, 20px));
+    z-index: 15;
+    background: rgba(13, 20, 36, 0.95);
+    border: 1px solid var(--primary);
+    border-radius: 18px;
+    padding: 14px 16px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 255, 198, 0.25);
+    backdrop-filter: blur(16px);
+  }
+
+  .amap-card-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #FFF;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+
+  .amap-card-sub {
+    font-size: 12px;
+    color: #94A3B8;
+    margin-bottom: 12px;
+  }
+
+  .amap-card-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  /* 自定义高德 Marker 样式 */
+  .amap-custom-marker {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    cursor: pointer;
+  }
+
+  .marker-pulse {
+    position: absolute;
+    width: 24px;
+    height: 24px;
+    background: rgba(0, 255, 198, 0.4);
+    border-radius: 50%;
+    animation: pulseRing 1.5s infinite;
+    top: -2px;
+  }
+
+  .marker-pin {
+    width: 20px;
+    height: 20px;
+    background: var(--primary);
+    color: #000;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: bold;
+    box-shadow: 0 0 10px var(--primary);
+    z-index: 2;
+  }
+
+  .marker-label {
+    margin-top: 4px;
+    background: rgba(15, 23, 42, 0.9);
+    border: 1px solid var(--primary);
+    color: #FFF;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 8px;
+    white-space: nowrap;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+  }
+
+  /* 模式切换平滑黑幕 */
+  #transitionVeil {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: #000308;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.35s ease;
+  }
+
+  #transitionVeil.show {
+    opacity: 1;
+    pointer-events: all;
+  }
 </style>
 </head>
 <body>
-  <div id="loading">加载地图数据…</div>
-  <div id="globeChart"></div>
-  <div id="mapChart" class="hidden"></div>
-  <div id="enterHint" class="hidden">点击地球，进入中国地图</div>
-  <div id="breadcrumb"></div>
-  <div id="backBtn" onclick="goBack()">‹ 返回</div>
+
+  <!-- Loading 遮罩 -->
+  <div id="loading">
+    <div class="loader-spinner"></div>
+    <div class="loader-text" id="loadingText">初始化 3D 科技地球…</div>
+  </div>
+
+  <!-- 3D 地球与 2D 地图图表容器 -->
+  <div id="globeContainer"></div>
+  <div id="mapContainer" class="hidden"></div>
+
+  <!-- 独立高德地图街区图层 (点击放大聚焦后单独展现) -->
+  <div id="amapDetailLayer" class="hidden">
+    <div id="amapTopBar">
+      <div class="amap-back-btn" onclick="exitAmapDetailLayer()">‹ 返回区县概览</div>
+      <div class="amap-badge" id="amapLayerBadge">高德地图 · 高清街区图层</div>
+    </div>
+    <div id="amapDetailContainer"></div>
+    <div id="amapBottomCard">
+      <div class="amap-card-title">
+        <span id="amapSpotTitle">深圳湾科技生态园</span>
+        <span style="color:var(--accent-gold);font-weight:bold;" id="amapSpotPrice">¥ 328.00</span>
+      </div>
+      <div class="amap-card-sub" id="amapSpotDesc">广东省深圳市南山区 · 2026-08-20 18:30</div>
+      <div class="amap-card-actions">
+        <div class="action-btn btn-secondary" onclick="triggerNativeAmapRoute()">🚗 原生路线规划</div>
+        <div class="action-btn btn-primary" onclick="openExternalMapNav()">🧭 唤起高德导航</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 顶部状态栏与面包屑 -->
+  <div id="headerBar">
+    <div id="breadcrumb"></div>
+    <div id="rightControls">
+      <div id="levelBadge">3D 视角</div>
+      <div id="backBtn" onclick="goBack()">‹ 返回</div>
+    </div>
+  </div>
+
+  <!-- 底部提示与快捷操作胶囊 -->
+  <div id="bottomBar">
+    <div id="actionChip" onclick="handleActionChipClick()">
+      <div class="pulse-dot"></div>
+      <span id="chipText">点击地球或此处，穿梭进入中国地图</span>
+    </div>
+  </div>
+
+  <!-- 提示与点位小卡片 -->
   <div id="toast"></div>
   <div id="pointCard"></div>
   <div id="transitionVeil"></div>
 
+  <!-- 区县级专属详情抽屉 (Bottom Sheet) -->
+  <div id="districtDrawer">
+    <div class="drawer-handle"></div>
+    <div class="drawer-header">
+      <div class="drawer-title-box">
+        <span class="drawer-title" id="drawerDistrictTitle">南山区</span>
+        <span class="drawer-code-tag" id="drawerDistrictCode">440305</span>
+      </div>
+      <div class="drawer-close" onclick="closeDistrictDrawer()">✕</div>
+    </div>
+    <div class="drawer-stats">
+      <div class="stat-card">
+        <div class="stat-val" id="statTotalSpent">¥ 484.50</div>
+        <div class="stat-label">消费总额</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val" id="statSpotCount">2 处</div>
+        <div class="stat-label">足迹坐标</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-val" id="statFreq">高频</div>
+        <div class="stat-label">热度评级</div>
+      </div>
+    </div>
+    <div class="drawer-spot-list" id="drawerSpotList">
+      <!-- 动态生成足迹点列表 -->
+    </div>
+    <div class="drawer-actions">
+      <div class="action-btn btn-secondary" onclick="zoomInCurrentDistrict()">🔍 放大聚焦</div>
+      <div class="action-btn btn-primary" onclick="openExternalMapNav()">🧭 唤起外部地图导航</div>
+    </div>
+  </div>
+
 <script>
 /**
  * ============================================================================
- * 消费足迹地图 v2 —— 3D地球 + 2D省市区县下钻，双引擎切换原型
- * ============================================================================
- * 参照两个GitHub项目的思路做的混合方案：
- * - 缩小到"地球"层级：仿 MuGuiLin/3D-Earth 的路子，用 echarts-gl 的 globe
- *   组件做自动旋转的3D地球，视觉上追求"谷歌地球"那种炫酷感
- * - 放大到"国家/省/市/县"层级：沿用 TangSY/echarts-map-demo 的思路，纯2D
- *   ECharts map + 阿里DataV边界数据做多级联动下钻，比3D渲染省资源、交互精确
- *
- * 【关于卡顿】3D地球（WebGL）和2D地图是完全独立的两个 ECharts 实例、两个
- * <div> 容器，切换模式时把不用的那个整个隐藏+dispose，不会出现"两套渲染
- * 同时跑"的情况——这是这一版专门针对"不要卡顿"这个要求做的架构选择。
- * 但WebView里WebGL性能天然弱于桌面浏览器，具体流不流畅、地球材质贴图能不能
- * 正常加载，还是需要你在真机上实测确认，这个我这边没法模拟验证。
- *
- * 当前仍然是纯前端假数据原型，只验证"地球⇄平面地图"这个双模式切换的观感，
- * 不接真实消费数据。
+ * 消费足迹地图：3D 炫酷地球 + 2D 省市区县多级下钻 + 高德街区专属详情图层
  * ============================================================================
  */
 
 const DATAV_BASE = 'https://geo.datav.aliyun.com/areas_v3/bound/';
-// echarts-gl 官方demo自带的地球贴图资源，用 jsdelivr 代理直接引用，不用自己找图床
 const EARTH_TEXTURE = 'https://cdn.jsdelivr.net/gh/ecomfe/echarts-gl/test/asset/earth.jpg';
 const STARFIELD_TEXTURE = 'https://cdn.jsdelivr.net/gh/ecomfe/echarts-gl/test/asset/starfield.jpg';
-const CHINA_CENTER_LNGLAT = [104.0, 35.0]; // 中国大致几何中心，地球模式的默认落点
+const CHINA_CENTER = [104.0, 35.0];
 
 // ============================================================================
-// 占位假数据区（最后会替换成真实消费记录）
+// 模拟足迹数据与暗黑科技色盘
 // ============================================================================
-const DEMO_PROVINCE_DATA = [
-  { name: '广东省', adcode: 440000, percent: 32 },
-  { name: '浙江省', adcode: 330000, percent: 18 },
-  { name: '江苏省', adcode: 320000, percent: 15 },
-  { name: '四川省', adcode: 510000, percent: 12 },
-  { name: '北京市', adcode: 110000, percent: 10 },
-  { name: '上海市', adcode: 310000, percent: 8 },
-  { name: '福建省', adcode: 350000, percent: 5 },
+const DEMO_PROVINCES = [
+  { name: '广东省', adcode: 440000, percent: 34, count: 18, theme: '#00FFC6' },
+  { name: '浙江省', adcode: 330000, percent: 22, count: 12, theme: '#38BDF8' },
+  { name: '江苏省', adcode: 320000, percent: 16, count: 8,  theme: '#818CF8' },
+  { name: '四川省', adcode: 510000, percent: 12, count: 6,  theme: '#C084FC' },
+  { name: '北京市', adcode: 110000, percent: 8,  count: 5,  theme: '#F472B6' },
+  { name: '上海市', adcode: 310000, percent: 5,  count: 4,  theme: '#FBBF24' },
+  { name: '福建省', adcode: 350000, percent: 3,  count: 2,  theme: '#34D399' },
 ];
-
-// 城市下面再加一级"区县"，key 是市名
-const DEMO_DISTRICTS = {
-  '深圳市': [{ name: '南山区', adcode: 440305 }, { name: '福田区', adcode: 440304 }],
-  '广州市': [{ name: '天河区', adcode: 440106 }],
-  '杭州市': [{ name: '西湖区', adcode: 330106 }],
-};
 
 const DEMO_POINTS = {
   '广东省': [
-    { name: '示例·深圳湾体育中心', city: '深圳市', cityAdcode: 440300, district: '南山区', lng: 113.9455, lat: 22.5232 },
-    { name: '示例·广州塔',       city: '广州市', cityAdcode: 440100, district: '天河区', lng: 113.3245, lat: 23.1066 },
-    { name: '示例·珠海长隆',     city: '珠海市', cityAdcode: 440400, district: null,     lng: 113.5767, lat: 22.1155 },
+    { name: '深圳湾科技生态园', city: '深圳市', cityAdcode: 440300, district: '南山区', districtAdcode: 440305, lng: 113.9488, lat: 22.5288, amount: '¥ 328.00', cat: '数码/餐饮', time: '2026-08-20 18:30' },
+    { name: '福田星河 COCO Park', city: '深圳市', cityAdcode: 440300, district: '福田区', districtAdcode: 440304, lng: 114.0538, lat: 22.5325, amount: '¥ 156.50', cat: '休闲/购物', time: '2026-08-18 14:15' },
+    { name: '广州塔·海心沙',       city: '广州市', cityAdcode: 440100, district: '天河区', districtAdcode: 440106, lng: 113.3245, lat: 23.1066, amount: '¥ 420.00', cat: '文旅/观光', time: '2026-08-12 20:00' },
+    { name: '珠海长隆海洋王国',   city: '珠海市', cityAdcode: 440400, district: '香洲区', districtAdcode: 440402, lng: 113.5767, lat: 22.1155, amount: '¥ 688.00', cat: '度假/娱乐', time: '2026-08-05 11:20' },
   ],
   '浙江省': [
-    { name: '示例·西湖',   city: '杭州市', cityAdcode: 330100, district: '西湖区', lng: 120.1551, lat: 30.2489 },
-    { name: '示例·乌镇',   city: '嘉兴市', cityAdcode: 330400, district: null,     lng: 120.4970, lat: 30.7469 },
+    { name: '西湖断桥残雪',       city: '杭州市', cityAdcode: 330100, district: '西湖区', districtAdcode: 330106, lng: 120.1551, lat: 30.2589, amount: '¥ 88.00',  cat: '休闲/文旅', time: '2026-07-28 09:40' },
+    { name: '乌镇西栅景区',       city: '嘉兴市', cityAdcode: 330400, district: '桐乡市', districtAdcode: 330483, lng: 120.4970, lat: 30.7469, amount: '¥ 260.00', cat: '古镇/民宿', time: '2026-07-25 19:10' },
   ],
   '北京市': [
-    { name: '示例·三里屯', city: '北京市', cityAdcode: 110100, district: null, lng: 116.4551, lat: 39.9368 },
+    { name: '三里屯太古里',       city: '北京市', cityAdcode: 110100, district: '朝阳区', districtAdcode: 110105, lng: 116.4551, lat: 39.9368, amount: '¥ 540.00', cat: '时尚/餐饮', time: '2026-07-15 16:50' },
+    { name: '王府井百货大楼',     city: '北京市', cityAdcode: 110100, district: '东城区', districtAdcode: 110101, lng: 116.4111, lat: 39.9142, amount: '¥ 192.00', cat: '老字号特产', time: '2026-07-14 11:30' },
   ],
+  '四川省': [
+    { name: '成都远洋太古里',     city: '成都市', cityAdcode: 510100, district: '锦江区', districtAdcode: 510104, lng: 104.0818, lat: 30.6558, amount: '¥ 310.00', cat: '川味火锅', time: '2026-06-30 20:20' },
+  ],
+  '江苏省': [
+    { name: '南京新街口金鹰',     city: '南京市', cityAdcode: 320100, district: '秦淮区', districtAdcode: 320104, lng: 118.7842, lat: 32.0416, amount: '¥ 245.00', cat: '数码/生活', time: '2026-06-18 15:40' },
+    { name: '苏州金鸡湖东方之门', city: '苏州市', cityAdcode: 320500, district: '吴中区', districtAdcode: 320506, lng: 120.6782, lat: 31.3188, amount: '¥ 430.00', cat: '湖景餐饮', time: '2026-06-12 18:50' },
+  ],
+  '上海市': [
+    { name: '陆家嘴国金中心 IFC', city: '上海市', cityAdcode: 310100, district: '浦东新区', districtAdcode: 310115, lng: 121.5034, lat: 31.2386, amount: '¥ 620.00', cat: '轻奢/美馔', time: '2026-05-22 13:10' },
+  ],
+  '福建省': [
+    { name: '厦门鼓浪屿龙头路',   city: '厦门市', cityAdcode: 350200, district: '思明区', districtAdcode: 350203, lng: 118.0673, lat: 24.4449, amount: '¥ 185.00', cat: '海鲜小吃', time: '2026-05-02 17:30' },
+  ]
 };
 
-const PALETTE = ['#00FFC6','#FF6B9D','#FFC145','#5B8DEF','#9D65FF','#FF8A5B','#4ECDC4','#F7B801','#7BDFF2','#B892FF'];
-// ============================================================================
+// 2D 地图高对比度宝石色盘
+const PALETTE_AREA = [
+  '#0a3d4a', '#172554', '#2e1065', '#3b0764', '#064e3b', '#1e1b4b', '#1e293b', '#0f2b5c'
+];
+const PALETTE_BORDER = [
+  '#00FFC6', '#38BDF8', '#818CF8', '#C084FC', '#FBBF24', '#34D399', '#60A5FA', '#2DD4BF'
+];
 
-const globeChart = echarts.init(document.getElementById('globeChart'));
-const mapChart = echarts.init(document.getElementById('mapChart'));
-const globeEl = document.getElementById('globeChart');
-const mapEl = document.getElementById('mapChart');
-const enterHintEl = document.getElementById('enterHint');
-const loadingEl = document.getElementById('loading');
+// 全球主要枢纽（用于 3D-Earth 跨洋飞线）
+const GLOBAL_HUBS = [
+  { name: '北京', coord: [116.4074, 39.9042] },
+  { name: '上海', coord: [121.4737, 31.2304] },
+  { name: '深圳', coord: [114.0579, 22.5431] },
+  { name: '东京', coord: [139.6917, 35.6895] },
+  { name: '伦敦', coord: [-0.1278, 51.5074] },
+  { name: '巴黎', coord: [2.3522, 48.8566] },
+  { name: '纽约', coord: [-74.0060, 40.7128] },
+  { name: '旧金山', coord: [-122.4194, 37.7749] },
+  { name: '悉尼', coord: [151.2093, -33.8688] },
+  { name: '迪拜', coord: [55.2708, 25.2048] },
+  { name: '新加坡', coord: [103.8198, 1.3521] },
+  { name: '开罗', coord: [31.2357, 30.0444] },
+  { name: '里约热内卢', coord: [-43.1729, -22.9068] },
+];
+
+// 大陆板块散点群
+const CONTINENT_NODES = [
+  [116.4, 39.9], [121.4, 31.2], [113.3, 23.1], [104.1, 30.6], [87.6, 43.8],
+  [139.7, 35.6], [126.9, 37.5], [100.5, 13.7], [103.8, 1.3], [77.2, 28.6],
+  [-0.1, 51.5], [2.3, 48.8], [13.4, 52.5], [12.5, 41.9], [-3.7, 40.4],
+  [-74.0, 40.7], [-122.4, 37.7], [-87.6, 41.8], [-118.2, 34.0], [-95.3, 29.7],
+  [-43.1, -22.9], [-46.6, -23.5], [-58.3, -34.6], [-77.0, -12.0], [-74.0, 4.7],
+  [31.2, 30.0], [28.0, -26.2], [3.3, 6.5], [36.8, -1.2], [-7.6, 33.5],
+  [151.2, -33.8], [144.9, -37.8], [153.0, -27.4], [115.8, -31.9]
+];
+
+// ============================================================================
+// DOM 元素与状态机
+// ============================================================================
+const globeContainer = document.getElementById('globeContainer');
+const mapContainer = document.getElementById('mapContainer');
+const amapDetailLayer = document.getElementById('amapDetailLayer');
+const amapDetailContainer = document.getElementById('amapDetailContainer');
+const amapLayerBadge = document.getElementById('amapLayerBadge');
+const amapSpotTitle = document.getElementById('amapSpotTitle');
+const amapSpotPrice = document.getElementById('amapSpotPrice');
+const amapSpotDesc = document.getElementById('amapSpotDesc');
+
+const headerBarEl = document.getElementById('headerBar');
 const breadcrumbEl = document.getElementById('breadcrumb');
+const levelBadgeEl = document.getElementById('levelBadge');
+const backBtnEl = document.getElementById('backBtn');
+const actionChipEl = document.getElementById('actionChip');
+const chipTextEl = document.getElementById('chipText');
+const loadingEl = document.getElementById('loading');
+const loadingTextEl = document.getElementById('loadingText');
 const toastEl = document.getElementById('toast');
 const pointCardEl = document.getElementById('pointCard');
-const backBtnEl = document.getElementById('backBtn');
 const veilEl = document.getElementById('transitionVeil');
 
-const geoCache = {};
-let state = { mode: 'globe', level: 'country', provinceName: null, provinceAdcode: null,
-  cityName: null, cityAdcode: null, districtName: null };
+// 区县抽屉 DOM
+const districtDrawerEl = document.getElementById('districtDrawer');
+const drawerDistrictTitleEl = document.getElementById('drawerDistrictTitle');
+const drawerDistrictCodeEl = document.getElementById('drawerDistrictCode');
+const statTotalSpentEl = document.getElementById('statTotalSpent');
+const statSpotCountEl = document.getElementById('statSpotCount');
+const drawerSpotListEl = document.getElementById('drawerSpotList');
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-function setLoading(show) { loadingEl.classList.toggle('hide', !show); }
+let globeChart = null;
+let mapChart = null;
+let amapInstance = null;
+let amapMarkers = [];
+let geoCache = {};
+
+let state = {
+  mode: 'globe',          // 'globe' | 'map' | 'amap'
+  level: 'country',       // 'country' | 'province' | 'city' | 'district'
+  provinceName: null,
+  provinceAdcode: null,
+  cityName: null,
+  cityAdcode: null,
+  districtName: null,
+  districtAdcode: null,
+  selectedSpot: null,
+  isTransitioning: false,
+};
+
+// ============================================================================
+// 辅助工具函数
+// ============================================================================
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+
+function setLoading(show, text) {
+  if (text) loadingTextEl.textContent = text;
+  loadingEl.classList.toggle('hide', !show);
+}
 
 function showToast(text) {
   toastEl.textContent = text;
   toastEl.classList.add('show');
-  clearTimeout(showToast._t);
-  showToast._t = setTimeout(() => toastEl.classList.remove('show'), 1800);
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => toastEl.classList.remove('show'), 2200);
 }
 
-function showPointCard(name, x, y) {
-  pointCardEl.textContent = name;
+function spawnRipple(x, y) {
+  const ripple = document.createElement('div');
+  ripple.className = 'click-ripple';
+  ripple.style.left = x + 'px';
+  ripple.style.top = y + 'px';
+  document.body.appendChild(ripple);
+  setTimeout(() => ripple.remove(), 600);
+}
+
+function showPointCard(name, subText, x, y) {
+  pointCardEl.innerHTML = `
+    <div class="point-title">📍 ${name}</div>
+    <div class="point-sub">${subText}</div>
+  `;
   pointCardEl.style.left = x + 'px';
   pointCardEl.style.top = y + 'px';
   pointCardEl.classList.remove('show');
   void pointCardEl.offsetWidth;
   pointCardEl.classList.add('show');
-  clearTimeout(showPointCard._t);
-  showPointCard._t = setTimeout(() => pointCardEl.classList.remove('show'), 2200);
+  clearTimeout(showPointCard._timer);
+  showPointCard._timer = setTimeout(() => pointCardEl.classList.remove('show'), 2800);
+}
+
+async function withVeil(callback) {
+  veilEl.classList.add('show');
+  await sleep(180);
+  await callback();
+  await sleep(60);
+  veilEl.classList.remove('show');
 }
 
 async function fetchGeo(adcode) {
   if (geoCache[adcode]) return geoCache[adcode];
-  const resp = await fetch(DATAV_BASE + adcode + '_full.json');
-  if (!resp.ok) throw new Error('地图数据请求失败: ' + adcode);
+  const url = `${DATAV_BASE}${adcode}_full.json`;
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    const fallbackUrl = `${DATAV_BASE}${adcode}.json`;
+    const fallbackResp = await fetch(fallbackUrl);
+    if (!fallbackResp.ok) throw new Error(`地图数据获取失败: ${adcode}`);
+    const json = await fallbackResp.json();
+    geoCache[adcode] = json;
+    return json;
+  }
   const json = await resp.json();
   geoCache[adcode] = json;
   return json;
 }
 
-async function withVeil(fn) {
-  veilEl.classList.add('show');
-  await sleep(200);
-  await fn();
-  await sleep(60);
-  veilEl.classList.remove('show');
+// ============================================================================
+// 1. 3D 炫酷地球引擎 (MuGuiLin/3D-Earth 多彩大幅度磁场光轨 + 慢速流光粒子)
+// ============================================================================
+
+function generateMuGuiLinGlobeLines() {
+  const flightLines = [];
+  const hubs = GLOBAL_HUBS;
+  const origins = [hubs[0], hubs[1], hubs[2]]; // 北京、上海、深圳
+  
+  origins.forEach(origin => {
+    hubs.forEach(dest => {
+      if (origin.name !== dest.name) {
+        const p1 = origin.coord;
+        const p2 = dest.coord;
+        const pts = [];
+        const numPts = 32;
+        for (let i = 0; i <= numPts; i++) {
+          const t = i / numPts;
+          const lng = p1[0] + (p2[0] - p1[0]) * t;
+          const lat = p1[1] + (p2[1] - p1[1]) * t;
+          const alt = Math.sin(t * Math.PI) * 0.35;
+          pts.push([lng, lat, alt]);
+        }
+        flightLines.push({
+          coords: pts,
+          fromName: origin.name,
+          toName: dest.name,
+        });
+      }
+    });
+  });
+
+  const ringConfigs = [
+    { inc: 20,  color: '#00FFC6', alt: 0.18, period: 12 },
+    { inc: 60,  color: '#C084FC', alt: 0.38, period: 15 },
+    { inc: -45, color: '#FBBF24', alt: 0.28, period: 11 },
+    { inc: 80,  color: '#38BDF8', alt: 0.48, period: 16 },
+    { inc: -75, color: '#F472B6', alt: 0.32, period: 13 },
+  ];
+
+  const magneticSeries = ringConfigs.map((cfg) => {
+    const coords = [];
+    for (let deg = 0; deg <= 360; deg += 3) {
+      const rad = deg * Math.PI / 180;
+      const lng = deg > 180 ? deg - 360 : deg;
+      const lat = Math.sin(rad) * cfg.inc;
+      coords.push([lng, lat, cfg.alt]);
+    }
+    return {
+      type: 'lines3D',
+      coordinateSystem: 'globe',
+      polyline: true,
+      blendMode: 'lighter',
+      effect: {
+        show: true,
+        period: cfg.period,
+        trailLength: 0.5,
+        symbol: 'circle',
+        symbolSize: 4.2,
+        color: cfg.color,
+      },
+      lineStyle: {
+        color: cfg.color,
+        width: 1.8,
+        opacity: 0.45,
+      },
+      data: [{ coords }],
+    };
+  });
+
+  const flightSeries = {
+    type: 'lines3D',
+    coordinateSystem: 'globe',
+    polyline: true,
+    blendMode: 'lighter',
+    effect: {
+      show: true,
+      period: 10,
+      trailLength: 0.45,
+      symbol: 'circle',
+      symbolSize: 3.8,
+      color: '#00FFC6',
+    },
+    lineStyle: {
+      color: 'rgba(56, 189, 248, 0.5)',
+      width: 1.6,
+      opacity: 0.5,
+    },
+    data: flightLines,
+  };
+
+  return { flightSeries, magneticSeries };
 }
 
-// ============================================================================
-// 地球层（仿 3D-Earth 思路）：echarts-gl globe，自动旋转 + 中国热点
-// ============================================================================
+let globePulseTimer = null;
+
 function initGlobe() {
-  globeChart.setOption({
+  if (!globeChart) {
+    globeChart = echarts.init(globeContainer);
+  }
+
+  const { flightSeries, magneticSeries } = generateMuGuiLinGlobeLines();
+
+  const continentData = CONTINENT_NODES.map((coord, idx) => ({
+    name: 'Plate-' + idx,
+    value: [...coord, 0.05],
+    itemStyle: {
+      color: idx % 4 === 0 ? '#00FFC6' : (idx % 4 === 1 ? '#38BDF8' : (idx % 4 === 2 ? '#C084FC' : '#FBBF24')),
+      opacity: 0.75,
+    }
+  }));
+
+  const option = {
     backgroundColor: '#000308',
     globe: {
       baseTexture: EARTH_TEXTURE,
       environment: STARFIELD_TEXTURE,
       shading: 'realistic',
       displacementScale: 0.02,
-      atmosphere: { show: true, offset: 5, glowPower: 4, innerGlowPower: 2, color: '#7fd8ff' },
+      atmosphere: {
+        show: true,
+        offset: 8,
+        glowPower: 4.5,
+        innerGlowPower: 2.2,
+        color: '#00E5FF',
+      },
       light: {
-        ambient: { intensity: 0.35 },
-        main: { intensity: 1.1, shadow: false },
+        ambient: { intensity: 0.45 },
+        main: { intensity: 1.25, shadow: false },
       },
       viewControl: {
         autoRotate: true,
-        autoRotateSpeed: 6,       // 转速温和一点，太快在WebView里容易看着卡
-        autoRotateAfterStill: 2,
+        autoRotateSpeed: 3.5,
+        autoRotateAfterStill: 2.0,
+        rotateSensitivity: [1, 1],
+        zoomSensitivity: 1.0,
+        panSensitivity: 0,
         distance: 210,
-        alpha: 22,
-        panSensitivity: 0,        // 不给平移，只留旋转缩放，防止误触把地球拖丢
+        minDistance: 90,
+        maxDistance: 400,
+        alpha: 25,
+        beta: 155,
+        targetCoord: CHINA_CENTER,
       },
     },
-    series: [{
-      type: 'scatter3D',
-      coordinateSystem: 'globe',
-      symbolSize: 14,
-      itemStyle: { color: '#00FFC6', opacity: 0.9 },
-      data: [{ name: '中国', value: [...CHINA_CENTER_LNGLAT, 0] }],
-    }],
-  }, true);
+    series: [
+      ...magneticSeries,
+      flightSeries,
+      {
+        id: 'continentScatter',
+        type: 'scatter3D',
+        coordinateSystem: 'globe',
+        blendMode: 'lighter',
+        symbolSize: 6,
+        data: continentData,
+      },
+      {
+        type: 'scatter3D',
+        coordinateSystem: 'globe',
+        blendMode: 'lighter',
+        symbolSize: 18,
+        itemStyle: {
+          color: '#00FFC6',
+          opacity: 0.95,
+          shadowBlur: 25,
+          shadowColor: '#00FFC6',
+        },
+        label: {
+          show: true,
+          position: 'top',
+          formatter: '🇨🇳 中国·消费足迹',
+          textStyle: {
+            color: '#FFFFFF',
+            fontSize: 13,
+            fontWeight: 'bold',
+            backgroundColor: 'rgba(13, 20, 36, 0.85)',
+            borderColor: '#00FFC6',
+            borderWidth: 1,
+            borderRadius: 8,
+            padding: [4, 8],
+          },
+        },
+        data: [{ name: '中国', value: [...CHINA_CENTER, 0.08] }],
+      },
+    ],
+  };
 
-  setLoading(false);
-  enterHintEl.classList.remove('hidden');
+  globeChart.setOption(option, true);
+  startContinentBreathing();
+  updateUIForGlobe();
 }
 
-/** 点地球上的中国点 → 镜头先往中国推近，做出"俯冲下去"的观感，再切换成平面地图 */
-async function enterMapModeFromGlobe() {
-  if (state.mode !== 'globe') return;
-  showToast('进入中国地图…');
-  enterHintEl.classList.add('hidden');
+/** 大陆板块微光呼吸动效（忽明忽暗） */
+function startContinentBreathing() {
+  if (globePulseTimer) clearInterval(globePulseTimer);
+  let step = 0;
+  globePulseTimer = setInterval(() => {
+    if (state.mode !== 'globe' || !globeChart) return;
+    step += 0.1;
+    const baseOpacity = 0.55 + Math.sin(step) * 0.35;
+    const baseSize = 5 + Math.sin(step) * 2.8;
+    
+    globeChart.setOption({
+      series: [{
+        id: 'continentScatter',
+        symbolSize: baseSize,
+        itemStyle: { opacity: baseOpacity },
+      }],
+    });
+  }, 100);
+}
+
+function stopContinentBreathing() {
+  if (globePulseTimer) {
+    clearInterval(globePulseTimer);
+    globePulseTimer = null;
+  }
+}
+
+// ============================================================================
+// 3D 地球手势与点击判定系统
+// ============================================================================
+let touchTracker = {
+  startX: 0,
+  startY: 0,
+  startTime: 0,
+  isMoved: false,
+  isPinching: false,
+};
+
+function setupGlobeInteractions() {
+  const el = globeContainer;
+
+  el.addEventListener('touchstart', e => {
+    if (e.touches.length > 1) {
+      touchTracker.isPinching = true;
+      return;
+    }
+    touchTracker.isPinching = false;
+    touchTracker.isMoved = false;
+    touchTracker.startX = e.touches[0].clientX;
+    touchTracker.startY = e.touches[0].clientY;
+    touchTracker.startTime = Date.now();
+  }, { passive: true });
+
+  el.addEventListener('touchmove', e => {
+    if (touchTracker.isPinching || e.touches.length > 1) {
+      touchTracker.isPinching = true;
+      return;
+    }
+    const dx = e.touches[0].clientX - touchTracker.startX;
+    const dy = e.touches[0].clientY - touchTracker.startY;
+    if (Math.hypot(dx, dy) > 8) {
+      touchTracker.isMoved = true;
+    }
+  }, { passive: true });
+
+  el.addEventListener('touchend', e => {
+    if (touchTracker.isPinching) {
+      touchTracker.isPinching = false;
+      return;
+    }
+    if (state.mode !== 'globe' || state.isTransitioning) return;
+    const elapsed = Date.now() - touchTracker.startTime;
+    if (!touchTracker.isMoved && elapsed < 280) {
+      const touch = e.changedTouches[0];
+      spawnRipple(touch.clientX, touch.clientY);
+      triggerFlyIntoChina();
+    }
+  }, { passive: true });
+
+  let mouseStartX = 0, mouseStartY = 0, mouseStartTime = 0, mouseMoved = false;
+  el.addEventListener('mousedown', e => {
+    mouseStartX = e.clientX;
+    mouseStartY = e.clientY;
+    mouseStartTime = Date.now();
+    mouseMoved = false;
+  });
+
+  el.addEventListener('mousemove', e => {
+    if (Math.hypot(e.clientX - mouseStartX, e.clientY - mouseStartY) > 6) {
+      mouseMoved = true;
+    }
+  });
+
+  el.addEventListener('mouseup', e => {
+    if (state.mode !== 'globe' || state.isTransitioning) return;
+    if (!mouseMoved && (Date.now() - mouseStartTime < 280)) {
+      spawnRipple(e.clientX, e.clientY);
+      triggerFlyIntoChina();
+    }
+  });
+}
+
+/** 俯冲进入中国地图动画 */
+async function triggerFlyIntoChina() {
+  if (state.mode !== 'globe' || state.isTransitioning) return;
+  state.isTransitioning = true;
+  showToast('🎯 正在穿梭进入中国地图…');
 
   globeChart.setOption({
     globe: {
       viewControl: {
         autoRotate: false,
-        distance: 130,
-        alpha: 45,
-        targetCoord: CHINA_CENTER_LNGLAT,
+        distance: 120,
+        alpha: 48,
+        targetCoord: CHINA_CENTER,
         animation: true,
-        animationDurationUpdate: 900,
+        animationDurationUpdate: 850,
         animationEasingUpdate: 'cubicIn',
       },
     },
   });
-  await sleep(750);
+
+  await sleep(700);
 
   await withVeil(async () => {
-    globeEl.classList.add('hidden');
-    mapEl.classList.remove('hidden');
+    globeContainer.classList.add('hidden');
+    mapContainer.classList.remove('hidden');
+    stopContinentBreathing();
     state.mode = 'map';
-    await renderCountry();
+    state.isTransitioning = false;
+    await renderCountryMap();
   });
 }
 
-/** 从平面地图退回地球：反向动画，先淡出地图，切回地球后镜头从近拉远 */
+/** 从 2D 地图拉远退回 3D 地球 */
 async function exitToGlobeMode() {
-  if (state.mode !== 'map') return;
+  if (state.mode !== 'map' || state.isTransitioning) return;
+  state.isTransitioning = true;
+  closeDistrictDrawer();
+  showToast('🌍 正在拉远回退至 3D 地球…');
+
   await withVeil(async () => {
-    mapEl.classList.add('hidden');
-    globeEl.classList.remove('hidden');
+    mapContainer.classList.add('hidden');
+    globeContainer.classList.remove('hidden');
     state.mode = 'globe';
     state.level = 'country';
-    renderBreadcrumb();
+    updateBreadcrumb();
+    updateUIForGlobe();
 
     globeChart.setOption({
       globe: {
         viewControl: {
-          autoRotate: false, distance: 130, alpha: 45,
-          targetCoord: CHINA_CENTER_LNGLAT, animation: false,
+          autoRotate: false,
+          distance: 125,
+          alpha: 45,
+          targetCoord: CHINA_CENTER,
+          animation: false,
         },
       },
     });
@@ -279,175 +1348,824 @@ async function exitToGlobeMode() {
   globeChart.setOption({
     globe: {
       viewControl: {
-        distance: 210, alpha: 22, autoRotate: true,
-        animation: true, animationDurationUpdate: 900, animationEasingUpdate: 'cubicOut',
+        distance: 210,
+        alpha: 25,
+        autoRotate: true,
+        animation: true,
+        animationDurationUpdate: 900,
+        animationEasingUpdate: 'cubicOut',
       },
     },
   });
-  enterHintEl.classList.remove('hidden');
+
+  startContinentBreathing();
+  state.isTransitioning = false;
 }
 
-globeChart.on('click', params => {
-  if (state.mode === 'globe') enterMapModeFromGlobe();
-});
+// ============================================================================
+// 2. 2D 平面地图下钻引擎 (高清科技暗黑配色 + 鲜明省份标识)
+// ============================================================================
 
-// ============================================================================
-// 平面地图层（仿 echarts-map-demo 思路）：全国 → 省 → 市 → 区县
-// ============================================================================
-function renderBreadcrumb() {
-  if (state.mode === 'globe') { breadcrumbEl.innerHTML = ''; backBtnEl.style.display = 'none'; return; }
-  let html = `<span class="crumb${state.level==='country'?' active':''}" onclick="goToCountry()">全国</span>`;
+function initMapChart() {
+  if (!mapChart) {
+    mapChart = echarts.init(mapContainer);
+    setupMapInteractions();
+  }
+}
+
+function updateBreadcrumb() {
+  if (state.mode === 'globe') {
+    breadcrumbEl.innerHTML = `<span class="crumb active">🌍 3D 科技地球</span>`;
+    levelBadgeEl.textContent = '3D 视角';
+    backBtnEl.style.display = 'none';
+    return;
+  }
+
+  let html = `<span class="crumb" onclick="exitToGlobeMode()">🌍 地球</span>`;
+  html += `<span class="crumb-sep">›</span>`;
+  html += `<span class="crumb${state.level === 'country' ? ' active' : ''}" onclick="goToCountry()">🇨🇳 全国</span>`;
+
   if (state.provinceName) {
-    html += `<span class="crumb-sep">›</span><span class="crumb${state.level==='province'?' active':''}" onclick="goToProvince()">${state.provinceName}</span>`;
+    html += `<span class="crumb-sep">›</span>`;
+    html += `<span class="crumb${state.level === 'province' ? ' active' : ''}" onclick="goToProvince()">${state.provinceName}</span>`;
   }
   if (state.cityName) {
-    html += `<span class="crumb-sep">›</span><span class="crumb${state.level==='city'?' active':''}" onclick="goToCity()">${state.cityName}</span>`;
+    html += `<span class="crumb-sep">›</span>`;
+    html += `<span class="crumb${state.level === 'city' ? ' active' : ''}" onclick="goToCity()">${state.cityName}</span>`;
   }
   if (state.districtName) {
-    html += `<span class="crumb-sep">›</span><span class="crumb active">${state.districtName}</span>`;
+    html += `<span class="crumb-sep">›</span>`;
+    html += `<span class="crumb active" onclick="openDistrictDrawer()">${state.districtName}</span>`;
   }
+
   breadcrumbEl.innerHTML = html;
-  backBtnEl.style.display = 'block'; // 地图模式下始终显示，点到头（全国）会退回地球
+  backBtnEl.style.display = 'block';
+
+  const levelMap = {
+    country: '全国视图',
+    province: '省级下钻',
+    city: '市级下钻',
+    district: '区县级',
+  };
+  levelBadgeEl.textContent = levelMap[state.level] || '平面地图';
 }
 
-async function renderCountry() {
-  setLoading(true);
-  state = { mode: 'map', level: 'country', provinceName: null, provinceAdcode: null,
-    cityName: null, cityAdcode: null, districtName: null };
-  renderBreadcrumb();
-
-  const china = await fetchGeo(100000);
-  echarts.registerMap('china', china);
-
-  const percentMap = {};
-  DEMO_PROVINCE_DATA.forEach(p => percentMap[p.name] = p.percent);
-
-  const data = china.features.map((f, i) => ({
-    name: f.properties.name,
-    value: percentMap[f.properties.name] || 0,
-    center: f.properties.center,
-    itemStyle: { areaColor: PALETTE[i % PALETTE.length] },
-  }));
-
-  mapChart.setOption({
-    backgroundColor: 'transparent',
-    tooltip: {
-      trigger: 'item',
-      formatter: p => (p.data && p.data.value) ? `${p.name}<br/>消费占比 ${p.data.value}%` : `${p.name}<br/>暂无记录`,
-      backgroundColor: 'rgba(10,14,23,0.92)', borderColor: '#00FFC6', textStyle: { color: '#fff', fontSize: 12 },
-    },
-    geo: null,
-    series: [{
-      type: 'map', map: 'china', roam: true, zoom: 1, label: { show: false },
-      itemStyle: { borderColor: '#0A0E17', borderWidth: 1 },
-      emphasis: { label: { show: true, color: '#fff', fontSize: 12 },
-        itemStyle: { shadowBlur: 20, shadowColor: 'rgba(0,255,198,0.6)' } },
-      data,
-    }],
-    animationDurationUpdate: 500, animationEasingUpdate: 'cubicOut',
-  }, true);
-
-  setLoading(false);
+function updateUIForGlobe() {
+  updateBreadcrumb();
+  chipTextEl.textContent = '点击地球或此处，穿梭进入中国地图';
+  actionChipEl.style.display = 'flex';
 }
 
-async function renderPointsLayer(mapKey, geo, points) {
-  echarts.registerMap(mapKey, geo);
-  mapChart.setOption({
-    backgroundColor: 'transparent',
-    tooltip: { show: false },
-    geo: {
-      map: mapKey, roam: true,
-      itemStyle: { areaColor: 'rgba(0,255,198,0.07)', borderColor: 'rgba(0,255,198,0.35)', borderWidth: 1 },
-      emphasis: { itemStyle: { areaColor: 'rgba(0,255,198,0.16)' } },
-    },
-    series: [{
-      type: 'effectScatter', coordinateSystem: 'geo', symbolSize: 12,
-      rippleEffect: { brushType: 'stroke', scale: 3.2, period: 3 },
-      itemStyle: { color: '#00FFC6', shadowBlur: 10, shadowColor: '#00FFC6' },
-      label: { show: true, position: 'top', formatter: p => p.data.name, color: '#fff', fontSize: 11, distance: 8 },
-      data: points.map(pt => ({ name: pt.name, value: [pt.lng, pt.lat] })),
-    }],
-    animationDurationUpdate: 500, animationEasingUpdate: 'cubicOut',
-  }, true);
+function updateUIForMap() {
+  updateBreadcrumb();
+  if (state.level === 'country') {
+    chipTextEl.textContent = '点击省份进行下钻，点击返回退回地球';
+  } else if (state.level === 'province') {
+    chipTextEl.textContent = `当前位于 ${state.provinceName}，点击城市继续下钻`;
+  } else if (state.level === 'city') {
+    chipTextEl.textContent = `当前位于 ${state.cityName}，点击区县或足迹点`;
+  } else {
+    chipTextEl.textContent = `当前位于 ${state.districtName}，点击此处可查看档案与街区图层`;
+  }
+  actionChipEl.style.display = 'flex';
 }
 
+function handleActionChipClick() {
+  if (state.mode === 'globe') {
+    triggerFlyIntoChina();
+  } else if (state.level === 'district') {
+    openDistrictDrawer();
+  } else {
+    showToast(chipTextEl.textContent);
+  }
+}
+
+/** 1. 渲染全国地图 (100000) */
+async function renderCountryMap() {
+  setLoading(true, '拉取全国行政区划边界…');
+  closeDistrictDrawer();
+  state.level = 'country';
+  state.provinceName = null;
+  state.provinceAdcode = null;
+  state.cityName = null;
+  state.cityAdcode = null;
+  state.districtName = null;
+  state.districtAdcode = null;
+
+  initMapChart();
+  updateUIForMap();
+
+  try {
+    const chinaGeo = await fetchGeo(100000);
+    echarts.registerMap('china_map', chinaGeo);
+
+    const percentMap = {};
+    DEMO_PROVINCES.forEach(p => percentMap[p.name] = p);
+
+    const provinceData = chinaGeo.features.map((f, i) => {
+      const name = f.properties.name;
+      const demo = percentMap[name];
+      return {
+        name,
+        adcode: f.properties.adcode,
+        value: demo ? demo.percent : 0,
+        count: demo ? demo.count : 0,
+        center: f.properties.center || f.properties.centroid,
+        itemStyle: {
+          areaColor: demo ? PALETTE_AREA[i % PALETTE_AREA.length] : 'rgba(15, 23, 42, 0.75)',
+          borderColor: demo ? PALETTE_BORDER[i % PALETTE_BORDER.length] : 'rgba(71, 85, 105, 0.4)',
+          borderWidth: demo ? 1.4 : 0.8,
+        },
+      };
+    });
+
+    const allPoints = [];
+    Object.keys(DEMO_POINTS).forEach(prov => {
+      DEMO_POINTS[prov].forEach(pt => allPoints.push(pt));
+    });
+
+    mapChart.setOption({
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'item',
+        backgroundColor: 'rgba(13, 20, 36, 0.95)',
+        borderColor: '#00FFC6',
+        borderWidth: 1.2,
+        padding: [8, 12],
+        textStyle: { color: '#FFF', fontSize: 12 },
+        formatter: params => {
+          if (params.seriesType === 'effectScatter') {
+            return `📍 <b>${params.data.name}</b><br/>金额: <span style="color:#FBBF24;font-weight:bold;">${params.data.amount}</span><br/>分类: ${params.data.cat || '消费'}`;
+          }
+          if (params.data && params.data.value) {
+            return `🇨🇳 <b>${params.name}</b><br/>消费占比: <b style="color:#00FFC6;">${params.data.value}%</b><br/>足迹记录: ${params.data.count} 处<br/><span style="font-size:11px;color:#94A3B8;">点击进入该省</span>`;
+          }
+          return `<b>${params.name}</b><br/><span style="color:#64748B;">暂无记录（点击可查看）</span>`;
+        },
+      },
+      geo: {
+        map: 'china_map',
+        roam: true,
+        zoom: 1.15,
+        center: CHINA_CENTER,
+        label: {
+          show: true,
+          color: '#FFFFFF',
+          fontSize: 11,
+          fontWeight: '600',
+          textBorderColor: '#000000',
+          textBorderWidth: 3.0,
+        },
+        itemStyle: {
+          borderColor: 'rgba(0, 255, 198, 0.4)',
+          borderWidth: 1,
+        },
+        emphasis: {
+          label: {
+            show: true,
+            color: '#00FFC6',
+            fontWeight: 'bold',
+            fontSize: 12,
+            textBorderColor: '#000000',
+            textBorderWidth: 3.5,
+          },
+          itemStyle: {
+            areaColor: 'rgba(0, 255, 198, 0.35)',
+            borderColor: '#00FFC6',
+            borderWidth: 2,
+            shadowBlur: 20,
+            shadowColor: 'rgba(0, 255, 198, 0.6)',
+          },
+        },
+      },
+      series: [
+        {
+          type: 'map',
+          map: 'china_map',
+          geoIndex: 0,
+          data: provinceData,
+        },
+        {
+          name: '足迹热点',
+          type: 'effectScatter',
+          coordinateSystem: 'geo',
+          symbolSize: 11,
+          rippleEffect: {
+            brushType: 'stroke',
+            scale: 3.8,
+            period: 3,
+          },
+          itemStyle: {
+            color: '#00FFC6',
+            shadowBlur: 14,
+            shadowColor: '#00FFC6',
+          },
+          data: allPoints.map(pt => ({
+            name: pt.name,
+            value: [pt.lng, pt.lat],
+            amount: pt.amount,
+            cat: pt.cat,
+            time: pt.time,
+          })),
+        },
+      ],
+      animationDurationUpdate: 500,
+      animationEasingUpdate: 'cubicOut',
+    }, true);
+
+  } catch (err) {
+    console.error(err);
+    showToast('全国地图加载失败，请检查网络');
+  } finally {
+    setLoading(false);
+  }
+}
+
+/** 2. 下钻到省份 (Province) */
 async function drillIntoProvince(name, adcode, center) {
-  showToast('正在进入 ' + name + '…');
-  if (center) mapChart.dispatchAction({ type: 'geoRoam', componentType: 'series', seriesIndex: 0, zoom: 5, center });
-  const geoPromise = fetchGeo(adcode);
-  await sleep(480);
-  const geo = await geoPromise;
+  setLoading(true, `正在加载 ${name} 地图…`);
+  closeDistrictDrawer();
+  showToast(`正在进入 ${name}…`);
 
-  state.level = 'province'; state.provinceName = name; state.provinceAdcode = adcode;
-  state.cityName = null; state.cityAdcode = null; state.districtName = null;
-  renderBreadcrumb();
-  setLoading(false);
-  await renderPointsLayer('region_' + adcode, geo, DEMO_POINTS[name] || []);
+  try {
+    const geoJson = await fetchGeo(adcode);
+    echarts.registerMap('province_' + adcode, geoJson);
+
+    state.level = 'province';
+    state.provinceName = name;
+    state.provinceAdcode = adcode;
+    state.cityName = null;
+    state.cityAdcode = null;
+    state.districtName = null;
+    state.districtAdcode = null;
+    updateUIForMap();
+
+    const points = DEMO_POINTS[name] || [];
+    const cityData = geoJson.features.map((f, i) => ({
+      name: f.properties.name,
+      adcode: f.properties.adcode,
+      center: f.properties.center || f.properties.centroid,
+      itemStyle: {
+        areaColor: PALETTE_AREA[i % PALETTE_AREA.length],
+        borderColor: PALETTE_BORDER[i % PALETTE_BORDER.length],
+        borderWidth: 1.4,
+      },
+    }));
+
+    mapChart.setOption({
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'item',
+        backgroundColor: 'rgba(13, 20, 36, 0.95)',
+        borderColor: '#00FFC6',
+        textStyle: { color: '#FFF', fontSize: 12 },
+        formatter: params => {
+          if (params.seriesType === 'effectScatter') {
+            return `📍 <b>${params.data.name}</b><br/>金额: <span style="color:#FBBF24;font-weight:bold;">${params.data.amount}</span><br/>分类: ${params.data.cat || '消费'}`;
+          }
+          return `🏙️ <b>${params.name}</b><br/><span style="color:#94A3B8;">点击进一步下钻到城市</span>`;
+        },
+      },
+      geo: {
+        map: 'province_' + adcode,
+        roam: true,
+        zoom: 1.1,
+        label: {
+          show: true,
+          color: '#FFFFFF',
+          fontSize: 11,
+          fontWeight: '600',
+          textBorderColor: '#000000',
+          textBorderWidth: 3.0,
+        },
+        itemStyle: {
+          borderColor: 'rgba(0, 255, 198, 0.45)',
+          borderWidth: 1.2,
+        },
+        emphasis: {
+          label: {
+            show: true,
+            color: '#00FFC6',
+            fontWeight: 'bold',
+            fontSize: 12,
+            textBorderColor: '#000000',
+            textBorderWidth: 3.5,
+          },
+          itemStyle: {
+            areaColor: 'rgba(0, 255, 198, 0.35)',
+            borderColor: '#00FFC6',
+            borderWidth: 2,
+            shadowBlur: 20,
+            shadowColor: '#00FFC6',
+          },
+        },
+      },
+      series: [
+        {
+          type: 'map',
+          map: 'province_' + adcode,
+          geoIndex: 0,
+          data: cityData,
+        },
+        {
+          type: 'effectScatter',
+          coordinateSystem: 'geo',
+          symbolSize: 13,
+          rippleEffect: {
+            brushType: 'stroke',
+            scale: 4,
+            period: 2.5,
+          },
+          itemStyle: {
+            color: '#00FFC6',
+            shadowBlur: 14,
+            shadowColor: '#00FFC6',
+          },
+          label: {
+            show: true,
+            position: 'top',
+            formatter: p => p.data.name,
+            color: '#FFF',
+            fontSize: 11,
+            distance: 8,
+            textBorderColor: '#000000',
+            textBorderWidth: 2.5,
+          },
+          data: points.map(pt => ({
+            name: pt.name,
+            value: [pt.lng, pt.lat],
+            amount: pt.amount,
+            cat: pt.cat,
+            time: pt.time,
+          })),
+        },
+      ],
+      animationDurationUpdate: 500,
+      animationEasingUpdate: 'cubicOut',
+    }, true);
+
+  } catch (err) {
+    console.error(err);
+    showToast(`${name} 地理数据暂不可用`);
+  } finally {
+    setLoading(false);
+  }
 }
 
-async function drillIntoCity(cityName, cityAdcode, cityCenter) {
-  if (cityCenter) mapChart.dispatchAction({ type: 'geoRoam', componentType: 'geo', zoom: 3, center: cityCenter });
-  await sleep(420);
+/** 3. 下钻到城市 (City) */
+async function drillIntoCity(cityName, cityAdcode, center) {
+  setLoading(true, `正在加载 ${cityName} 地图…`);
+  closeDistrictDrawer();
+  showToast(`正在进入 ${cityName}…`);
 
-  state.level = 'city'; state.cityName = cityName; state.cityAdcode = cityAdcode; state.districtName = null;
-  renderBreadcrumb();
-  const points = (DEMO_POINTS[state.provinceName] || []).filter(pt => pt.city === cityName);
-  await renderPointsLayer('region_' + state.provinceAdcode, geoCache[state.provinceAdcode], points);
+  try {
+    const geoJson = await fetchGeo(cityAdcode);
+    echarts.registerMap('city_' + cityAdcode, geoJson);
+
+    state.level = 'city';
+    state.cityName = cityName;
+    state.cityAdcode = cityAdcode;
+    state.districtName = null;
+    state.districtAdcode = null;
+    updateUIForMap();
+
+    const provPoints = DEMO_POINTS[state.provinceName] || [];
+    const cityPoints = provPoints.filter(p => p.city === cityName || p.cityAdcode === cityAdcode);
+
+    const districtData = geoJson.features.map((f, i) => ({
+      name: f.properties.name,
+      adcode: f.properties.adcode,
+      center: f.properties.center || f.properties.centroid,
+      itemStyle: {
+        areaColor: PALETTE_AREA[i % PALETTE_AREA.length],
+        borderColor: PALETTE_BORDER[i % PALETTE_BORDER.length],
+        borderWidth: 1.4,
+      },
+    }));
+
+    mapChart.setOption({
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'item',
+        backgroundColor: 'rgba(13, 20, 36, 0.95)',
+        borderColor: '#00FFC6',
+        textStyle: { color: '#FFF', fontSize: 12 },
+        formatter: params => {
+          if (params.seriesType === 'effectScatter') {
+            return `📍 <b>${params.data.name}</b><br/>金额: <span style="color:#FBBF24;font-weight:bold;">${params.data.amount}</span>`;
+          }
+          return `🏘️ <b>${params.name}</b><br/><span style="color:#94A3B8;">点击下钻到区县，查看详细地理位置</span>`;
+        },
+      },
+      geo: {
+        map: 'city_' + cityAdcode,
+        roam: true,
+        zoom: 1.15,
+        label: {
+          show: true,
+          color: '#FFFFFF',
+          fontSize: 11,
+          fontWeight: '600',
+          textBorderColor: '#000000',
+          textBorderWidth: 3.0,
+        },
+        itemStyle: {
+          borderColor: 'rgba(0, 255, 198, 0.45)',
+          borderWidth: 1.2,
+        },
+        emphasis: {
+          label: {
+            show: true,
+            color: '#00FFC6',
+            fontWeight: 'bold',
+            fontSize: 12,
+            textBorderColor: '#000000',
+            textBorderWidth: 3.5,
+          },
+          itemStyle: {
+            areaColor: 'rgba(0, 255, 198, 0.35)',
+            borderColor: '#00FFC6',
+            borderWidth: 2,
+            shadowBlur: 20,
+            shadowColor: '#00FFC6',
+          },
+        },
+      },
+      series: [
+        {
+          type: 'map',
+          map: 'city_' + cityAdcode,
+          geoIndex: 0,
+          data: districtData,
+        },
+        {
+          type: 'effectScatter',
+          coordinateSystem: 'geo',
+          symbolSize: 14,
+          rippleEffect: {
+            brushType: 'stroke',
+            scale: 4,
+            period: 2.2,
+          },
+          itemStyle: {
+            color: '#00FFC6',
+            shadowBlur: 16,
+            shadowColor: '#00FFC6',
+          },
+          label: {
+            show: true,
+            position: 'top',
+            formatter: p => p.data.name,
+            color: '#FFF',
+            fontSize: 11,
+            distance: 8,
+            textBorderColor: '#000000',
+            textBorderWidth: 2.5,
+          },
+          data: cityPoints.map(pt => ({
+            name: pt.name,
+            value: [pt.lng, pt.lat],
+            amount: pt.amount,
+            cat: pt.cat,
+            time: pt.time,
+          })),
+        },
+      ],
+      animationDurationUpdate: 500,
+      animationEasingUpdate: 'cubicOut',
+    }, true);
+
+  } catch (err) {
+    console.error(err);
+    showToast(`${cityName} 细分边界暂无，为您聚焦当前视野`);
+  } finally {
+    setLoading(false);
+  }
 }
 
-/** 区县层：demo阶段不下钻加载真实区县边界，直接在当前市级地图基础上把镜头拉得更近，
- *  只展示该区县下的点——省一次GeoJSON请求，效果上仍然是"再下钻一层"的观感 */
-async function drillIntoDistrict(districtName) {
-  state.level = 'district'; state.districtName = districtName;
-  renderBreadcrumb();
-  const points = (DEMO_POINTS[state.provinceName] || [])
-    .filter(pt => pt.city === state.cityName && pt.district === districtName);
-  showToast(districtName + '（' + points.length + '条记录）');
-  if (points.length) mapChart.dispatchAction({ type: 'geoRoam', componentType: 'geo', zoom: 6, center: [points[0].lng, points[0].lat] });
+/** 4. 下钻到区县 (District) */
+async function drillIntoDistrict(districtName, districtAdcode, center) {
+  state.level = 'district';
+  state.districtName = districtName;
+  state.districtAdcode = districtAdcode;
+  updateUIForMap();
+
+  const provPoints = DEMO_POINTS[state.provinceName] || [];
+  const districtPoints = provPoints.filter(p => p.district === districtName || p.districtAdcode === districtAdcode);
+
+  showToast(`${districtName}（已定位 ${districtPoints.length} 处消费）`);
+
+  if (districtPoints.length > 0) {
+    mapChart.dispatchAction({
+      type: 'geoRoam',
+      componentType: 'geo',
+      zoom: 3.2,
+      center: [districtPoints[0].lng, districtPoints[0].lat],
+    });
+  } else if (center) {
+    mapChart.dispatchAction({
+      type: 'geoRoam',
+      componentType: 'geo',
+      zoom: 3.2,
+      center: center,
+    });
+  }
+
+  openDistrictDrawer(districtName, districtAdcode, districtPoints);
 }
 
-function goToCountry() { if (state.mode === 'map' && state.level !== 'country') renderCountry(); }
-function goToProvince() { if (state.level === 'city' || state.level === 'district') drillIntoProvince(state.provinceName, state.provinceAdcode); }
-function goToCity() { if (state.level === 'district') drillIntoCity(state.cityName, state.cityAdcode); }
+/** 打开区县级专属详情抽屉 */
+function openDistrictDrawer(dName, dCode, points) {
+  const name = dName || state.districtName || '当前区域';
+  const code = dCode || state.districtAdcode || '—';
+  const provPoints = DEMO_POINTS[state.provinceName] || [];
+  const spotList = points || provPoints.filter(p => p.district === name || p.districtAdcode === code);
+
+  drawerDistrictTitleEl.textContent = name;
+  drawerDistrictCodeEl.textContent = code;
+
+  let total = 0;
+  spotList.forEach(s => {
+    const val = parseFloat((s.amount || '0').replace(/[^0-9.]/g, ''));
+    if (!isNaN(val)) total += val;
+  });
+  statTotalSpentEl.textContent = '¥ ' + total.toFixed(2);
+  statSpotCountEl.textContent = spotList.length + ' 处';
+
+  if (spotList.length === 0) {
+    drawerSpotListEl.innerHTML = `
+      <div style="text-align:center;color:#64748B;font-size:12px;padding:16px 0;">
+        该区县暂无预设消费记录，点击下方“放大聚焦”可打开高德街区图层探索
+      </div>
+    `;
+  } else {
+    drawerSpotListEl.innerHTML = spotList.map((pt) => `
+      <div class="spot-item" onclick="openAmapDetailForSpot('${pt.name}', ${pt.lng}, ${pt.lat}, '${pt.amount}', '${pt.cat}', '${pt.time}')">
+        <div>
+          <div class="spot-name">📍 ${pt.name}</div>
+          <div class="spot-desc">${pt.cat || '消费'} · ${pt.time || '近期'}</div>
+        </div>
+        <div class="spot-price">${pt.amount}</div>
+      </div>
+    `).join('');
+  }
+
+  state.selectedSpot = spotList.length > 0 ? spotList[0] : null;
+  districtDrawerEl.classList.add('open');
+}
+
+function closeDistrictDrawer() {
+  districtDrawerEl.classList.remove('open');
+}
+
+// ============================================================================
+// 3. 独立高德地图街区图层引擎 (AMap 2.0 3D 深度探索)
+// ============================================================================
+
+/** 点击“🔍 放大聚焦”：立即关闭抽屉，平滑切换至高德地图街区图层 */
+function zoomInCurrentDistrict() {
+  closeDistrictDrawer();
+  const provPoints = DEMO_POINTS[state.provinceName] || [];
+  const districtPoints = provPoints.filter(p => p.district === state.districtName || p.districtAdcode === state.districtAdcode);
+  const targetSpot = districtPoints.length > 0 ? districtPoints[0] : null;
+
+  openAmapDetailLayer(state.districtName, state.districtAdcode, targetSpot, districtPoints);
+}
+
+function openAmapDetailForSpot(name, lng, lat, amount, cat, time) {
+  closeDistrictDrawer();
+  const spot = { name, lng, lat, amount, cat, time };
+  state.selectedSpot = spot;
+  openAmapDetailLayer(state.districtName, state.districtAdcode, spot);
+}
+
+/** 打开高德地图独立街区图层 */
+async function openAmapDetailLayer(districtName, districtAdcode, spot, spotList) {
+  showToast(`🔍 正在加载 ${districtName || '当前区县'} 高德街区图层…`);
+
+  const provPoints = DEMO_POINTS[state.provinceName] || [];
+  const allSpots = spotList || provPoints.filter(p => p.district === districtName || p.districtAdcode === districtAdcode);
+  const activeSpot = spot || (allSpots.length > 0 ? allSpots[0] : { name: districtName, lng: 113.9488, lat: 22.5288, amount: '—', cat: '区县中心', time: '现在' });
+
+  state.selectedSpot = activeSpot;
+  updateAmapBottomCard(activeSpot);
+
+  amapLayerBadge.textContent = `${districtName || '区县'} · 高清街区图层`;
+
+  await withVeil(async () => {
+    mapContainer.classList.add('hidden');
+    headerBarEl.style.display = 'none';
+    bottomBar.style.display = 'none';
+    amapDetailLayer.classList.remove('hidden');
+    state.mode = 'amap';
+  });
+
+  // 等过渡完成后再初始化/更新 AMap，确保容器尺寸已经确立
+  await sleep(100);
+  initOrUpdateAmap(activeSpot.lng, activeSpot.lat, allSpots);
+}
+
+/** 退出高德街区图层，返回 2D 区县概览 */
+async function exitAmapDetailLayer() {
+  await withVeil(async () => {
+    amapDetailLayer.classList.add('hidden');
+    mapContainer.classList.remove('hidden');
+    headerBarEl.style.display = 'flex';
+    bottomBar.style.display = 'flex';
+    state.mode = 'map';
+    updateBreadcrumb();
+  });
+}
+
+/** 初始化或更新 AMap 实例与 Markers */
+function initOrUpdateAmap(centerLng, centerLat, spots) {
+  if (typeof AMap === 'undefined') {
+    showToast('高德地图组件加载中或离线，已为您展示预设坐标');
+    return;
+  }
+
+  if (!amapInstance) {
+    amapInstance = new AMap.Map('amapDetailContainer', {
+      zoom: 16,
+      center: [centerLng, centerLat],
+      mapStyle: 'amap://styles/dark', // 暗夜底图，1.4.x 支持
+      showLabel: true,
+    });
+
+    amapInstance.addControl(new AMap.Scale());
+    amapInstance.addControl(new AMap.ToolBar({ position: 'RB', liteStyle: true }));
+  } else {
+    amapInstance.setZoomAndCenter(16, [centerLng, centerLat]);
+  }
+
+  // 容器在展示后可能刚完成 CSS 过渡，强制触发一次 resize 确保瓦片正确铺满
+  setTimeout(() => { if (amapInstance) amapInstance.resize(); }, 300);
+
+
+  // 清除旧 Markers 并添加当前区县所有消费点 Markers
+  if (amapMarkers.length > 0) {
+    amapInstance.remove(amapMarkers);
+    amapMarkers = [];
+  }
+
+  spots.forEach(pt => {
+    const markerContent = `
+      <div class="amap-custom-marker" onclick="handleAmapMarkerClick('${pt.name}')">
+        <div class="marker-pulse"></div>
+        <div class="marker-pin">📍</div>
+        <div class="marker-label">${pt.name}</div>
+      </div>
+    `;
+    const marker = new AMap.Marker({
+      position: [pt.lng, pt.lat],
+      content: markerContent,
+      offset: new AMap.Pixel(-12, -30),
+      title: pt.name,
+    });
+    amapMarkers.push(marker);
+  });
+
+  if (amapMarkers.length > 0) {
+    amapInstance.add(amapMarkers);
+  }
+}
+
+function handleAmapMarkerClick(name) {
+  const provPoints = DEMO_POINTS[state.provinceName] || [];
+  const found = provPoints.find(p => p.name === name);
+  if (found) {
+    state.selectedSpot = found;
+    updateAmapBottomCard(found);
+    if (amapInstance) {
+      amapInstance.setZoomAndCenter(16.5, [found.lng, found.lat], false, 500);
+    }
+  }
+}
+
+function updateAmapBottomCard(spot) {
+  amapSpotTitle.textContent = spot.name || '位置详情';
+  amapSpotPrice.textContent = spot.amount || '';
+  amapSpotDesc.textContent = `${state.provinceName || ''}${state.cityName || ''}${state.districtName || ''} · ${spot.cat || '消费'} · ${spot.time || ''}`;
+}
+
+/** 触发原生 Android LocationMapActivity 路线规划页面 */
+function triggerNativeAmapRoute() {
+  const spot = state.selectedSpot || { name: '目标位置', lng: 113.9488, lat: 22.5288 };
+  showToast(`🚗 正在拉起原生高德规划: ${spot.name}`);
+
+  if (window.MapBridge && window.MapBridge.openLocationMap) {
+    window.MapBridge.openLocationMap(spot.name, spot.lat, spot.lng);
+  } else {
+    // 降级为外部唤起
+    openExternalMapNav();
+  }
+}
+
+/** 唤起外部高德地图 App 真实路线导航 */
+function openExternalMapNav() {
+  const spot = state.selectedSpot || { name: state.districtName || '目标区域', lng: 113.9488, lat: 22.5288 };
+  showToast(`🧭 正在唤起高德地图导航: ${spot.name}`);
+
+  const amapUrl = `https://uri.amap.com/marker?position=${spot.lng},${spot.lat}&name=${encodeURIComponent(spot.name)}&src=iqoowang&coordinate=gaode&callnative=1`;
+  window.open(amapUrl, '_blank');
+}
+
+// 导航跳转辅助函数
+function goToCountry() {
+  if (state.mode === 'map' && state.level !== 'country') renderCountryMap();
+}
+
+function goToProvince() {
+  if (state.mode === 'map' && (state.level === 'city' || state.level === 'district')) {
+    drillIntoProvince(state.provinceName, state.provinceAdcode);
+  }
+}
+
+function goToCity() {
+  if (state.mode === 'map' && state.level === 'district') {
+    drillIntoCity(state.cityName, state.cityAdcode);
+  }
+}
 
 function goBack() {
   if (state.mode === 'globe') return;
+  if (state.mode === 'amap') {
+    exitAmapDetailLayer();
+    return;
+  }
   if (state.level === 'district') goToCity();
   else if (state.level === 'city') goToProvince();
   else if (state.level === 'province') goToCountry();
-  else if (state.level === 'country') exitToGlobeMode(); // 全国层再退一步，回到地球
+  else if (state.level === 'country') exitToGlobeMode();
 }
 
-mapChart.on('click', params => {
-  if (params.componentType === 'series' && params.seriesType === 'effectScatter') {
-    const evt = params.event && params.event.event;
-    showPointCard(params.data.name, evt ? evt.offsetX : innerWidth/2, evt ? evt.offsetY : innerHeight/2);
-    return;
-  }
-  if (state.level === 'country') {
-    const target = DEMO_PROVINCE_DATA.find(p => p.name === params.name);
-    if (!target) { showToast(params.name + ' 暂无记录'); return; }
-    drillIntoProvince(target.name, target.adcode, params.data && params.data.center);
-    return;
-  }
-  if (state.level === 'province') {
-    const clickedAdcode = params.data && params.data.adcode;
-    const hit = (DEMO_POINTS[state.provinceName] || []).find(pt => pt.city === params.name);
-    if (!hit) { showToast(params.name + ' 暂无记录'); return; }
-    drillIntoCity(params.name, clickedAdcode || hit.cityAdcode, params.data && params.data.center);
-    return;
-  }
-  if (state.level === 'city') {
-    const districts = DEMO_DISTRICTS[state.cityName] || [];
-    const hit = districts.find(d => d.name === params.name);
-    if (!hit) { showToast(params.name + ' 暂无记录'); return; }
-    drillIntoDistrict(hit.name);
-  }
+/** 2D 地图事件绑定 */
+function setupMapInteractions() {
+  mapChart.on('click', params => {
+    if (params.componentType === 'series' && params.seriesType === 'effectScatter') {
+      const evt = params.event && params.event.event;
+      const x = evt ? evt.clientX : window.innerWidth / 2;
+      const y = evt ? evt.clientY : window.innerHeight / 2;
+      showPointCard(params.data.name, `金额: ${params.data.amount || '—'} · ${params.data.cat || '消费'}`, x, y);
+      state.selectedSpot = params.data;
+      if (state.level === 'district') openDistrictDrawer();
+      return;
+    }
+
+    if (state.level === 'country') {
+      const target = DEMO_PROVINCES.find(p => p.name === params.name) || { name: params.name, adcode: params.data && params.data.adcode };
+      if (!target.adcode) {
+        showToast(`${params.name} 暂无地理编码`);
+        return;
+      }
+      drillIntoProvince(target.name, target.adcode, params.data && params.data.center);
+      return;
+    }
+
+    if (state.level === 'province') {
+      const adcode = params.data && params.data.adcode;
+      if (!adcode) {
+        showToast(`${params.name} 暂无下一级数据`);
+        return;
+      }
+      drillIntoCity(params.name, adcode, params.data && params.data.center);
+      return;
+    }
+
+    if (state.level === 'city') {
+      const adcode = params.data && params.data.adcode;
+      drillIntoDistrict(params.name, adcode, params.data && params.data.center);
+      return;
+    }
+  });
+
+  mapChart.on('georoam', params => {
+    if (state.mode === 'map' && state.level === 'country' && !state.isTransitioning) {
+      if (params.zoom !== undefined) {
+        const currentOption = mapChart.getOption();
+        if (currentOption && currentOption.geo && currentOption.geo[0]) {
+          const currentZoom = currentOption.geo[0].zoom;
+          if (currentZoom < 0.55) {
+            exitToGlobeMode();
+          }
+        }
+      }
+    }
+  });
+}
+
+// 窗口尺寸自适应
+window.addEventListener('resize', () => {
+  if (globeChart) globeChart.resize();
+  if (mapChart) mapChart.resize();
 });
 
-window.addEventListener('resize', () => { globeChart.resize(); mapChart.resize(); });
-
-initGlobe();
+// 初始化启动
+window.addEventListener('DOMContentLoaded', () => {
+  initGlobe();
+  setupGlobeInteractions();
+  setLoading(false);
+});
 </script>
 </body>
 </html>
