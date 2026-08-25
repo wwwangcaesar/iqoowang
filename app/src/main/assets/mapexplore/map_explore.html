@@ -7,7 +7,7 @@
 <!-- ECharts 5.5.1 & ECharts GL 2.0.9 -->
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
-<!-- MuGuiLin/3D-Earth 动效库 (本地 assets 离线极速加载) -->
+<!-- MuGuiLin/3D-Earth 动效核心库 (本地 assets 极速加载) -->
 <script src="./d3-timer.min.js"></script>
 <script src="./d3-geo.min.js"></script>
 <script src="./d3-contour.min.js"></script>
@@ -21,6 +21,7 @@
     --accent-purple: #C084FC;
     --accent-pink: #F472B6;
     --accent-gold: #FBBF24;
+    --neon-magenta: #FF007F;
     --bg-dark: #000308;
     --card-bg: rgba(15, 23, 42, 0.94);
     --border-color: rgba(0, 255, 198, 0.32);
@@ -56,6 +57,7 @@
   #globeContainer {
     z-index: 2;
     touch-action: pan-x pan-y pinch-zoom;
+    background: radial-gradient(circle at 50% 50%, #0d0b28 0%, #040314 70%, #000108 100%);
   }
 
   #mapContainer {
@@ -298,7 +300,7 @@
     border: 3px solid rgba(0, 255, 198, 0.15);
     border-top: 3px solid var(--primary);
     border-right: 3px solid var(--accent-blue);
-    border-bottom: 3px solid var(--accent-purple);
+    border-bottom: 3px solid var(--neon-magenta);
     border-radius: 50%;
     animation: spin 1s linear infinite;
     box-shadow: 0 0 20px rgba(0, 255, 198, 0.3);
@@ -742,7 +744,7 @@
     </div>
   </div>
 
-  <!-- 底部提示与快捷操作胶囊 (只有点击此处才触发穿梭进入中国地图) -->
+  <!-- 底部提示与快捷操作胶囊 (唯有点击此处才触发穿梭进入中国地图) -->
   <div id="bottomBar">
     <div id="actionChip" onclick="handleActionChipClick()">
       <div class="pulse-dot"></div>
@@ -791,13 +793,11 @@
 <script>
 /**
  * ============================================================================
- * 消费足迹地图：MuGuiLin/3D-Earth 炫酷地球 + 2D 省市区县多级下钻 + 独立高德街区图层
+ * 消费足迹地图：MuGuiLin/3D-Earth 原版呼吸动效 + 2D 省市区县下钻 + 独立高德街区图层
  * ============================================================================
  */
 
 const DATAV_BASE = 'https://geo.datav.aliyun.com/areas_v3/bound/';
-const EARTH_TEXTURE = 'https://cdn.jsdelivr.net/gh/ecomfe/echarts-gl/test/asset/earth.jpg';
-const STARFIELD_TEXTURE = 'https://cdn.jsdelivr.net/gh/ecomfe/echarts-gl/test/asset/starfield.jpg';
 const CHINA_CENTER = [104.0, 35.0];
 
 // ============================================================================
@@ -851,32 +851,19 @@ const PALETTE_BORDER = [
   '#00FFC6', '#38BDF8', '#818CF8', '#C084FC', '#FBBF24', '#34D399', '#60A5FA', '#2DD4BF'
 ];
 
-// 全球主要枢纽（用于 3D 跨洋飞线）
-const GLOBAL_HUBS = [
-  { name: '北京', coord: [116.4074, 39.9042] },
-  { name: '上海', coord: [121.4737, 31.2304] },
-  { name: '深圳', coord: [114.0579, 22.5431] },
-  { name: '东京', coord: [139.6917, 35.6895] },
-  { name: '伦敦', coord: [-0.1278, 51.5074] },
-  { name: '巴黎', coord: [2.3522, 48.8566] },
-  { name: '纽约', coord: [-74.0060, 40.7128] },
-  { name: '旧金山', coord: [-122.4194, 37.7749] },
-  { name: '悉尼', coord: [151.2093, -33.8688] },
-  { name: '迪拜', coord: [55.2708, 25.2048] },
-  { name: '新加坡', coord: [103.8198, 1.3521] },
-  { name: '开罗', coord: [31.2357, 30.0444] },
-  { name: '里约热内卢', coord: [-43.1729, -22.9068] },
-];
-
-// 大陆板块散点群
-const CONTINENT_NODES = [
-  [116.4, 39.9], [121.4, 31.2], [113.3, 23.1], [104.1, 30.6], [87.6, 43.8],
-  [139.7, 35.6], [126.9, 37.5], [100.5, 13.7], [103.8, 1.3], [77.2, 28.6],
-  [-0.1, 51.5], [2.3, 48.8], [13.4, 52.5], [12.5, 41.9], [-3.7, 40.4],
-  [-74.0, 40.7], [-122.4, 37.7], [-87.6, 41.8], [-118.2, 34.0], [-95.3, 29.7],
-  [-43.1, -22.9], [-46.6, -23.5], [-58.3, -34.6], [-77.0, -12.0], [-74.0, 4.7],
-  [31.2, 30.0], [28.0, -26.2], [3.3, 6.5], [36.8, -1.2], [-7.6, 33.5],
-  [151.2, -33.8], [144.9, -37.8], [153.0, -27.4], [115.8, -31.9]
+// MuGuiLin 风格地标节点
+const MU_NODES = [
+  { name: '上海', value: [117.11, 34.15] },
+  { name: '遵义-习水-桑木-大房子', value: [106.335917, 28.241228] },
+  { name: '海口', value: [110.187707, 20.061778] },
+  { name: '东京', value: [139.660177, 35.860783] },
+  { name: '皇后镇', value: [168.654317, -44.872951] },
+  { name: '路路阿堡', value: [22.4418, -5.85703] },
+  { name: '巴格达', value: [44.553051, 33.692094] },
+  { name: '圣地亚哥', value: [-70.692216, -33.438525] },
+  { name: '拉斯维加斯', value: [-115.149284, 36.187715] },
+  { name: '格林兰', value: [-42.406372, 71.973095] },
+  { name: '夏威夷', value: [-155.589933, 19.901194] }
 ];
 
 // ============================================================================
@@ -997,43 +984,39 @@ async function fetchGeo(adcode) {
 }
 
 // ============================================================================
-// 1. 3D 科技地球引擎 (MuGuiLin/3D-Earth 动态背光轮廓层 + 多彩立体磁轨)
+// 1. MuGuiLin/3D-Earth 动态背光轮廓动效引擎 (2秒渐进显现 + 边缘高亮呼吸)
 // ============================================================================
 
-function generateMuGuiLinGlobeLines() {
+function generateMuLines() {
   const flightLines = [];
-  const hubs = GLOBAL_HUBS;
-  const origins = [hubs[0], hubs[1], hubs[2]]; // 北京、上海、深圳
-  
-  origins.forEach(origin => {
-    hubs.forEach(dest => {
-      if (origin.name !== dest.name) {
-        const p1 = origin.coord;
-        const p2 = dest.coord;
-        const pts = [];
-        const numPts = 32;
-        for (let i = 0; i <= numPts; i++) {
-          const t = i / numPts;
-          const lng = p1[0] + (p2[0] - p1[0]) * t;
-          const lat = p1[1] + (p2[1] - p1[1]) * t;
-          const alt = Math.sin(t * Math.PI) * 0.35;
-          pts.push([lng, lat, alt]);
-        }
-        flightLines.push({
-          coords: pts,
-          fromName: origin.name,
-          toName: dest.name,
-        });
-      }
+  const baseDest = [118.58, 32.01]; // 南京核心
+  const origins = [
+    [117.11, 34.15],
+    [123.38, 41.8],
+    [112.01, 38.01],
+    [139.46, 35.42],
+    [116.58, 6.10],
+    [102.90, 25.31],
+    [114.05, 22.54],
+    [-74.00, 40.71],
+    [-0.12, 51.50],
+    [151.20, -33.86]
+  ];
+
+  origins.forEach(orig => {
+    flightLines.push({
+      coords: [orig, baseDest],
+      value: (Math.random() * 3000).toFixed(2)
     });
   });
 
+  // 5 组多彩环形磁场轨道
   const ringConfigs = [
     { inc: 20,  color: '#00FFC6', alt: 0.18, period: 12 },
     { inc: 60,  color: '#C084FC', alt: 0.38, period: 15 },
     { inc: -45, color: '#FBBF24', alt: 0.28, period: 11 },
     { inc: 80,  color: '#38BDF8', alt: 0.48, period: 16 },
-    { inc: -75, color: '#F472B6', alt: 0.32, period: 13 },
+    { inc: -75, color: '#FF007F', alt: 0.32, period: 13 },
   ];
 
   const magneticSeries = ringConfigs.map((cfg) => {
@@ -1069,20 +1052,19 @@ function generateMuGuiLinGlobeLines() {
   const flightSeries = {
     type: 'lines3D',
     coordinateSystem: 'globe',
-    polyline: true,
-    blendMode: 'lighter',
     effect: {
       show: true,
-      period: 10,
-      trailLength: 0.45,
-      symbol: 'circle',
-      symbolSize: 3.8,
-      color: '#00FFC6',
+      period: 2.5,
+      trailWidth: 3,
+      trailLength: 0.5,
+      trailOpacity: 1,
+      trailColor: '#00FFC6'
     },
+    blendMode: 'lighter',
     lineStyle: {
-      color: 'rgba(56, 189, 248, 0.5)',
-      width: 1.6,
-      opacity: 0.5,
+      width: 1.2,
+      color: '#0087F4',
+      opacity: 0.35
     },
     data: flightLines,
   };
@@ -1093,17 +1075,21 @@ function generateMuGuiLinGlobeLines() {
 let contourChart = null;
 let d3TimerInstance = null;
 
-/** 构建 MuGuiLin/3D-Earth 动态背光轮廓图层 (60fps 流畅动效) */
+/**
+ * 构建 MuGuiLin/3D-Earth 动态背光轮廓图层
+ * 板块边缘逐渐由暗变亮（约2秒慢慢显现），内部高度点随机高光，再平滑退回暗光，循环往复
+ */
 function setupMuGuiLinContourBackLight(onReady) {
   if (typeof d3 === 'undefined' || !d3.contours) {
     if (onReady) onReady(null);
     return;
   }
 
+  // 炫丽荧光洋红/电光紫 (对照截图 MuGuiLin 经典配色)
   const config = {
-    color: '#00FFC6',
+    color: '#FF007F',    // 荧光洋红霓虹色
     levels: 1,
-    intensity: 3.2,
+    intensity: 4.0,      // 增强发光通透感
     threshold: 0.01
   };
 
@@ -1111,10 +1097,11 @@ function setupMuGuiLinContourBackLight(onReady) {
   canvas.width = 682;
   canvas.height = 341;
   const context = canvas.getContext('2d');
-  context.lineWidth = 0.4;
+  context.lineWidth = 0.5;
   context.strokeStyle = config.color;
   context.fillStyle = config.color;
   context.shadowColor = config.color;
+  context.shadowBlur = 10;
 
   const image = new Image();
   image.src = './earth-bg.png';
@@ -1157,39 +1144,48 @@ function setupMuGuiLinContourBackLight(onReady) {
       contourChart.getZr().add(imgGraphic);
     }
 
-    function redraw(mu) {
+    function redraw(mu, waveIntensity) {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      const intensity = waveIntensity !== undefined ? waveIntensity : 1.0;
+      context.globalAlpha = 0.25 + intensity * 0.75;
+      context.shadowBlur = 4 + intensity * 12;
+
       mu.forEach(function (d, idx) {
         context.beginPath();
         path(d);
-        context.globalAlpha = 1;
         context.stroke();
-        if (idx > config.levels / 5 * 3) {
-          context.globalAlpha = 0.01;
+        if (idx > config.levels / 5 * 2) {
+          context.globalAlpha = 0.02 + intensity * 0.05;
           context.fill();
         }
       });
       imgGraphic.dirty();
     }
 
-    function backLight(threshold, levels) {
-      context.clearRect(0, 0, canvas.width, canvas.height);
+    function backLight(threshold, levels, waveIntensity) {
       const thresholds = [];
       for (let i = 0; i < levels; i++) {
         thresholds.push((threshold + 1 / levels * i) % 1);
       }
-      redraw(contours.thresholds(thresholds)(values));
+      redraw(contours.thresholds(thresholds)(values), waveIntensity);
     }
 
     if (d3TimerInstance) d3TimerInstance.stop();
+
+    // 呼吸灯变换：约 5 秒一个完整周期，2 秒从暗逐渐增强到最亮高潮，再平滑回退
+    const cycleTime = 5500;
     d3TimerInstance = d3.timer(function (t) {
       if (state.mode !== 'globe' || !globeChart) return;
-      const threshold = (t % 10000) / 10000;
-      backLight(threshold, 1);
+      const progress = (t % cycleTime) / cycleTime; // 0 ~ 1
+      const wave = Math.sin(progress * Math.PI);    // 0 -> 1 -> 0 正弦呼吸
+      const threshold = (progress * 1.6) % 1;
+      backLight(threshold, 1, wave);
     });
 
-    backLight(config.threshold, config.levels);
+    backLight(config.threshold, config.levels, 0.5);
     if (onReady) onReady(contourChart);
   };
+
   image.onerror = function() {
     if (onReady) onReady(null);
   };
@@ -1200,47 +1196,51 @@ function initGlobe() {
     globeChart = echarts.init(globeContainer);
   }
 
-  const { flightSeries, magneticSeries } = generateMuGuiLinGlobeLines();
-
-  const continentData = CONTINENT_NODES.map((coord, idx) => ({
-    name: 'Plate-' + idx,
-    value: [...coord, 0.05],
-    itemStyle: {
-      color: idx % 4 === 0 ? '#00FFC6' : (idx % 4 === 1 ? '#38BDF8' : (idx % 4 === 2 ? '#C084FC' : '#FBBF24')),
-      opacity: 0.75,
-    }
-  }));
+  const { flightSeries, magneticSeries } = generateMuLines();
 
   const option = {
-    backgroundColor: '#000308',
+    backgroundColor: 'transparent',
+    tooltip: { show: false },
     globe: {
-      baseTexture: EARTH_TEXTURE,
-      environment: STARFIELD_TEXTURE,
-      shading: 'realistic',
-      displacementScale: 0.02,
+      globeRadius: 80,
+      globeOuterRadius: 150,
+      environment: './body-bg.jpg',
+      baseTexture: './earth-bg.png',
+      heightTexture: './earth-bg.jpg',
+      shading: 'lambert',
+      displacementScale: 0, // 设为 0，彻底消除任何十字黑条与贴图接缝伪影
       atmosphere: {
         show: true,
         offset: 8,
-        glowPower: 4.5,
+        glowPower: 4.0,
         innerGlowPower: 2.2,
-        color: '#00E5FF',
+        color: '#0087F4',
       },
       light: {
-        ambient: { intensity: 0.55 },
-        main: { intensity: 1.45, shadow: false, alpha: 40, beta: -30 },
+        main: {
+          color: '#1D54F2',
+          intensity: 8.5,
+          shadowQuality: 'ultra',
+          shadow: false,
+          alpha: 40,
+          beta: -30
+        },
+        ambient: {
+          intensity: 3.8
+        }
       },
       viewControl: {
+        alpha: 30,
+        beta: 160,
         autoRotate: true,
-        autoRotateSpeed: 4.0,       // 优雅流畅旋转
+        autoRotateSpeed: 4.5,
         autoRotateAfterStill: 2.0,
-        rotateSensitivity: [1, 1],  // 原生支持自由拖拽旋转
-        zoomSensitivity: 1.0,       // 原生支持自如手势缩放
+        rotateSensitivity: [1, 1],
+        zoomSensitivity: 1.0,
         panSensitivity: 0,
-        distance: 220,
+        distance: 240,
         minDistance: 90,
         maxDistance: 400,
-        alpha: 28,
-        beta: 160,
         targetCoord: CHINA_CENTER,
       },
       postEffect: {
@@ -1256,12 +1256,33 @@ function initGlobe() {
       ...magneticSeries,
       flightSeries,
       {
-        id: 'continentScatter',
+        name: '地点标题',
         type: 'scatter3D',
         coordinateSystem: 'globe',
         blendMode: 'lighter',
-        symbolSize: 6,
-        data: continentData,
+        showEffectOn: 'render',
+        zlevel: 2,
+        symbolSize: 14,
+        rippleEffect: {
+          period: 3,
+          scale: 4,
+          brushType: 'fill'
+        },
+        label: {
+          show: true,
+          position: 'right',
+          formatter: p => p.data.name,
+          textStyle: {
+            fontSize: 14,
+            color: '#F5D909', // 亮黄色地标标识 (原版经典)
+            fontWeight: 'bold',
+            backgroundColor: 'transparent'
+          }
+        },
+        itemStyle: {
+          color: 'rgb(29, 183, 255)'
+        },
+        data: MU_NODES,
       },
       {
         type: 'scatter3D',
@@ -1297,7 +1318,7 @@ function initGlobe() {
   globeChart.setOption(option, true);
   updateUIForGlobe();
 
-  // 挂载 MuGuiLin 动态背光轮廓图层
+  // 挂载动态呼吸背光轮廓层
   setupMuGuiLinContourBackLight(cChart => {
     if (cChart && globeChart) {
       globeChart.setOption({
@@ -1306,7 +1327,7 @@ function initGlobe() {
             type: 'blend',
             blendTo: 'emission',
             texture: cChart,
-            intensity: 3.2
+            intensity: 4.0
           }]
         }
       });
@@ -1315,7 +1336,7 @@ function initGlobe() {
 }
 
 // ============================================================================
-// 3D 地球手势系统 (纯粹自由观赏/旋转/缩放，点击地球不触发页面跳转)
+// 3D 地球手势系统 (纯粹自由观赏/旋转/缩放，点击地球不触发切页)
 // ============================================================================
 let touchTracker = {
   startX: 0,
@@ -1358,7 +1379,7 @@ function setupGlobeInteractions() {
       return;
     }
     const elapsed = Date.now() - touchTracker.startTime;
-    // 短促点击仅生成视觉涟漪，不触发切页
+    // 短触只生成触点光圈波纹，绝不跳转页面
     if (!touchTracker.isMoved && elapsed < 280) {
       const touch = e.changedTouches[0];
       spawnRipple(touch.clientX, touch.clientY);
@@ -1449,8 +1470,8 @@ async function exitToGlobeMode() {
   globeChart.setOption({
     globe: {
       viewControl: {
-        distance: 220,
-        alpha: 28,
+        distance: 240,
+        alpha: 30,
         autoRotate: true,
         animation: true,
         animationDurationUpdate: 900,
@@ -2105,7 +2126,7 @@ function initOrUpdateAmap(centerLng, centerLat, spots) {
     amapInstance = new AMap.Map('amapDetailContainer', {
       zoom: 16,
       center: [centerLng, centerLat],
-      mapStyle: 'amap://styles/dark', // 暗夜底图，1.4.x 原生支持
+      mapStyle: 'amap://styles/dark',
       showLabel: true,
     });
 
