@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- 高德地图底图 -->
+    <com.amap.api.maps.MapView
+        android:id="@+id/lp_map_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 中心固定图钉：视觉上钉在屏幕中央，地图在其下移动 -->
+    <TextView
+        android:id="@+id/lp_pin_icon"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:layout_marginBottom="28dp"
+        android:text="📍"
+        android:textSize="40sp"
+        android:elevation="8dp" />
+
+    <!-- 顶部操作栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/lp_btn_cancel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="#CC0A0E17"
+                android:padding="10dp"
+                android:text="✕ 取消"
+                android:textColor="#00FFC6"
+                android:textSize="15sp" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:background="#CC0A0E17"
+                android:padding="10dp"
+                android:text="拖动地图调整位置"
+                android:textColor="#AACFE8"
+                android:textSize="13sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 底部信息卡片 + 确认按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="#EE0A0E17"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:id="@+id/lp_tv_address"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="正在解析位置…"
+                android:textColor="#FFFFFF"
+                android:textSize="17sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/lp_tv_coords"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="#505F76"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/lp_btn_confirm"
+            android:layout_width="match_parent"
+            android:layout_height="54dp"
+            android:layout_marginTop="12dp"
+            android:backgroundTint="#00FFC6"
+            android:text="确认校准"
+            android:textColor="#0A0E17"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+</FrameLayout>

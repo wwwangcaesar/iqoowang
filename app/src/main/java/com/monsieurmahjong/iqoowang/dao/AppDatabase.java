@@ -11,7 +11,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase;
 
 @Database(
         entities = {Expense.class},
-        version = 2,
+        version = 3,
         exportSchema = false // 严格对应原代码配置
 )
 public abstract class AppDatabase extends RoomDatabase {
@@ -22,10 +22,6 @@ public abstract class AppDatabase extends RoomDatabase {
 
     /**
      * v1 → v2：新增位置信息三列（摇一摇/NFC记账时自动定位用，见 Expense.java）。
-     * 三列都不加 NOT NULL：老账单没有定位数据，新账单如果定位失败也允许为空，
-     * SQLite 的 ADD COLUMN 不写 NOT NULL 时默认就是可空列，不需要额外给 DEFAULT 值。
-     * 没有配 fallbackToDestructiveMigration()，所以这一步是必须的——
-     * 版本号涨了但没给迁移路径，Room 会直接崩溃而不是静默清空数据库。
      */
     static final Migration MIGRATION_1_2 = new Migration(1, 2) {
         @Override
@@ -33,6 +29,19 @@ public abstract class AppDatabase extends RoomDatabase {
             database.execSQL("ALTER TABLE expense_table ADD COLUMN latitude REAL");
             database.execSQL("ALTER TABLE expense_table ADD COLUMN longitude REAL");
             database.execSQL("ALTER TABLE expense_table ADD COLUMN locationName TEXT");
+        }
+    };
+
+    /**
+     * v2 → v3：新增省、市、区县、行政区划代码四列（消费足迹地图精准下钻与归类用）。
+     */
+    static final Migration MIGRATION_2_3 = new Migration(2, 3) {
+        @Override
+        public void migrate(@NonNull SupportSQLiteDatabase database) {
+            database.execSQL("ALTER TABLE expense_table ADD COLUMN province TEXT");
+            database.execSQL("ALTER TABLE expense_table ADD COLUMN city TEXT");
+            database.execSQL("ALTER TABLE expense_table ADD COLUMN district TEXT");
+            database.execSQL("ALTER TABLE expense_table ADD COLUMN adCode TEXT");
         }
     };
 
@@ -46,7 +55,7 @@ public abstract class AppDatabase extends RoomDatabase {
                             context.getApplicationContext(),
                             AppDatabase.class,
                             "expense_db" // 严格对应原代码的数据库名称
-                    ).addMigrations(MIGRATION_1_2).build();
+                    ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build();
                 }
             }
         }

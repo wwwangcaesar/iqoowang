@@ -77,8 +77,16 @@ public interface ExpenseDao {
 
     /** 定位迟到时，把已经存好的那笔账单补一次位置信息，不需要把整个 Expense 对象重新读出来再 update。
      * 见 QuickLogActivity：记账流程本身很快，定位往往跟不上这个节奏，才需要这条事后补充的路径。 */
+    @Query("UPDATE expense_table SET latitude = :lat, longitude = :lon, locationName = :name, province = :province, city = :city, district = :district, adCode = :adCode WHERE id = :id")
+    void updateLocation(long id, double lat, double lon, String name, String province, String city, String district, String adCode);
+
+    /** 兼容只传基础位置信息的重载 */
     @Query("UPDATE expense_table SET latitude = :lat, longitude = :lon, locationName = :name WHERE id = :id")
     void updateLocation(long id, double lat, double lon, String name);
+
+    /** 获取所有带有效经纬度坐标的消费足迹记录（用于消费足迹地图） */
+    @Query("SELECT * FROM expense_table WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY timestamp DESC")
+    List<Expense> getExpensesWithLocationSync();
 
     @Delete
     void deleteExpense(Expense expense);

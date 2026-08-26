@@ -36,11 +36,24 @@ public class LocationHelper {
         public final double longitude;
         /** 可能为 null（定位成功但地址反查失败时） */
         public final String locationName;
+        public final String province;
+        public final String city;
+        public final String district;
+        public final String adCode;
 
         public LocationResult(double latitude, double longitude, String locationName) {
+            this(latitude, longitude, locationName, null, null, null, null);
+        }
+
+        public LocationResult(double latitude, double longitude, String locationName,
+                              String province, String city, String district, String adCode) {
             this.latitude = latitude;
             this.longitude = longitude;
             this.locationName = locationName;
+            this.province = province;
+            this.city = city;
+            this.district = district;
+            this.adCode = adCode;
         }
     }
 
@@ -107,7 +120,14 @@ public class LocationHelper {
                         "定位成功：类型=%d 精度半径≈%.0f米",
                         location.getLocationType(), location.getAccuracy()));
                 callback.onResult(new LocationResult(
-                        location.getLatitude(), location.getLongitude(), pickDisplayName(location)));
+                        location.getLatitude(),
+                        location.getLongitude(),
+                        pickDisplayName(location),
+                        location.getProvince(),
+                        location.getCity(),
+                        location.getDistrict(),
+                        location.getAdCode()
+                ));
             }
         });
         client.startLocation();

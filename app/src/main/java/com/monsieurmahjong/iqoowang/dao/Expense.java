@@ -34,6 +34,11 @@ public class Expense {
     private Double longitude;
     // 位置显示名称：默认取逆地理编码结果，支持用户在详情弹窗长按改名
     private String locationName;
+    // 行政区划层级信息，用于消费足迹地图按省市区精准归类和聚合下钻
+    private String province;
+    private String city;
+    private String district;
+    private String adCode;
 
     public String getRemark() { return remark; }
     public void setRemark(String remark) { this.remark = remark; }
@@ -44,6 +49,15 @@ public class Expense {
     public void setLongitude(Double longitude) { this.longitude = longitude; }
     public String getLocationName() { return locationName; }
     public void setLocationName(String locationName) { this.locationName = locationName; }
+
+    public String getProvince() { return province; }
+    public void setProvince(String province) { this.province = province; }
+    public String getCity() { return city; }
+    public void setCity(String city) { this.city = city; }
+    public String getDistrict() { return district; }
+    public void setDistrict(String district) { this.district = district; }
+    public String getAdCode() { return adCode; }
+    public void setAdCode(String adCode) { this.adCode = adCode; }
 
     public void setAmount(long amount) { this.amount = amount; }
     public void setCategoryName(String categoryName) { this.categoryName = categoryName; }

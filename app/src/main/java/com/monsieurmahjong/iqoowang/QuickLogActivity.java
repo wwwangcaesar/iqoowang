@@ -239,7 +239,8 @@ public class QuickLogActivity extends AppCompatActivity {
         long id = savedExpenseId;
         if (id > 0) {
             new Thread(() -> db.expenseDao().updateLocation(
-                    id, result.latitude, result.longitude, result.locationName)).start();
+                    id, result.latitude, result.longitude, result.locationName,
+                    result.province, result.city, result.district, result.adCode)).start();
         }
     }
 
@@ -475,6 +476,10 @@ public class QuickLogActivity extends AppCompatActivity {
                     expense.setLatitude(loc.latitude);
                     expense.setLongitude(loc.longitude);
                     expense.setLocationName(loc.locationName);
+                    expense.setProvince(loc.province);
+                    expense.setCity(loc.city);
+                    expense.setDistrict(loc.district);
+                    expense.setAdCode(loc.adCode);
                 }
 
                 long newId = db.expenseDao().insertExpense(expense);

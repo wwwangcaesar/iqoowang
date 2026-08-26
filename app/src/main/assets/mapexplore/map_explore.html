@@ -717,10 +717,10 @@
     <div id="amapDetailContainer"></div>
     <div id="amapBottomCard">
       <div class="amap-card-title">
-        <span id="amapSpotTitle">深圳湾科技生态园</span>
-        <span style="color:var(--accent-gold);font-weight:bold;" id="amapSpotPrice">¥ 328.00</span>
+        <span id="amapSpotTitle">消费足迹详情</span>
+        <span style="color:var(--accent-gold);font-weight:bold;" id="amapSpotPrice">¥ 0.00</span>
       </div>
-      <div class="amap-card-sub" id="amapSpotDesc">广东省深圳市南山区 · 2026-08-20 18:30</div>
+      <div class="amap-card-sub" id="amapSpotDesc">消费地点与详情</div>
       <div class="amap-card-actions">
         <div class="action-btn btn-secondary" onclick="triggerNativeAmapRoute()">🚗 原生路线规划</div>
         <div class="action-btn btn-primary" onclick="openExternalMapNav()">🧭 唤起高德导航</div>
@@ -755,22 +755,22 @@
     <div class="drawer-handle"></div>
     <div class="drawer-header">
       <div class="drawer-title-box">
-        <span class="drawer-title" id="drawerDistrictTitle">南山区</span>
-        <span class="drawer-code-tag" id="drawerDistrictCode">440305</span>
+        <span class="drawer-title" id="drawerDistrictTitle">当前区域</span>
+        <span class="drawer-code-tag" id="drawerDistrictCode">—</span>
       </div>
       <div class="drawer-close" onclick="closeDistrictDrawer()">✕</div>
     </div>
     <div class="drawer-stats">
       <div class="stat-card">
-        <div class="stat-val" id="statTotalSpent">¥ 484.50</div>
+        <div class="stat-val" id="statTotalSpent">¥ 0.00</div>
         <div class="stat-label">消费总额</div>
       </div>
       <div class="stat-card">
-        <div class="stat-val" id="statSpotCount">2 处</div>
+        <div class="stat-val" id="statSpotCount">0 处</div>
         <div class="stat-label">足迹坐标</div>
       </div>
       <div class="stat-card">
-        <div class="stat-val" id="statFreq">高频</div>
+        <div class="stat-val" id="statFreq">—</div>
         <div class="stat-label">热度评级</div>
       </div>
     </div>
@@ -796,47 +796,232 @@ const STARFIELD_TEXTURE = 'https://cdn.jsdelivr.net/gh/ecomfe/echarts-gl/test/as
 const CHINA_CENTER = [104.0, 35.0];
 
 // ============================================================================
-// 模拟足迹数据与暗黑科技色盘
+// 本地真实消费足迹数据管理
 // ============================================================================
-const DEMO_PROVINCES = [
-  { name: '广东省', adcode: 440000, percent: 34, count: 18, theme: '#00FFC6' },
-  { name: '浙江省', adcode: 330000, percent: 22, count: 12, theme: '#38BDF8' },
-  { name: '江苏省', adcode: 320000, percent: 16, count: 8,  theme: '#818CF8' },
-  { name: '四川省', adcode: 510000, percent: 12, count: 6,  theme: '#C084FC' },
-  { name: '北京市', adcode: 110000, percent: 8,  count: 5,  theme: '#F472B6' },
-  { name: '上海市', adcode: 310000, percent: 5,  count: 4,  theme: '#FBBF24' },
-  { name: '福建省', adcode: 350000, percent: 3,  count: 2,  theme: '#34D399' },
-];
+let REAL_POINTS_ALL = [];
+let POINTS_BY_PROVINCE = {};
+let PROVINCE_STATS = {};
 
-const DEMO_POINTS = {
-  '广东省': [
-    { name: '深圳湾科技生态园', city: '深圳市', cityAdcode: 440300, district: '南山区', districtAdcode: 440305, lng: 113.9488, lat: 22.5288, amount: '¥ 328.00', cat: '数码/餐饮', time: '2026-08-20 18:30' },
-    { name: '福田星河 COCO Park', city: '深圳市', cityAdcode: 440300, district: '福田区', districtAdcode: 440304, lng: 114.0538, lat: 22.5325, amount: '¥ 156.50', cat: '休闲/购物', time: '2026-08-18 14:15' },
-    { name: '广州塔·海心沙',       city: '广州市', cityAdcode: 440100, district: '天河区', districtAdcode: 440106, lng: 113.3245, lat: 23.1066, amount: '¥ 420.00', cat: '文旅/观光', time: '2026-08-12 20:00' },
-    { name: '珠海长隆海洋王国',   city: '珠海市', cityAdcode: 440400, district: '香洲区', districtAdcode: 440402, lng: 113.5767, lat: 22.1155, amount: '¥ 688.00', cat: '度假/娱乐', time: '2026-08-05 11:20' },
-  ],
-  '浙江省': [
-    { name: '西湖断桥残雪',       city: '杭州市', cityAdcode: 330100, district: '西湖区', districtAdcode: 330106, lng: 120.1551, lat: 30.2589, amount: '¥ 88.00',  cat: '休闲/文旅', time: '2026-07-28 09:40' },
-    { name: '乌镇西栅景区',       city: '嘉兴市', cityAdcode: 330400, district: '桐乡市', districtAdcode: 330483, lng: 120.4970, lat: 30.7469, amount: '¥ 260.00', cat: '古镇/民宿', time: '2026-07-25 19:10' },
-  ],
-  '北京市': [
-    { name: '三里屯太古里',       city: '北京市', cityAdcode: 110100, district: '朝阳区', districtAdcode: 110105, lng: 116.4551, lat: 39.9368, amount: '¥ 540.00', cat: '时尚/餐饮', time: '2026-07-15 16:50' },
-    { name: '王府井百货大楼',     city: '北京市', cityAdcode: 110100, district: '东城区', districtAdcode: 110101, lng: 116.4111, lat: 39.9142, amount: '¥ 192.00', cat: '老字号特产', time: '2026-07-14 11:30' },
-  ],
-  '四川省': [
-    { name: '成都远洋太古里',     city: '成都市', cityAdcode: 510100, district: '锦江区', districtAdcode: 510104, lng: 104.0818, lat: 30.6558, amount: '¥ 310.00', cat: '川味火锅', time: '2026-06-30 20:20' },
-  ],
-  '江苏省': [
-    { name: '南京新街口金鹰',     city: '南京市', cityAdcode: 320100, district: '秦淮区', districtAdcode: 320104, lng: 118.7842, lat: 32.0416, amount: '¥ 245.00', cat: '数码/生活', time: '2026-06-18 15:40' },
-    { name: '苏州金鸡湖东方之门', city: '苏州市', cityAdcode: 320500, district: '吴中区', districtAdcode: 320506, lng: 120.6782, lat: 31.3188, amount: '¥ 430.00', cat: '湖景餐饮', time: '2026-06-12 18:50' },
-  ],
-  '上海市': [
-    { name: '陆家嘴国金中心 IFC', city: '上海市', cityAdcode: 310100, district: '浦东新区', districtAdcode: 310115, lng: 121.5034, lat: 31.2386, amount: '¥ 620.00', cat: '轻奢/美馔', time: '2026-05-22 13:10' },
-  ],
-  '福建省': [
-    { name: '厦门鼓浪屿龙头路',   city: '厦门市', cityAdcode: 350200, district: '思明区', districtAdcode: 350203, lng: 118.0673, lat: 24.4449, amount: '¥ 185.00', cat: '海鲜小吃', time: '2026-05-02 17:30' },
-  ]
-};
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** 射线法判断点是否在多边形环内 */
+function isPointInRing(pt, ring) {
+  const x = pt[0], y = pt[1];
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0], yi = ring[i][1];
+    const xj = ring[j][0], yj = ring[j][1];
+    const intersect = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/** 判断经纬度是否落入 GeoJSON Feature 几何多边形内部 */
+function isPointInFeature(lng, lat, feature) {
+  if (!feature || !feature.geometry) return false;
+  const geom = feature.geometry;
+  const pt = [lng, lat];
+  if (geom.type === 'Polygon') {
+    if (geom.coordinates && geom.coordinates.length > 0) {
+      return isPointInRing(pt, geom.coordinates[0]);
+    }
+  } else if (geom.type === 'MultiPolygon') {
+    if (geom.coordinates) {
+      for (let i = 0; i < geom.coordinates.length; i++) {
+        const poly = geom.coordinates[i];
+        if (poly && poly.length > 0 && isPointInRing(pt, poly[0])) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/** 重新聚合统计各省份消费数据 */
+function rebuildStats() {
+  POINTS_BY_PROVINCE = {};
+  PROVINCE_STATS = {};
+
+  let totalSpendingAllCents = 0;
+  const provAmountMap = {};
+  const provCountMap = {};
+
+  REAL_POINTS_ALL.forEach(point => {
+    const provKey = point.province || '其他地区';
+    if (!POINTS_BY_PROVINCE[provKey]) {
+      POINTS_BY_PROVINCE[provKey] = [];
+    }
+    POINTS_BY_PROVINCE[provKey].push(point);
+
+    totalSpendingAllCents += (point.amountCents || 0);
+    provAmountMap[provKey] = (provAmountMap[provKey] || 0) + (point.amountCents || 0);
+    provCountMap[provKey] = (provCountMap[provKey] || 0) + 1;
+  });
+
+  const provKeys = Object.keys(provAmountMap);
+  provKeys.forEach((pName, idx) => {
+    const provSpent = provAmountMap[pName];
+    const count = provCountMap[pName];
+    const percent = totalSpendingAllCents > 0 ? Math.max(1, Math.round((provSpent / totalSpendingAllCents) * 100)) : 0;
+    const theme = PALETTE_BORDER[idx % PALETTE_BORDER.length];
+    PROVINCE_STATS[pName] = {
+      name: pName,
+      count,
+      percent,
+      totalAmount: provSpent / 100,
+      totalAmountFormatted: '¥ ' + (provSpent / 100).toFixed(2),
+      theme,
+    };
+  });
+}
+
+function findProvinceStat(name) {
+  if (!name) return null;
+  if (PROVINCE_STATS[name]) return PROVINCE_STATS[name];
+  const cleanName = name.replace(/(省|市|自治区|维吾尔自治区|壮族自治区|回族自治区|特别行政区)$/, '');
+  const matchedKey = Object.keys(PROVINCE_STATS).find(k => {
+    const kClean = k.replace(/(省|市|自治区|特别行政区)$/, '');
+    return kClean.includes(cleanName) || cleanName.includes(kClean);
+  });
+  return matchedKey ? PROVINCE_STATS[matchedKey] : null;
+}
+
+/** 从 Android MapBridge 获取本地数据库中存储的真实消费与定位数据 */
+function loadRealExpenseData() {
+  REAL_POINTS_ALL = [];
+
+  let rawJson = null;
+  if (window.MapBridge && typeof window.MapBridge.getExpenseLocationData === 'function') {
+    try {
+      rawJson = window.MapBridge.getExpenseLocationData();
+    } catch (e) {
+      console.error('Error calling MapBridge.getExpenseLocationData:', e);
+    }
+  }
+
+  let rawList = [];
+  if (rawJson) {
+    try {
+      rawList = JSON.parse(rawJson);
+    } catch (e) {
+      console.error('Failed to parse real expense json:', e);
+    }
+  }
+
+  if (!Array.isArray(rawList) || rawList.length === 0) {
+    console.log('未检测到本地已记录的消费足迹数据');
+    rebuildStats();
+    return;
+  }
+
+  rawList.forEach(item => {
+    const lat = parseFloat(item.lat);
+    const lng = parseFloat(item.lng);
+    if (isNaN(lat) || isNaN(lng)) return;
+
+    const amountCents = typeof item.amount === 'number' ? item.amount : 0;
+    const amountFormatted = item.amountFormatted || ('¥ ' + (amountCents / 100).toFixed(2));
+    const cat = item.categoryName || '日常消费';
+    const name = item.name || '未命名地点';
+    const time = item.timeFormatted || item.dateStr || '';
+    const province = (item.province || '').trim();
+    const city = (item.city || '').trim();
+    const district = (item.district || '').trim();
+    const adCode = (item.adCode || '').trim();
+
+    let cityAdcode = null;
+    let districtAdcode = null;
+    let provinceAdcode = null;
+    if (adCode && /^\d{6}$/.test(adCode)) {
+      districtAdcode = parseInt(adCode, 10);
+      cityAdcode = parseInt(adCode.substring(0, 4) + '00', 10);
+      provinceAdcode = parseInt(adCode.substring(0, 2) + '0000', 10);
+    }
+
+    const point = {
+      id: item.id,
+      name,
+      amount: amountFormatted,
+      amountCents,
+      rawAmount: amountCents / 100,
+      cat,
+      time,
+      lat,
+      lng,
+      province,
+      city,
+      district,
+      adCode,
+      cityAdcode,
+      districtAdcode,
+      provinceAdcode,
+    };
+
+    REAL_POINTS_ALL.push(point);
+  });
+
+  rebuildStats();
+}
+
+function getPointsForProvince(provName, provAdcode) {
+  if (!provName && !provAdcode) return [];
+  const cleanName = provName ? provName.replace(/(省|市|自治区|维吾尔自治区|壮族自治区|回族自治区|特别行政区)$/, '') : '';
+  return REAL_POINTS_ALL.filter(pt => {
+    if (provAdcode && pt.provinceAdcode && (pt.provinceAdcode === provAdcode || Math.floor(pt.provinceAdcode / 10000) === Math.floor(provAdcode / 10000))) {
+      return true;
+    }
+    if (pt.province) {
+      if (pt.province === provName) return true;
+      const pClean = pt.province.replace(/(省|市|自治区|特别行政区)$/, '');
+      if (cleanName && (pClean.includes(cleanName) || cleanName.includes(pClean))) return true;
+    }
+    return false;
+  });
+}
+
+function getPointsForCity(cityName, cityAdcode) {
+  const provPoints = getPointsForProvince(state.provinceName, state.provinceAdcode);
+  if (!cityName && !cityAdcode) return provPoints;
+  const cleanCity = cityName ? cityName.replace(/(市|地区|自治州|盟)$/, '') : '';
+  return provPoints.filter(pt => {
+    if (cityAdcode && pt.cityAdcode && (pt.cityAdcode === cityAdcode || Math.floor(pt.cityAdcode / 100) === Math.floor(cityAdcode / 100))) {
+      return true;
+    }
+    if (pt.city) {
+      if (pt.city === cityName) return true;
+      const pClean = pt.city.replace(/(市|地区|自治州|盟)$/, '');
+      if (cleanCity && (pClean.includes(cleanCity) || cleanCity.includes(pClean))) return true;
+    }
+    return false;
+  });
+}
+
+function getPointsForDistrict(districtName, districtAdcode) {
+  const cityPoints = getPointsForCity(state.cityName, state.cityAdcode);
+  if (!districtName && !districtAdcode) return cityPoints;
+  const cleanDist = districtName ? districtName.replace(/(区|县|市|旗)$/, '') : '';
+  return cityPoints.filter(pt => {
+    if (districtAdcode && pt.districtAdcode && pt.districtAdcode === districtAdcode) {
+      return true;
+    }
+    if (pt.district) {
+      if (pt.district === districtName) return true;
+      const pClean = pt.district.replace(/(区|县|市|旗)$/, '');
+      if (cleanDist && (pClean.includes(cleanDist) || cleanDist.includes(pClean))) return true;
+    }
+    return false;
+  });
+}
 
 // 2D 地图高对比度宝石色盘
 const PALETTE_AREA = [
@@ -975,19 +1160,37 @@ async function withVeil(callback) {
 
 async function fetchGeo(adcode) {
   if (geoCache[adcode]) return geoCache[adcode];
-  const url = `${DATAV_BASE}${adcode}_full.json`;
-  const resp = await fetch(url);
-  if (!resp.ok) {
+  try {
+    const url = `${DATAV_BASE}${adcode}_full.json`;
+    const resp = await fetch(url);
+    if (resp.ok) {
+      const json = await resp.json();
+      geoCache[adcode] = json;
+      return json;
+    }
+  } catch (e) {}
+
+  try {
     const fallbackUrl = `${DATAV_BASE}${adcode}.json`;
     const fallbackResp = await fetch(fallbackUrl);
-    if (!fallbackResp.ok) throw new Error(`地图数据获取失败: ${adcode}`);
-    const json = await fallbackResp.json();
-    geoCache[adcode] = json;
-    return json;
-  }
-  const json = await resp.json();
-  geoCache[adcode] = json;
-  return json;
+    if (fallbackResp.ok) {
+      const json = await fallbackResp.json();
+      geoCache[adcode] = json;
+      return json;
+    }
+  } catch (e) {}
+
+  try {
+    const localUrl = (adcode === 100000) ? 'china_100000_full.json' : `geo_${adcode}.json`;
+    const localResp = await fetch(localUrl);
+    if (localResp.ok) {
+      const json = await localResp.json();
+      geoCache[adcode] = json;
+      return json;
+    }
+  } catch (e) {}
+
+  throw new Error(`地图数据获取失败: ${adcode}`);
 }
 
 // ============================================================================
@@ -1453,35 +1656,78 @@ async function renderCountryMap() {
   state.districtAdcode = null;
 
   initMapChart();
+  if (mapChart) {
+    mapChart.clear();
+  }
   updateUIForMap();
 
   try {
     const chinaGeo = await fetchGeo(100000);
     echarts.registerMap('china_map', chinaGeo);
 
-    const percentMap = {};
-    DEMO_PROVINCES.forEach(p => percentMap[p.name] = p);
+    loadRealExpenseData();
+
+    // 自动用中国地图 GeoJSON 多边形识别无省份标记的消费点归属省份
+    REAL_POINTS_ALL.forEach(pt => {
+      if (!pt.province || pt.province === '其他地区') {
+        for (const f of chinaGeo.features) {
+          if (isPointInFeature(pt.lng, pt.lat, f)) {
+            pt.province = f.properties.name;
+            pt.provinceAdcode = f.properties.adcode;
+            break;
+          }
+        }
+      }
+    });
+
+    rebuildStats();
 
     const provinceData = chinaGeo.features.map((f, i) => {
       const name = f.properties.name;
-      const demo = percentMap[name];
+      const cleanName = name.replace(/(省|市|自治区|维吾尔自治区|壮族自治区|回族自治区|特别行政区)$/, '');
+      let stat = PROVINCE_STATS[name];
+      if (!stat) {
+        const matchedKey = Object.keys(PROVINCE_STATS).find(k => {
+          const kClean = k.replace(/(省|市|自治区|特别行政区)$/, '');
+          return kClean.includes(cleanName) || cleanName.includes(kClean);
+        });
+        if (matchedKey) stat = PROVINCE_STATS[matchedKey];
+      }
+
       return {
         name,
         adcode: f.properties.adcode,
-        value: demo ? demo.percent : 0,
-        count: demo ? demo.count : 0,
+        value: stat ? stat.percent : 0,
+        count: stat ? stat.count : 0,
+        totalAmountFormatted: stat ? stat.totalAmountFormatted : '¥ 0.00',
         center: f.properties.center || f.properties.centroid,
         itemStyle: {
-          areaColor: demo ? PALETTE_AREA[i % PALETTE_AREA.length] : 'rgba(15, 23, 42, 0.75)',
-          borderColor: demo ? PALETTE_BORDER[i % PALETTE_BORDER.length] : 'rgba(71, 85, 105, 0.4)',
-          borderWidth: demo ? 1.4 : 0.8,
+          areaColor: stat ? PALETTE_AREA[i % PALETTE_AREA.length] : 'rgba(15, 23, 42, 0.75)',
+          borderColor: stat ? (stat.theme || PALETTE_BORDER[i % PALETTE_BORDER.length]) : 'rgba(71, 85, 105, 0.4)',
+          borderWidth: stat ? 1.4 : 0.8,
         },
       };
     });
 
-    const allPoints = [];
-    Object.keys(DEMO_POINTS).forEach(prov => {
-      DEMO_POINTS[prov].forEach(pt => allPoints.push(pt));
+    // 全国视图下的光标：以省份为单位聚合展示（定位信息显示省份，金额显示当前省份总消费金额，不展示分类与时间）
+    const countryProvincePoints = [];
+    chinaGeo.features.forEach(f => {
+      const pName = f.properties.name;
+      const stat = PROVINCE_STATS[pName] || findProvinceStat(pName);
+      if (stat && stat.count > 0) {
+        const center = f.properties.center || f.properties.centroid;
+        if (center) {
+          countryProvincePoints.push({
+            name: pName,
+            adcode: f.properties.adcode,
+            value: [center[0], center[1]],
+            amount: stat.totalAmountFormatted,
+            count: stat.count,
+            percent: stat.percent,
+            center: center,
+          });
+        }
+      }
     });
 
     mapChart.setOption({
@@ -1495,12 +1741,12 @@ async function renderCountryMap() {
         textStyle: { color: '#FFF', fontSize: 12 },
         formatter: params => {
           if (params.seriesType === 'effectScatter') {
-            return `📍 <b>${params.data.name}</b><br/>金额: <span style="color:#FBBF24;font-weight:bold;">${params.data.amount}</span><br/>分类: ${params.data.cat || '消费'}`;
+            return `📍 <b>${params.data.name}</b><br/>金额: <span style="color:#FBBF24;font-weight:bold;">${params.data.amount}</span>`;
           }
-          if (params.data && params.data.value) {
-            return `🇨🇳 <b>${params.name}</b><br/>消费占比: <b style="color:#00FFC6;">${params.data.value}%</b><br/>足迹记录: ${params.data.count} 处<br/><span style="font-size:11px;color:#94A3B8;">点击进入该省</span>`;
+          if (params.data && params.data.count > 0) {
+            return `🇨🇳 <b>${params.name}</b><br/>消费占比: <b style="color:#00FFC6;">${params.data.value}%</b><br/>总消费: <b style="color:#FBBF24;">${params.data.totalAmountFormatted}</b><br/>足迹记录: ${params.data.count} 处<br/><span style="font-size:11px;color:#94A3B8;">点击进入该省</span>`;
           }
-          return `<b>${params.name}</b><br/><span style="color:#64748B;">暂无记录（点击可查看）</span>`;
+          return `<b>${params.name}</b><br/><span style="color:#64748B;">暂无足迹记录（点击可查看）</span>`;
         },
       },
       geo: {
@@ -1546,27 +1792,24 @@ async function renderCountryMap() {
           data: provinceData,
         },
         {
-          name: '足迹热点',
+          name: '足迹省份',
           type: 'effectScatter',
           coordinateSystem: 'geo',
-          symbolSize: 11,
+          symbolSize: 15,
           rippleEffect: {
             brushType: 'stroke',
-            scale: 3.8,
-            period: 3,
+            scale: 4.2,
+            period: 2.8,
           },
           itemStyle: {
             color: '#00FFC6',
-            shadowBlur: 14,
+            shadowBlur: 16,
             shadowColor: '#00FFC6',
           },
-          data: allPoints.map(pt => ({
-            name: pt.name,
-            value: [pt.lng, pt.lat],
-            amount: pt.amount,
-            cat: pt.cat,
-            time: pt.time,
-          })),
+          label: {
+            show: false,
+          },
+          data: countryProvincePoints,
         },
       ],
       animationDurationUpdate: 500,
@@ -1598,9 +1841,25 @@ async function drillIntoProvince(name, adcode, center) {
     state.cityAdcode = null;
     state.districtName = null;
     state.districtAdcode = null;
+
+    if (mapChart) {
+      mapChart.clear();
+    }
     updateUIForMap();
 
-    const points = DEMO_POINTS[name] || [];
+    const points = getPointsForProvince(name, adcode);
+
+    // 用当前省份下各城市的 GeoJSON 多边形，自动识别各消费点所属城市
+    points.forEach(pt => {
+      for (const f of geoJson.features) {
+        if (isPointInFeature(pt.lng, pt.lat, f)) {
+          pt.city = f.properties.name;
+          pt.cityAdcode = f.properties.adcode;
+          break;
+        }
+      }
+    });
+
     const cityData = geoJson.features.map((f, i) => ({
       name: f.properties.name,
       adcode: f.properties.adcode,
@@ -1621,7 +1880,7 @@ async function drillIntoProvince(name, adcode, center) {
         textStyle: { color: '#FFF', fontSize: 12 },
         formatter: params => {
           if (params.seriesType === 'effectScatter') {
-            return `📍 <b>${params.data.name}</b><br/>金额: <span style="color:#FBBF24;font-weight:bold;">${params.data.amount}</span><br/>分类: ${params.data.cat || '消费'}`;
+            return `📍 <b>${params.data.name}</b><br/>金额: <span style="color:#FBBF24;font-weight:bold;">${params.data.amount}</span><br/>分类: ${params.data.cat || '日常消费'}<br/><span style="color:#94A3B8;font-size:11px;">时间: ${params.data.time || ''}</span>`;
           }
           return `🏙️ <b>${params.name}</b><br/><span style="color:#94A3B8;">点击进一步下钻到城市</span>`;
         },
@@ -1630,6 +1889,7 @@ async function drillIntoProvince(name, adcode, center) {
         map: 'province_' + adcode,
         roam: true,
         zoom: 1.1,
+        center: center || undefined,
         label: {
           show: true,
           color: '#FFFFFF',
@@ -1668,6 +1928,7 @@ async function drillIntoProvince(name, adcode, center) {
           data: cityData,
         },
         {
+          name: '消费足迹',
           type: 'effectScatter',
           coordinateSystem: 'geo',
           symbolSize: 13,
@@ -1682,7 +1943,7 @@ async function drillIntoProvince(name, adcode, center) {
             shadowColor: '#00FFC6',
           },
           label: {
-            show: true,
+            show: false, // 省级视图名称较长，默认不展示文字标签，悬浮或点击气泡查看
             position: 'top',
             formatter: p => p.data.name,
             color: '#FFF',
@@ -1692,11 +1953,16 @@ async function drillIntoProvince(name, adcode, center) {
             textBorderWidth: 2.5,
           },
           data: points.map(pt => ({
+            id: pt.id,
             name: pt.name,
             value: [pt.lng, pt.lat],
             amount: pt.amount,
             cat: pt.cat,
             time: pt.time,
+            city: pt.city,
+            district: pt.district,
+            province: pt.province,
+            rawData: pt,
           })),
         },
       ],
@@ -1727,10 +1993,24 @@ async function drillIntoCity(cityName, cityAdcode, center) {
     state.cityAdcode = cityAdcode;
     state.districtName = null;
     state.districtAdcode = null;
+
+    if (mapChart) {
+      mapChart.clear();
+    }
     updateUIForMap();
 
-    const provPoints = DEMO_POINTS[state.provinceName] || [];
-    const cityPoints = provPoints.filter(p => p.city === cityName || p.cityAdcode === cityAdcode);
+    const cityPoints = getPointsForCity(cityName, cityAdcode);
+
+    // 用当前城市下各区县的 GeoJSON 多边形，自动识别各消费点所属区县
+    cityPoints.forEach(pt => {
+      for (const f of geoJson.features) {
+        if (isPointInFeature(pt.lng, pt.lat, f)) {
+          pt.district = f.properties.name;
+          pt.districtAdcode = f.properties.adcode;
+          break;
+        }
+      }
+    });
 
     const districtData = geoJson.features.map((f, i) => ({
       name: f.properties.name,
@@ -1752,7 +2032,7 @@ async function drillIntoCity(cityName, cityAdcode, center) {
         textStyle: { color: '#FFF', fontSize: 12 },
         formatter: params => {
           if (params.seriesType === 'effectScatter') {
-            return `📍 <b>${params.data.name}</b><br/>金额: <span style="color:#FBBF24;font-weight:bold;">${params.data.amount}</span>`;
+            return `📍 <b>${params.data.name}</b><br/>金额: <span style="color:#FBBF24;font-weight:bold;">${params.data.amount}</span><br/>分类: ${params.data.cat || '日常消费'}<br/><span style="color:#94A3B8;font-size:11px;">时间: ${params.data.time || ''}</span>`;
           }
           return `🏘️ <b>${params.name}</b><br/><span style="color:#94A3B8;">点击下钻到区县，查看详细地理位置</span>`;
         },
@@ -1761,6 +2041,7 @@ async function drillIntoCity(cityName, cityAdcode, center) {
         map: 'city_' + cityAdcode,
         roam: true,
         zoom: 1.15,
+        center: center || undefined,
         label: {
           show: true,
           color: '#FFFFFF',
@@ -1799,6 +2080,7 @@ async function drillIntoCity(cityName, cityAdcode, center) {
           data: districtData,
         },
         {
+          name: '消费足迹',
           type: 'effectScatter',
           coordinateSystem: 'geo',
           symbolSize: 14,
@@ -1813,7 +2095,7 @@ async function drillIntoCity(cityName, cityAdcode, center) {
             shadowColor: '#00FFC6',
           },
           label: {
-            show: true,
+            show: false, // 默认不显示文字，放大后自动显示
             position: 'top',
             formatter: p => p.data.name,
             color: '#FFF',
@@ -1823,11 +2105,16 @@ async function drillIntoCity(cityName, cityAdcode, center) {
             textBorderWidth: 2.5,
           },
           data: cityPoints.map(pt => ({
+            id: pt.id,
             name: pt.name,
             value: [pt.lng, pt.lat],
             amount: pt.amount,
             cat: pt.cat,
             time: pt.time,
+            city: pt.city,
+            district: pt.district,
+            province: pt.province,
+            rawData: pt,
           })),
         },
       ],
@@ -1850,25 +2137,42 @@ async function drillIntoDistrict(districtName, districtAdcode, center) {
   state.districtAdcode = districtAdcode;
   updateUIForMap();
 
-  const provPoints = DEMO_POINTS[state.provinceName] || [];
-  const districtPoints = provPoints.filter(p => p.district === districtName || p.districtAdcode === districtAdcode);
-
-  showToast(`${districtName}（已定位 ${districtPoints.length} 处消费）`);
+  const districtPoints = getPointsForDistrict(districtName, districtAdcode);
 
   if (districtPoints.length > 0) {
+    showToast(`${districtName}（已定位 ${districtPoints.length} 处消费）`);
     mapChart.dispatchAction({
       type: 'geoRoam',
       componentType: 'geo',
       zoom: 3.2,
       center: [districtPoints[0].lng, districtPoints[0].lat],
     });
-  } else if (center) {
-    mapChart.dispatchAction({
-      type: 'geoRoam',
-      componentType: 'geo',
-      zoom: 3.2,
-      center: center,
+    // 放大到区县后显示具体位置名称
+    mapChart.setOption({
+      series: [{}, {
+        name: '消费足迹',
+        label: {
+          show: true,
+          position: 'top',
+          formatter: p => p.data.name,
+          color: '#FFF',
+          fontSize: 11,
+          distance: 8,
+          textBorderColor: '#000000',
+          textBorderWidth: 2.5,
+        }
+      }]
     });
+  } else {
+    showToast(`${districtName}（暂无消费记录）`);
+    if (center) {
+      mapChart.dispatchAction({
+        type: 'geoRoam',
+        componentType: 'geo',
+        zoom: 2.2,
+        center: center,
+      });
+    }
   }
 
   openDistrictDrawer(districtName, districtAdcode, districtPoints);
@@ -1878,39 +2182,48 @@ async function drillIntoDistrict(districtName, districtAdcode, center) {
 function openDistrictDrawer(dName, dCode, points) {
   const name = dName || state.districtName || '当前区域';
   const code = dCode || state.districtAdcode || '—';
-  const provPoints = DEMO_POINTS[state.provinceName] || [];
-  const spotList = points || provPoints.filter(p => p.district === name || p.districtAdcode === code);
+  const spotList = points || getPointsForDistrict(name, code);
 
   drawerDistrictTitleEl.textContent = name;
   drawerDistrictCodeEl.textContent = code;
 
   let total = 0;
   spotList.forEach(s => {
-    const val = parseFloat((s.amount || '0').replace(/[^0-9.]/g, ''));
-    if (!isNaN(val)) total += val;
+    if (typeof s.rawAmount === 'number') {
+      total += s.rawAmount;
+    } else {
+      const val = parseFloat((s.amount || '0').replace(/[^0-9.]/g, ''));
+      if (!isNaN(val)) total += val;
+    }
   });
   statTotalSpentEl.textContent = '¥ ' + total.toFixed(2);
   statSpotCountEl.textContent = spotList.length + ' 处';
 
-  if (spotList.length === 0) {
-    drawerSpotListEl.innerHTML = `
-      <div style="text-align:center;color:#64748B;font-size:12px;padding:16px 0;">
-        该区县暂无预设消费记录，点击下方“放大聚焦”可打开高德街区图层探索
-      </div>
-    `;
-  } else {
-    drawerSpotListEl.innerHTML = spotList.map((pt) => `
-      <div class="spot-item" onclick="openAmapDetailForSpot('${pt.name}', ${pt.lng}, ${pt.lat}, '${pt.amount}', '${pt.cat}', '${pt.time}')">
-        <div>
-          <div class="spot-name">📍 ${pt.name}</div>
-          <div class="spot-desc">${pt.cat || '消费'} · ${pt.time || '近期'}</div>
-        </div>
-        <div class="spot-price">${pt.amount}</div>
-      </div>
-    `).join('');
+  const statFreqEl = document.getElementById('statFreq');
+  if (statFreqEl) {
+    statFreqEl.textContent = spotList.length >= 5 ? '高频' : (spotList.length >= 2 ? '中频' : (spotList.length >= 1 ? '初访' : '未探索'));
   }
 
-  state.selectedSpot = spotList.length > 0 ? spotList[0] : null;
+  if (spotList.length === 0) {
+    drawerSpotListEl.innerHTML = `
+      <div style="text-align:center;color:#64748B;font-size:12px;padding:24px 0;">
+        该区县暂无消费足迹记录
+      </div>
+    `;
+    state.selectedSpot = null;
+  } else {
+    drawerSpotListEl.innerHTML = spotList.map((pt, idx) => `
+      <div class="spot-item" onclick="openAmapDetailForSpotIndex(${idx})">
+        <div>
+          <div class="spot-name">📍 ${escapeHtml(pt.name)}</div>
+          <div class="spot-desc">${escapeHtml(pt.cat || '日常消费')} · ${escapeHtml(pt.time || '近期')}</div>
+        </div>
+        <div class="spot-price">${escapeHtml(pt.amount)}</div>
+      </div>
+    `).join('');
+    state.selectedSpot = spotList[0];
+  }
+
   districtDrawerEl.classList.add('open');
 }
 
@@ -1925,11 +2238,18 @@ function closeDistrictDrawer() {
 /** 点击“🔍 放大聚焦”：立即关闭抽屉，平滑切换至高德地图街区图层 */
 function zoomInCurrentDistrict() {
   closeDistrictDrawer();
-  const provPoints = DEMO_POINTS[state.provinceName] || [];
-  const districtPoints = provPoints.filter(p => p.district === state.districtName || p.districtAdcode === state.districtAdcode);
+  const districtPoints = getPointsForDistrict(state.districtName, state.districtAdcode);
   const targetSpot = districtPoints.length > 0 ? districtPoints[0] : null;
 
   openAmapDetailLayer(state.districtName, state.districtAdcode, targetSpot, districtPoints);
+}
+
+function openAmapDetailForSpotIndex(index) {
+  closeDistrictDrawer();
+  const districtPoints = getPointsForDistrict(state.districtName, state.districtAdcode);
+  const spot = districtPoints[index] || districtPoints[0];
+  state.selectedSpot = spot;
+  openAmapDetailLayer(state.districtName, state.districtAdcode, spot, districtPoints);
 }
 
 function openAmapDetailForSpot(name, lng, lat, amount, cat, time) {
@@ -1943,9 +2263,8 @@ function openAmapDetailForSpot(name, lng, lat, amount, cat, time) {
 async function openAmapDetailLayer(districtName, districtAdcode, spot, spotList) {
   showToast(`🔍 正在加载 ${districtName || '当前区县'} 高德街区图层…`);
 
-  const provPoints = DEMO_POINTS[state.provinceName] || [];
-  const allSpots = spotList || provPoints.filter(p => p.district === districtName || p.districtAdcode === districtAdcode);
-  const activeSpot = spot || (allSpots.length > 0 ? allSpots[0] : { name: districtName, lng: 113.9488, lat: 22.5288, amount: '—', cat: '区县中心', time: '现在' });
+  const allSpots = spotList || getPointsForDistrict(districtName, districtAdcode);
+  const activeSpot = spot || (allSpots.length > 0 ? allSpots[0] : { name: districtName || '区县中心', lng: 113.9488, lat: 22.5288, amount: '¥ 0.00', cat: '区县中心', time: '现在' });
 
   state.selectedSpot = activeSpot;
   updateAmapBottomCard(activeSpot);
@@ -2001,19 +2320,20 @@ function initOrUpdateAmap(centerLng, centerLat, spots) {
   // 容器在展示后可能刚完成 CSS 过渡，强制触发一次 resize 确保瓦片正确铺满
   setTimeout(() => { if (amapInstance) amapInstance.resize(); }, 300);
 
-
   // 清除旧 Markers 并添加当前区县所有消费点 Markers
   if (amapMarkers.length > 0) {
     amapInstance.remove(amapMarkers);
     amapMarkers = [];
   }
 
-  spots.forEach(pt => {
+  const listToRender = (spots && spots.length > 0) ? spots : (state.selectedSpot ? [state.selectedSpot] : []);
+
+  listToRender.forEach(pt => {
     const markerContent = `
-      <div class="amap-custom-marker" onclick="handleAmapMarkerClick('${pt.name}')">
+      <div class="amap-custom-marker" onclick="handleAmapMarkerClick('${escapeHtml(pt.name)}')">
         <div class="marker-pulse"></div>
         <div class="marker-pin">📍</div>
-        <div class="marker-label">${pt.name}</div>
+        <div class="marker-label">${escapeHtml(pt.name)}</div>
       </div>
     `;
     const marker = new AMap.Marker({
@@ -2031,8 +2351,8 @@ function initOrUpdateAmap(centerLng, centerLat, spots) {
 }
 
 function handleAmapMarkerClick(name) {
-  const provPoints = DEMO_POINTS[state.provinceName] || [];
-  const found = provPoints.find(p => p.name === name);
+  const districtPoints = getPointsForDistrict(state.districtName, state.districtAdcode);
+  const found = districtPoints.find(p => p.name === name) || REAL_POINTS_ALL.find(p => p.name === name);
   if (found) {
     state.selectedSpot = found;
     updateAmapBottomCard(found);
@@ -2045,7 +2365,8 @@ function handleAmapMarkerClick(name) {
 function updateAmapBottomCard(spot) {
   amapSpotTitle.textContent = spot.name || '位置详情';
   amapSpotPrice.textContent = spot.amount || '';
-  amapSpotDesc.textContent = `${state.provinceName || ''}${state.cityName || ''}${state.districtName || ''} · ${spot.cat || '消费'} · ${spot.time || ''}`;
+  const locHierarchy = [spot.province || state.provinceName, spot.city || state.cityName, spot.district || state.districtName].filter(Boolean).join('');
+  amapSpotDesc.textContent = `${locHierarchy ? locHierarchy + ' · ' : ''}${spot.cat || '日常消费'} · ${spot.time || ''}`;
 }
 
 /** 触发原生 Android LocationMapActivity 路线规划页面 */
@@ -2106,19 +2427,27 @@ function setupMapInteractions() {
       const evt = params.event && params.event.event;
       const x = evt ? evt.clientX : window.innerWidth / 2;
       const y = evt ? evt.clientY : window.innerHeight / 2;
-      showPointCard(params.data.name, `金额: ${params.data.amount || '—'} · ${params.data.cat || '消费'}`, x, y);
-      state.selectedSpot = params.data;
+
+      if (state.level === 'country') {
+        // 全国视图光标：只展示提示信息卡片（定位省份与总金额），不直接下钻
+        showPointCard(params.data.name, `总消费: ${params.data.amount || '—'} · ${params.data.count || 0} 处足迹`, x, y);
+        return;
+      }
+
+      // 省市级光标：展示具体消费地点卡片
+      showPointCard(params.data.name, `金额: ${params.data.amount || '—'} · ${params.data.cat || '日常消费'}`, x, y);
+      state.selectedSpot = params.data.rawData || params.data;
       if (state.level === 'district') openDistrictDrawer();
       return;
     }
 
     if (state.level === 'country') {
-      const target = DEMO_PROVINCES.find(p => p.name === params.name) || { name: params.name, adcode: params.data && params.data.adcode };
-      if (!target.adcode) {
+      const adcode = (params.data && params.data.adcode) || (PROVINCE_STATS[params.name] && PROVINCE_STATS[params.name].adcode);
+      if (!adcode) {
         showToast(`${params.name} 暂无地理编码`);
         return;
       }
-      drillIntoProvince(target.name, target.adcode, params.data && params.data.center);
+      drillIntoProvince(params.name, adcode, params.data && params.data.center);
       return;
     }
 
@@ -2140,13 +2469,27 @@ function setupMapInteractions() {
   });
 
   mapChart.on('georoam', params => {
-    if (state.mode === 'map' && state.level === 'country' && !state.isTransitioning) {
-      if (params.zoom !== undefined) {
+    if (state.mode === 'map') {
+      if (state.level === 'city' || state.level === 'district') {
         const currentOption = mapChart.getOption();
         if (currentOption && currentOption.geo && currentOption.geo[0]) {
           const currentZoom = currentOption.geo[0].zoom;
-          if (currentZoom < 0.55) {
-            exitToGlobeMode();
+          const shouldShow = currentZoom >= 2.0;
+          if (currentOption.series && currentOption.series[1] && currentOption.series[1].label) {
+            if (!!currentOption.series[1].label.show !== shouldShow) {
+              currentOption.series[1].label.show = shouldShow;
+              mapChart.setOption({ series: currentOption.series });
+            }
+          }
+        }
+      } else if (state.level === 'country' && !state.isTransitioning) {
+        if (params.zoom !== undefined) {
+          const currentOption = mapChart.getOption();
+          if (currentOption && currentOption.geo && currentOption.geo[0]) {
+            const currentZoom = currentOption.geo[0].zoom;
+            if (currentZoom < 0.55) {
+              exitToGlobeMode();
+            }
           }
         }
       }
@@ -2162,9 +2505,13 @@ window.addEventListener('resize', () => {
 
 // 初始化启动
 window.addEventListener('DOMContentLoaded', () => {
+  loadRealExpenseData();
   initGlobe();
   setupGlobeInteractions();
   setLoading(false);
+  if (REAL_POINTS_ALL.length > 0) {
+    showToast(`🗺️ 已载入 ${REAL_POINTS_ALL.length} 处本地真实消费足迹`);
+  }
 });
 </script>
 </body>
