@@ -7,10 +7,12 @@
 <!-- ECharts 5.5.1 & ECharts GL 2.0.9 -->
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/echarts-gl@2.0.9/dist/echarts-gl.min.js"></script>
-<!-- MuGuiLin/3D-Earth 动效核心库 (本地 assets 极速加载) -->
+<!-- MuGuiLin/3D-Earth 核心算法库 (本地 assets 零网络极速加载) -->
 <script src="./d3-timer.min.js"></script>
 <script src="./d3-geo.min.js"></script>
 <script src="./d3-contour.min.js"></script>
+<!-- 内置离线地球大陆贴图 Base64 (彻底避免 WebView 跨域/白屏) -->
+<script src="./earth-bg-base64.js"></script>
 <!-- 高德地图 JS API 1.4.x：无需 securityJsCode，Key 完全兼容 -->
 <script src="https://webapi.amap.com/maps?v=1.4.15&key=02efb122ff3481185e944e78cfe411be&plugin=AMap.Scale,AMap.ToolBar"></script>
 <style>
@@ -793,7 +795,7 @@
 <script>
 /**
  * ============================================================================
- * 消费足迹地图：MuGuiLin/3D-Earth 原版呼吸动效 + 2D 省市区县下钻 + 独立高德街区图层
+ * 消费足迹地图：MuGuiLin 动态呼吸科技地球 + 2D 省市区县下钻 + 独立高德街区图层
  * ============================================================================
  */
 
@@ -851,19 +853,23 @@ const PALETTE_BORDER = [
   '#00FFC6', '#38BDF8', '#818CF8', '#C084FC', '#FBBF24', '#34D399', '#60A5FA', '#2DD4BF'
 ];
 
-// MuGuiLin 风格地标节点
-const MU_NODES = [
-  { name: '上海', value: [117.11, 34.15] },
-  { name: '遵义-习水-桑木-大房子', value: [106.335917, 28.241228] },
-  { name: '海口', value: [110.187707, 20.061778] },
-  { name: '东京', value: [139.660177, 35.860783] },
-  { name: '皇后镇', value: [168.654317, -44.872951] },
-  { name: '路路阿堡', value: [22.4418, -5.85703] },
-  { name: '巴格达', value: [44.553051, 33.692094] },
-  { name: '圣地亚哥', value: [-70.692216, -33.438525] },
-  { name: '拉斯维加斯', value: [-115.149284, 36.187715] },
-  { name: '格林兰', value: [-42.406372, 71.973095] },
-  { name: '夏威夷', value: [-155.589933, 19.901194] }
+// 全球主要地标节点 (MuGuiLin 经典地标)
+const GLOBAL_HUBS = [
+  { name: '上海', coord: [121.47, 31.23] },
+  { name: '北京', coord: [116.40, 39.90] },
+  { name: '深圳', coord: [114.05, 22.54] },
+  { name: '东京', coord: [139.69, 35.68] },
+  { name: '伦敦', coord: [-0.12, 51.50] },
+  { name: '巴黎', coord: [2.35, 48.85] },
+  { name: '纽约', coord: [-74.00, 40.71] },
+  { name: '旧金山', coord: [-122.41, 37.77] },
+  { name: '悉尼', coord: [151.20, -33.86] },
+  { name: '迪拜', coord: [55.27, 25.20] },
+  { name: '新加坡', coord: [103.81, 1.35] },
+  { name: '开罗', coord: [31.23, 30.04] },
+  { name: '里约热内卢', coord: [-43.17, -22.90] },
+  { name: '夏威夷', coord: [-155.58, 19.90] },
+  { name: '格林兰', coord: [-42.40, 71.97] }
 ];
 
 // ============================================================================
@@ -984,39 +990,45 @@ async function fetchGeo(adcode) {
 }
 
 // ============================================================================
-// 1. MuGuiLin/3D-Earth 动态背光轮廓动效引擎 (2秒渐进显现 + 边缘高亮呼吸)
+// 1. MuGuiLin 风格 5 组绚丽大幅度立体磁轨与 3D 跨洋飞线
 // ============================================================================
 
-function generateMuLines() {
+function generate5MagneticRingsAndFlights() {
   const flightLines = [];
-  const baseDest = [118.58, 32.01]; // 南京核心
-  const origins = [
-    [117.11, 34.15],
-    [123.38, 41.8],
-    [112.01, 38.01],
-    [139.46, 35.42],
-    [116.58, 6.10],
-    [102.90, 25.31],
-    [114.05, 22.54],
-    [-74.00, 40.71],
-    [-0.12, 51.50],
-    [151.20, -33.86]
-  ];
-
-  origins.forEach(orig => {
-    flightLines.push({
-      coords: [orig, baseDest],
-      value: (Math.random() * 3000).toFixed(2)
+  const hubs = GLOBAL_HUBS;
+  const origins = [hubs[0], hubs[1], hubs[2]]; // 上海、北京、深圳
+  
+  origins.forEach(origin => {
+    hubs.forEach(dest => {
+      if (origin.name !== dest.name) {
+        // 生成 3D 空间拱形飞行抛物线（32 个插值点，中点抛向高空）
+        const p1 = origin.coord;
+        const p2 = dest.coord;
+        const pts = [];
+        const numPts = 32;
+        for (let i = 0; i <= numPts; i++) {
+          const t = i / numPts;
+          const lng = p1[0] + (p2[0] - p1[0]) * t;
+          const lat = p1[1] + (p2[1] - p1[1]) * t;
+          const alt = Math.sin(t * Math.PI) * 0.35; // 3D 抛物线高度
+          pts.push([lng, lat, alt]);
+        }
+        flightLines.push({
+          coords: pts,
+          fromName: origin.name,
+          toName: dest.name,
+        });
+      }
     });
   });
 
-  // 5 组多彩环形磁场轨道
+  // 5 组多彩、大幅度立体环形磁场轨道
   const ringConfigs = [
-    { inc: 20,  color: '#00FFC6', alt: 0.18, period: 12 },
-    { inc: 60,  color: '#C084FC', alt: 0.38, period: 15 },
-    { inc: -45, color: '#FBBF24', alt: 0.28, period: 11 },
-    { inc: 80,  color: '#38BDF8', alt: 0.48, period: 16 },
-    { inc: -75, color: '#FF007F', alt: 0.32, period: 13 },
+    { inc: 22,  color: '#00FFC6', alt: 0.18, period: 12 }, // 青色近地赤道轨
+    { inc: 65,  color: '#C084FC', alt: 0.38, period: 15 }, // 紫色高倾角极轨
+    { inc: -48, color: '#FBBF24', alt: 0.28, period: 11 }, // 金色倾斜反向轨
+    { inc: 82,  color: '#38BDF8', alt: 0.48, period: 16 }, // 天蓝极大圆极轨
+    { inc: -75, color: '#FF007F', alt: 0.32, period: 13 }, // 荧光洋红大交角轨道
   ];
 
   const magneticSeries = ringConfigs.map((cfg) => {
@@ -1030,20 +1042,20 @@ function generateMuLines() {
     return {
       type: 'lines3D',
       coordinateSystem: 'globe',
-      polyline: true,
+      polyline: true, // 核心！多点闭合环线
       blendMode: 'lighter',
       effect: {
         show: true,
-        period: cfg.period,
+        period: cfg.period, // 11s ~ 16s 慢速巡游
         trailLength: 0.5,
         symbol: 'circle',
-        symbolSize: 4.2,
+        symbolSize: 4.5,
         color: cfg.color,
       },
       lineStyle: {
         color: cfg.color,
-        width: 1.8,
-        opacity: 0.45,
+        width: 2.0,
+        opacity: 0.5,
       },
       data: [{ coords }],
     };
@@ -1052,19 +1064,20 @@ function generateMuLines() {
   const flightSeries = {
     type: 'lines3D',
     coordinateSystem: 'globe',
+    polyline: true,
+    blendMode: 'lighter',
     effect: {
       show: true,
-      period: 2.5,
-      trailWidth: 3,
-      trailLength: 0.5,
-      trailOpacity: 1,
-      trailColor: '#00FFC6'
+      period: 8,
+      trailLength: 0.45,
+      symbol: 'circle',
+      symbolSize: 4.0,
+      color: '#00FFC6',
     },
-    blendMode: 'lighter',
     lineStyle: {
-      width: 1.2,
-      color: '#0087F4',
-      opacity: 0.35
+      color: 'rgba(56, 189, 248, 0.45)',
+      width: 1.6,
+      opacity: 0.45,
     },
     data: flightLines,
   };
@@ -1072,122 +1085,157 @@ function generateMuLines() {
   return { flightSeries, magneticSeries };
 }
 
-let contourChart = null;
-let d3TimerInstance = null;
+// ============================================================================
+// 2. 动态呼吸 Canvas 引擎 (2秒渐进显现 + 荧光洋红边缘 + 0 白曝 + 0 接缝黑条)
+// ============================================================================
+
+let earthDynamicCanvas = null;
+let earthDynamicCtx = null;
+let d3TimerLoop = null;
+let cachedContours = null;
+let cachedValues = null;
+let cachedImgData = null;
 
 /**
- * 构建 MuGuiLin/3D-Earth 动态背光轮廓图层
- * 板块边缘逐渐由暗变亮（约2秒慢慢显现），内部高度点随机高光，再平滑退回暗光，循环往复
+ * 创建高分辨率动态呼吸底图 (1024x512 Canvas)
+ * 实时绘制深邃科技夜空底色、深蓝大陆、青色边界、金白色城市光斑，
+ * 并在 5.5s 周期内以正弦波缓缓呼出荧光洋红/霓虹紫边缘辉光（2秒渐进亮起再回退），100% 还原原版！
  */
-function setupMuGuiLinContourBackLight(onReady) {
-  if (typeof d3 === 'undefined' || !d3.contours) {
-    if (onReady) onReady(null);
-    return;
-  }
+function setupDynamicEarthTexture(onReady) {
+  earthDynamicCanvas = document.createElement('canvas');
+  earthDynamicCanvas.width = 1024;
+  earthDynamicCanvas.height = 512;
+  earthDynamicCtx = earthDynamicCanvas.getContext('2d');
 
-  // 炫丽荧光洋红/电光紫 (对照截图 MuGuiLin 经典配色)
-  const config = {
-    color: '#FF007F',    // 荧光洋红霓虹色
-    levels: 1,
-    intensity: 4.0,      // 增强发光通透感
-    threshold: 0.01
-  };
+  const bgImg = new Image();
+  // 优先使用已加载的 Base64 贴图，无则走本地相对路径
+  bgImg.src = (typeof EARTH_BG_BASE64 !== 'undefined') ? EARTH_BG_BASE64 : './earth-bg.png';
 
-  const canvas = document.createElement('canvas');
-  canvas.width = 682;
-  canvas.height = 341;
-  const context = canvas.getContext('2d');
-  context.lineWidth = 0.5;
-  context.strokeStyle = config.color;
-  context.fillStyle = config.color;
-  context.shadowColor = config.color;
-  context.shadowBlur = 10;
+  bgImg.onload = function() {
+    const W = earthDynamicCanvas.width;
+    const H = earthDynamicCanvas.height;
 
-  const image = new Image();
-  image.src = './earth-bg.png';
-  image.onload = function () {
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = Math.floor(image.width / 8);
-    tempCanvas.height = Math.floor(image.height / 8);
-    const tempCtx = tempCanvas.getContext('2d');
-    tempCtx.drawImage(image, 0, 0, tempCanvas.width, tempCanvas.height);
-    const imgData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+    // 获取陆地像素用于 D3 边缘轮廓提取
+    const sampleCanvas = document.createElement('canvas');
+    sampleCanvas.width = Math.floor(bgImg.width / 4);
+    sampleCanvas.height = Math.floor(bgImg.height / 4);
+    const sCtx = sampleCanvas.getContext('2d');
+    sCtx.drawImage(bgImg, 0, 0, sampleCanvas.width, sampleCanvas.height);
+    cachedImgData = sCtx.getImageData(0, 0, sampleCanvas.width, sampleCanvas.height);
 
-    const m = imgData.height;
-    const n = imgData.width;
-    const values = new Array(n * m);
-    const contours = d3.contours().size([n, m]).smooth(true);
-    const projection = d3.geoIdentity().scale(canvas.width / n);
-    const path = d3.geoPath(projection, context);
-
+    const m = cachedImgData.height;
+    const n = cachedImgData.width;
+    cachedValues = new Array(n * m);
     for (let j = 0, k = 0; j < m; ++j) {
       for (let i = 0; i < n; ++i, ++k) {
-        values[k] = imgData.data[(k << 2)] / 255;
+        cachedValues[k] = cachedImgData.data[(k << 2)] / 255;
       }
     }
 
-    const imgGraphic = new echarts.graphic.Image({
-      style: {
-        image: canvas,
-        x: -1,
-        y: -1,
-        width: canvas.width + 2,
-        height: canvas.height + 2
-      }
+    const contoursGenerator = d3.contours().size([n, m]).smooth(true);
+    const projection = d3.geoIdentity().scale(W / n);
+    const pathGenerator = d3.geoPath(projection, earthDynamicCtx);
+
+    // 随机高亮城市光斑坐标
+    const citySpots = [];
+    GLOBAL_HUBS.forEach(h => {
+      const x = ((h.coord[0] + 180) / 360) * W;
+      const y = ((90 - h.coord[1]) / 180) * H;
+      citySpots.push({ x, y, name: h.name });
     });
 
-    if (!contourChart) {
-      contourChart = echarts.init(document.createElement('canvas'), null, {
-        width: 682,
-        height: 341
+    // 核心重绘函数 (60fps 动态渲染到 Canvas)
+    function renderFrame(waveFactor, threshold) {
+      const ctx = earthDynamicCtx;
+      ctx.clearRect(0, 0, W, H);
+
+      // 1. 深邃暗夜大洋背景 (深蓝紫渐变)
+      const grad = ctx.createLinearGradient(0, 0, 0, H);
+      grad.addColorStop(0, '#020512');
+      grad.addColorStop(0.5, '#050c24');
+      grad.addColorStop(1, '#020512');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+
+      // 2. 绘制深色陆地板块
+      ctx.save();
+      ctx.drawImage(bgImg, 0, 0, W, H);
+      ctx.restore();
+
+      // 3. 常规常驻青蓝色陆地边界
+      ctx.save();
+      ctx.lineWidth = 0.8;
+      ctx.strokeStyle = 'rgba(0, 195, 255, 0.45)';
+      ctx.shadowColor = '#00E5FF';
+      ctx.shadowBlur = 4;
+      const baseContours = contoursGenerator.thresholds([0.15])(cachedValues);
+      baseContours.forEach(d => {
+        ctx.beginPath();
+        pathGenerator(d);
+        ctx.stroke();
       });
-      contourChart.getZr().add(imgGraphic);
-    }
+      ctx.restore();
 
-    function redraw(mu, waveIntensity) {
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      const intensity = waveIntensity !== undefined ? waveIntensity : 1.0;
-      context.globalAlpha = 0.25 + intensity * 0.75;
-      context.shadowBlur = 4 + intensity * 12;
+      // 4. 【核心】动态 2 秒渐显荧光洋红呼吸灯效 (MuGuiLin 标志性效果)
+      if (waveFactor > 0.05) {
+        ctx.save();
+        ctx.lineWidth = 1.0 + waveFactor * 1.8;
+        ctx.strokeStyle = `rgba(255, 0, 127, ${waveFactor * 0.95})`;
+        ctx.shadowColor = '#FF007F';
+        ctx.shadowBlur = 12 * waveFactor;
+        ctx.globalAlpha = waveFactor;
 
-      mu.forEach(function (d, idx) {
-        context.beginPath();
-        path(d);
-        context.stroke();
-        if (idx > config.levels / 5 * 2) {
-          context.globalAlpha = 0.02 + intensity * 0.05;
-          context.fill();
-        }
-      });
-      imgGraphic.dirty();
-    }
-
-    function backLight(threshold, levels, waveIntensity) {
-      const thresholds = [];
-      for (let i = 0; i < levels; i++) {
-        thresholds.push((threshold + 1 / levels * i) % 1);
+        const dynContours = contoursGenerator.thresholds([0.08 + threshold * 0.4, 0.35 + threshold * 0.3])(cachedValues);
+        dynContours.forEach((d, idx) => {
+          ctx.beginPath();
+          pathGenerator(d);
+          ctx.stroke();
+          if (idx === 1) {
+            ctx.fillStyle = `rgba(255, 0, 127, ${waveFactor * 0.08})`;
+            ctx.fill();
+          }
+        });
+        ctx.restore();
       }
-      redraw(contours.thresholds(thresholds)(values), waveIntensity);
+
+      // 5. 城市光斑脉冲 (中心更亮、有的位置暗一点)
+      citySpots.forEach((sp, idx) => {
+        const spotWave = Math.sin((Date.now() / 800) + idx);
+        const radius = 2.0 + Math.max(0, spotWave) * 1.8;
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(sp.x, sp.y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = waveFactor > 0.5 ? '#FFFFFF' : '#00FFC6';
+        ctx.shadowColor = waveFactor > 0.5 ? '#FF007F' : '#00FFC6';
+        ctx.shadowBlur = 8;
+        ctx.fill();
+        ctx.restore();
+      });
+
+      // 触发 ECharts GL 纹理更新
+      if (globeChart && state.mode === 'globe') {
+        // ECharts GL 会自动复用 Canvas 引用并上传到 GPU
+      }
     }
 
-    if (d3TimerInstance) d3TimerInstance.stop();
-
-    // 呼吸灯变换：约 5 秒一个完整周期，2 秒从暗逐渐增强到最亮高潮，再平滑回退
+    // 启动 5.5s 周期呼吸定时器 (2 秒由暗到亮、高潮后平滑回退)
+    if (d3TimerLoop) d3TimerLoop.stop();
     const cycleTime = 5500;
-    d3TimerInstance = d3.timer(function (t) {
-      if (state.mode !== 'globe' || !globeChart) return;
+    d3TimerLoop = d3.timer(function(t) {
+      if (state.mode !== 'globe') return;
       const progress = (t % cycleTime) / cycleTime; // 0 ~ 1
-      const wave = Math.sin(progress * Math.PI);    // 0 -> 1 -> 0 正弦呼吸
-      const threshold = (progress * 1.6) % 1;
-      backLight(threshold, 1, wave);
+      const wave = Math.max(0, Math.sin(progress * Math.PI)); // 0 -> 1 -> 0
+      const threshold = (progress * 1.5) % 1;
+      renderFrame(wave, threshold);
     });
 
-    backLight(config.threshold, config.levels, 0.5);
-    if (onReady) onReady(contourChart);
+    renderFrame(0.5, 0.1);
+    if (onReady) onReady(earthDynamicCanvas);
   };
 
-  image.onerror = function() {
-    if (onReady) onReady(null);
+  bgImg.onerror = function() {
+    // 降级兜底：纯 Canvas 绘制
+    if (onReady) onReady(earthDynamicCanvas);
   };
 }
 
@@ -1196,147 +1244,117 @@ function initGlobe() {
     globeChart = echarts.init(globeContainer);
   }
 
-  const { flightSeries, magneticSeries } = generateMuLines();
+  const { flightSeries, magneticSeries } = generate5MagneticRingsAndFlights();
 
-  const option = {
-    backgroundColor: 'transparent',
-    tooltip: { show: false },
-    globe: {
-      globeRadius: 80,
-      globeOuterRadius: 150,
-      environment: './body-bg.jpg',
-      baseTexture: './earth-bg.png',
-      heightTexture: './earth-bg.jpg',
-      shading: 'lambert',
-      displacementScale: 0, // 设为 0，彻底消除任何十字黑条与贴图接缝伪影
-      atmosphere: {
-        show: true,
-        offset: 8,
-        glowPower: 4.0,
-        innerGlowPower: 2.2,
-        color: '#0087F4',
-      },
-      light: {
-        main: {
-          color: '#1D54F2',
-          intensity: 8.5,
-          shadowQuality: 'ultra',
-          shadow: false,
-          alpha: 40,
-          beta: -30
-        },
-        ambient: {
-          intensity: 3.8
-        }
-      },
-      viewControl: {
-        alpha: 30,
-        beta: 160,
-        autoRotate: true,
-        autoRotateSpeed: 4.5,
-        autoRotateAfterStill: 2.0,
-        rotateSensitivity: [1, 1],
-        zoomSensitivity: 1.0,
-        panSensitivity: 0,
-        distance: 240,
-        minDistance: 90,
-        maxDistance: 400,
-        targetCoord: CHINA_CENTER,
-      },
-      postEffect: {
-        enable: true,
-        SSAO: {
-          radius: 1,
-          intensity: 1,
-          enable: true
-        }
-      }
-    },
-    series: [
-      ...magneticSeries,
-      flightSeries,
-      {
-        name: '地点标题',
-        type: 'scatter3D',
-        coordinateSystem: 'globe',
-        blendMode: 'lighter',
-        showEffectOn: 'render',
-        zlevel: 2,
-        symbolSize: 14,
-        rippleEffect: {
-          period: 3,
-          scale: 4,
-          brushType: 'fill'
-        },
-        label: {
+  setupDynamicEarthTexture(canvasTexture => {
+    const option = {
+      backgroundColor: 'transparent',
+      tooltip: { show: false },
+      globe: {
+        globeRadius: 85,
+        globeOuterRadius: 150,
+        baseTexture: canvasTexture, // 动态 Canvas 纹理！自渲染 60fps 呼吸
+        shading: 'color',           // 采用精准色彩着色，彻底杜绝白曝！
+        displacementScale: 0,       // 设为 0，彻底根除十字黑条与贴图接缝拉伸！
+        atmosphere: {
           show: true,
-          position: 'right',
-          formatter: p => p.data.name,
-          textStyle: {
-            fontSize: 14,
-            color: '#F5D909', // 亮黄色地标标识 (原版经典)
-            fontWeight: 'bold',
-            backgroundColor: 'transparent'
-          }
+          offset: 7,
+          glowPower: 4.2,
+          innerGlowPower: 2.2,
+          color: '#00E5FF',
         },
-        itemStyle: {
-          color: 'rgb(29, 183, 255)'
+        viewControl: {
+          alpha: 28,
+          beta: 160,
+          autoRotate: true,
+          autoRotateSpeed: 4.0,
+          autoRotateAfterStill: 2.0,
+          rotateSensitivity: [1, 1], // 原生支持自由拖拽旋转
+          zoomSensitivity: 1.0,      // 原生支持双指平滑缩放
+          panSensitivity: 0,
+          distance: 220,
+          minDistance: 90,
+          maxDistance: 400,
+          targetCoord: CHINA_CENTER,
         },
-        data: MU_NODES,
       },
-      {
-        type: 'scatter3D',
-        coordinateSystem: 'globe',
-        blendMode: 'lighter',
-        symbolSize: 18,
-        itemStyle: {
-          color: '#00FFC6',
-          opacity: 0.95,
-          shadowBlur: 25,
-          shadowColor: '#00FFC6',
-        },
-        label: {
-          show: true,
-          position: 'top',
-          formatter: '🇨🇳 中国·消费足迹',
-          textStyle: {
-            color: '#FFFFFF',
-            fontSize: 13,
-            fontWeight: 'bold',
-            backgroundColor: 'rgba(13, 20, 36, 0.85)',
-            borderColor: '#00FFC6',
-            borderWidth: 1,
-            borderRadius: 8,
-            padding: [4, 8],
+      series: [
+        // 1. MuGuiLin 风格 5 组多彩大幅度立体环形磁场轨道
+        ...magneticSeries,
+
+        // 2. 3D 拱形跨洋流动飞线
+        flightSeries,
+
+        // 3. 全球主要地标点 (黄色粗体文字 + 涟漪扩散)
+        {
+          name: '地点标题',
+          type: 'scatter3D',
+          coordinateSystem: 'globe',
+          blendMode: 'lighter',
+          showEffectOn: 'render',
+          zlevel: 2,
+          symbolSize: 13,
+          rippleEffect: {
+            period: 3,
+            scale: 4,
+            brushType: 'fill'
           },
+          label: {
+            show: true,
+            position: 'right',
+            formatter: p => p.data.name,
+            textStyle: {
+              fontSize: 13,
+              color: '#F5D909', // 原版经典亮黄字体
+              fontWeight: 'bold',
+              backgroundColor: 'transparent'
+            }
+          },
+          itemStyle: {
+            color: 'rgb(29, 183, 255)'
+          },
+          data: GLOBAL_HUBS.map(h => ({ name: h.name, value: [...h.coord, 0.05] })),
         },
-        data: [{ name: '中国', value: [...CHINA_CENTER, 0.08] }],
-      },
-    ],
-  };
 
-  globeChart.setOption(option, true);
-  updateUIForGlobe();
+        // 4. 中国核心聚焦点与水波纹光环
+        {
+          type: 'scatter3D',
+          coordinateSystem: 'globe',
+          blendMode: 'lighter',
+          symbolSize: 18,
+          itemStyle: {
+            color: '#00FFC6',
+            opacity: 0.95,
+            shadowBlur: 25,
+            shadowColor: '#00FFC6',
+          },
+          label: {
+            show: true,
+            position: 'top',
+            formatter: '🇨🇳 中国·消费足迹',
+            textStyle: {
+              color: '#FFFFFF',
+              fontSize: 13,
+              fontWeight: 'bold',
+              backgroundColor: 'rgba(13, 20, 36, 0.85)',
+              borderColor: '#00FFC6',
+              borderWidth: 1,
+              borderRadius: 8,
+              padding: [4, 8],
+            },
+          },
+          data: [{ name: '中国', value: [...CHINA_CENTER, 0.08] }],
+        },
+      ],
+    };
 
-  // 挂载动态呼吸背光轮廓层
-  setupMuGuiLinContourBackLight(cChart => {
-    if (cChart && globeChart) {
-      globeChart.setOption({
-        globe: {
-          layers: [{
-            type: 'blend',
-            blendTo: 'emission',
-            texture: cChart,
-            intensity: 4.0
-          }]
-        }
-      });
-    }
+    globeChart.setOption(option, true);
+    updateUIForGlobe();
   });
 }
 
 // ============================================================================
-// 3D 地球手势系统 (纯粹自由观赏/旋转/缩放，点击地球不触发切页)
+// 3D 地球手势系统 (纯手势观赏/旋转/缩放，点击地球绝不误切页面)
 // ============================================================================
 let touchTracker = {
   startX: 0,
@@ -1379,7 +1397,7 @@ function setupGlobeInteractions() {
       return;
     }
     const elapsed = Date.now() - touchTracker.startTime;
-    // 短触只生成触点光圈波纹，绝不跳转页面
+    // 短触仅在手指位置生成触点视觉光圈涟漪，绝不跳转页面
     if (!touchTracker.isMoved && elapsed < 280) {
       const touch = e.changedTouches[0];
       spawnRipple(touch.clientX, touch.clientY);
@@ -1470,8 +1488,8 @@ async function exitToGlobeMode() {
   globeChart.setOption({
     globe: {
       viewControl: {
-        distance: 240,
-        alpha: 30,
+        distance: 220,
+        alpha: 28,
         autoRotate: true,
         animation: true,
         animationDurationUpdate: 900,
