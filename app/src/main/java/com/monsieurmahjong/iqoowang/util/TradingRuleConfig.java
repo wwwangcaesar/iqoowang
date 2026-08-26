@@ -26,6 +26,13 @@ public class TradingRuleConfig {
     public int vwapConfirmMinutes = 5;
     public double shadowEatRatio = 0.70;
     public int stopNotifyMinutesBeforeClose = 30;
+    /** 【2026-08-20新增】独立破位止损（形态日最低价）专用的收盘前确认窗口，跟上面那个
+     *  stopNotifyMinutesBeforeClose（分歧K线中点用）是两回事，分开配置，互不影响。
+     *  盘中瞬间跌破不算数，要等到收盘前这么多分钟仍未收复才真正确认离场。 */
+    public int patternLowStopNotifyMinutes = 15;
+    /** 【2026-08-20新增】"四格原则"——现价偏离当日VWAP超过这个百分比就视为追高，
+     *  只在买入弹窗里弹提醒，不在规则引擎里做拦截限制。 */
+    public double fourGridDeviationPct = 5.0;
     public int marketCloseHour = 15;
     public int marketCloseMinute = 0;
     public int earlyWindowMinutes = 60;
@@ -98,6 +105,8 @@ public class TradingRuleConfig {
         if (o.has("vwapConfirmMinutes")) c.vwapConfirmMinutes = o.getInt("vwapConfirmMinutes");
         if (o.has("shadowEatRatio")) c.shadowEatRatio = o.getDouble("shadowEatRatio");
         if (o.has("stopNotifyMinutesBeforeClose")) c.stopNotifyMinutesBeforeClose = o.getInt("stopNotifyMinutesBeforeClose");
+        if (o.has("patternLowStopNotifyMinutes")) c.patternLowStopNotifyMinutes = o.getInt("patternLowStopNotifyMinutes");
+        if (o.has("fourGridDeviationPct")) c.fourGridDeviationPct = o.getDouble("fourGridDeviationPct");
         if (o.has("marketCloseHour")) c.marketCloseHour = o.getInt("marketCloseHour");
         if (o.has("marketCloseMinute")) c.marketCloseMinute = o.getInt("marketCloseMinute");
         if (o.has("earlyWindowMinutes")) c.earlyWindowMinutes = o.getInt("earlyWindowMinutes");
@@ -126,6 +135,8 @@ public class TradingRuleConfig {
             o.put("vwapConfirmMinutes", vwapConfirmMinutes);
             o.put("shadowEatRatio", shadowEatRatio);
             o.put("stopNotifyMinutesBeforeClose", stopNotifyMinutesBeforeClose);
+            o.put("patternLowStopNotifyMinutes", patternLowStopNotifyMinutes);
+            o.put("fourGridDeviationPct", fourGridDeviationPct);
             o.put("marketCloseHour", marketCloseHour);
             o.put("marketCloseMinute", marketCloseMinute);
             o.put("earlyWindowMinutes", earlyWindowMinutes);

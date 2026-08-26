@@ -12,8 +12,8 @@ public class DecisionLogger {
     private static final String TAG = "DecisionLogger";
     private static DecisionLogger sInstance;
     private final android.content.Context mContext;
-    private final java.text.SimpleDateFormat mDayFmt = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.CHINA);
-    private final java.text.SimpleDateFormat mTimeFmt = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.CHINA);
+    private final java.text.SimpleDateFormat mDayFmt = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.CHINA);
+    private final java.text.SimpleDateFormat mTimeFmt = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.CHINA);
 
     public static void init(android.content.Context context) {
         if (sInstance == null) {
@@ -249,6 +249,42 @@ public class DecisionLogger {
         } else {
             sb.append("\n结果：拒绝（id=").append(resultId).append("，未写入任何数据）");
         }
+        sb.append("\n").append(repeat('-', 72)).append("\n");
+        appendToFile(sb.toString());
+    }
+
+    /**
+     * 【2026-08-20 买入逻辑改造】异步获取"昨日全天真实VWAP"（成交量加权均价，来自腾讯
+     * day/query 5日线接口）的结果追踪——这一步是低开路径底仓判断的关键依据，但它是
+     * 后台异步完成的，不会自然出现在某一次 evaluate() 的规则依据文本里，所以单独记一笔，
+     * 方便事后核实"这支股票当时到底有没有拿到昨日均价、拿到的是多少"。
+     * 不出现在给用户看的常规决策文本里，但会写进这个日志文件，可追溯。
+     */
+    public void logPrevDayVwapFetch(String code, boolean success, double vwap, String date, String errorMsg) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[").append(mTimeFmt.format(new java.util.Date())).append("] ");
+        sb.append("【昨日VWAP获取】").append(code).append(" ");
+        if (success) {
+            sb.append(String.format(Locale.CHINA, "成功：日期=%s 真实VWAP=¥%.4f", date, vwap));
+        } else {
+            sb.append("失败：").append(errorMsg != null ? errorMsg : "未知原因")
+                    .append("（本轮低开路径底仓判断将跳过，等待下次tick自动重试）");
+        }
+        sb.append("\n").append(repeat('-', 72)).append("\n");
+        appendToFile(sb.toString());
+    }
+
+    /**
+     * 【2026-08-20 买入逻辑改造】记录一次底仓路径判定的分支选择过程——今开/昨收/走的哪条路径
+     * （低开 or 高开/平开）、用的哪个参照价、止损参照是形态日最低价还是动态兜底。
+     * 不是每次evaluate()都调用，只在真正命中BUY_STARTER或STOP_LOSS、且用到了这次改造涉及的
+     * 新逻辑分支时调用一次，避免刷屏。
+     */
+    public void logBuyLogicTrace(String name, String code, String traceDetail) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[").append(mTimeFmt.format(new java.util.Date())).append("] ");
+        sb.append(name).append("(").append(code).append(") ");
+        sb.append("【买入逻辑追踪】").append(traceDetail);
         sb.append("\n").append(repeat('-', 72)).append("\n");
         appendToFile(sb.toString());
     }

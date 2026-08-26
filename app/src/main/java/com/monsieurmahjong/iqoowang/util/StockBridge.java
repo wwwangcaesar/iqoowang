@@ -453,7 +453,7 @@ public class StockBridge implements RealtimeMonitorService.Listener {
             attempts[0]++;
             String statusJson = mAgent.getStatusJson();
             try {
-                org.json.JSONObject status = new org.json.JSONObject(statusJson);
+                JSONObject status = new JSONObject(statusJson);
                 boolean llmReady = status.optBoolean("llmReady", false);
                 Log.d(TAG, "AI状态轮询 #" + attempts[0] + " llmReady=" + llmReady);
 
@@ -520,10 +520,31 @@ public class StockBridge implements RealtimeMonitorService.Listener {
     /** 话术学习历史（进化记录列表） */
     @JavascriptInterface
     public String getWisdomLog() {
-        return com.monsieurmahjong.iqoowang.util.WisdomManager.get().getAllJson();
+        return WisdomManager.get().getAllJson();
     }
 
     // ══ 交易周期复盘（买入到清仓完整走完后手动触发AI总结）══
+
+    /**
+     * 【2026-08-20新增】候选池最近一次tick缓存的水线/VWAP/量比快照，供买卖弹窗算
+     * "现价偏离VWAP多少"用（四格原则提醒）。没缓存过（比如App刚重启还没tick过）就返回"{}"，
+     * 前端要自行判断兜底，不要假设一定有数据。
+     * JS调用：Android.getLiveMetrics(code) → {"waterLine":x,"vwap":y,"volRatio":z} 或 "{}"
+     */
+    @JavascriptInterface
+    public String getLiveMetrics(String code) {
+        double[] m = WatchlistManager.get().getLiveMetrics(code);
+        if (m == null) return "{}";
+        try {
+            JSONObject o = new JSONObject();
+            o.put("waterLine", m[0]);
+            o.put("vwap", m[1]);
+            o.put("volRatio", m[2]);
+            return o.toString();
+        } catch (Exception e) {
+            return "{}";
+        }
+    }
 
     /** 待复盘的交易周期列表（买入到清仓已经完整走完，但用户还没点"生成复盘"的） */
     @JavascriptInterface
@@ -740,10 +761,10 @@ public class StockBridge implements RealtimeMonitorService.Listener {
     /** 当前所有待确认信号（PENDING_*状态） */
     @JavascriptInterface
     public String getPendingSignals() {
-        org.json.JSONArray arr = new org.json.JSONArray();
+        JSONArray arr = new JSONArray();
         for (WatchlistManager.WatchlistItem it : WatchlistManager.get().getPendingSignals()) {
             try {
-                org.json.JSONObject o = new org.json.JSONObject();
+                JSONObject o = new JSONObject();
                 o.put("code", it.code);
                 o.put("name", it.name);
                 o.put("status", it.status);
@@ -944,7 +965,7 @@ public class StockBridge implements RealtimeMonitorService.Listener {
     /** 有日志的日期列表（新→旧），供前端做日期选择 */
     @JavascriptInterface
     public String getDecisionLogDates() {
-        return new org.json.JSONArray(java.util.Arrays.asList(DecisionLogger.get().listLogDates())).toString();
+        return new JSONArray(java.util.Arrays.asList(DecisionLogger.get().listLogDates())).toString();
     }
 
     /** 日志文件实际存放路径，也可以用文件管理器/USB直接去导出 */
@@ -1048,14 +1069,14 @@ public class StockBridge implements RealtimeMonitorService.Listener {
             }
             if (codes.isEmpty()) return;
 
-            com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.get().fetchBatch(codes,
+            RealtimeQuoteManager.get().fetchBatch(codes,
                     (quotes, failedCodes) -> {
                         if (!failedCodes.isEmpty()) {
                             Log.w(TAG, "refreshPositionPrices: " + failedCodes.size() + "支两个数据源都未拿到: " + failedCodes);
                         }
                         if (quotes.isEmpty()) return;
                         JSONObject priceMap = new JSONObject();
-                        for (Map.Entry<String, com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote> e : quotes.entrySet()) {
+                        for (Map.Entry<String, RealtimeQuoteManager.Quote> e : quotes.entrySet()) {
                             try { priceMap.put(e.getKey(), e.getValue().price); }
                             catch (Exception ignored) {}
                         }

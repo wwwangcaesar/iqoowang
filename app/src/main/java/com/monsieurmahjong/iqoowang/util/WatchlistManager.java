@@ -64,6 +64,30 @@ public class WatchlistManager {
         return sLiveMetricsCache.get(code);
     }
 
+    /**
+     * 【2026-08-20新增】"昨日全天真实VWAP"（成交量加权均价）缓存——一天只需要抓一次，
+     * 不用每个tick都重新请求腾讯的历史分时接口。按股票代码存值，另外单独存一份对应的
+     * 交易日日期，读取时两边日期必须匹配才认为缓存有效，这样跨了交易日（比如放到第二天
+     * 还在用）会自动判定为"过期"、返回null，逼调用方(TradingRuleEngine.getPrevDayRef)
+     * 重新异步抓一次，不会把旧的某一天的VWAP错当成"昨日"用。不落库，重启App后自然清空。
+     */
+    private static final java.util.Map<String, Double> sPrevDayVwapCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.Map<String, String> sPrevDayVwapDateCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 读缓存的昨日真实VWAP——只有缓存对应的交易日日期(expectedPrevDate)一致才返回，否则返回null。 */
+    public Double getPrevDayVwapIfMatches(String code, String expectedPrevDate) {
+        if (expectedPrevDate == null) return null;
+        String cachedDate = sPrevDayVwapDateCache.get(code);
+        if (!expectedPrevDate.equals(cachedDate)) return null;
+        return sPrevDayVwapCache.get(code);
+    }
+
+    /** RealtimeQuoteManager.fetchPrevDayVwap() 异步拿到结果后回填进这里 */
+    public void savePrevDayVwap(String code, double vwap, String date) {
+        sPrevDayVwapCache.put(code, vwap);
+        sPrevDayVwapDateCache.put(code, date);
+    }
+
     public static void init(Context context) {
         if (sInstance == null) {
             synchronized (WatchlistManager.class) {

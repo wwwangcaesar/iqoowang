@@ -48,6 +48,11 @@ public class RealtimeQuoteManager {
     private static final String URL_SINA = "https://hq.sinajs.cn/list=";
     private static final String URL_TENCENT_MINUTE =
             "https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=%s%s";
+    /** 【2026-08-20新增】腾讯"5日线"接口——跟上面分时接口同一个域名，只是路径不同，
+     *  返回最近5个交易日、每天完整的分时数据（不只是今天），用来精确算出"昨日全天真实
+     *  成交量加权均价"（VWAP），供新的低开底仓路径判断用。已用真实股票数据人工验证过换算逻辑。 */
+    private static final String URL_TENCENT_DAY_QUERY =
+            "https://web.ifzq.gtimg.cn/appstock/app/day/query?code=%s%s";
 
     /** 高频轮询专用短超时客户端，绝不能用历史下载那套10+15秒的宽松超时 */
     private static final OkHttpClient HTTP = new OkHttpClient.Builder()
@@ -124,6 +129,12 @@ public class RealtimeQuoteManager {
     public interface MinuteCallback {
         void onResult(String code, List<MinutePoint> points);
         void onError(String code, String msg);
+    }
+
+    /** 【2026-08-20新增】拿"最近一个已收盘交易日"全天真实VWAP的回调。
+     *  vwap<=0 表示没拿到（网络失败/解析失败），此时date也是null，调用方要能优雅跳过本轮判断。 */
+    public interface PrevDayVwapCallback {
+        void onResult(String code, double vwap, String date);
     }
 
     private String market(String code) {
@@ -393,6 +404,91 @@ public class RealtimeQuoteManager {
             Log.w(TAG, "分时JSON解析失败，原始响应: " + truncate(body), e);
         }
         return result;
+    }
+
+    // ══════════════════════════════════════════
+    // 【2026-08-20新增】历史分时（最近5个交易日）—— 精确算"昨日全天真实VWAP"用
+    // ══════════════════════════════════════════
+
+    /**
+     * 拿"最近一个已收盘交易日"（即昨日）的全天真实VWAP（成交量加权均价），不是近似值。
+     * 用的是腾讯"5日线"接口，跟 fetchMinuteLine() 同一个域名，只是路径不同（day/query
+     * 而不是 minute/query）。返回过去5个交易日、每天完整的分时数据，每条记录格式是
+     * "时间 价格 累计成交量(手) 累计成交额(元)"——注意是从当天开盘到这一刻的累计值，
+     * 不是单分钟的增量。取最后一条（即收盘那一刻）的累计成交额÷(累计成交量×100)，
+     * 就是这一天真实的、按成交量加权的全天平均价。
+     * 已用真实股票数据(sz000001, 2026-08-19)手工验证过换算结果落在当天实际价格区间内。
+     */
+    public void fetchPrevDayVwap(String code, PrevDayVwapCallback cb) {
+        String url = String.format(Locale.US, URL_TENCENT_DAY_QUERY, market(code), code);
+        Request req = new Request.Builder().url(url).build();
+        HTTP.newCall(req).enqueue(new Callback() {
+            @Override public void onFailure(Call call, IOException e) {
+                Log.w(TAG, "历史分时(day/query)请求失败 " + code + ": " + e.getMessage());
+                MAIN.post(() -> cb.onResult(code, 0, null));
+            }
+            @Override public void onResponse(Call call, Response resp) {
+                try (Response r = resp) {
+                    byte[] bytes = r.body().bytes();
+                    String body = new String(bytes, Charset.forName("UTF-8"));
+                    Object[] parsed = parsePrevDayVwap(body, code);
+                    double vwap = (Double) parsed[0];
+                    String date = (String) parsed[1];
+                    MAIN.post(() -> cb.onResult(code, vwap, date));
+                } catch (Exception e) {
+                    Log.w(TAG, "历史分时(day/query)解析异常 " + code, e);
+                    MAIN.post(() -> cb.onResult(code, 0, null));
+                }
+            }
+        });
+    }
+
+    /**
+     * 解析"5日线"接口响应，从最新往前找第一个"日期不等于今天"的交易日（今天这条还没收盘，
+     * 累计值不完整、也没有prec字段），那就是最近一个已收盘的交易日=昨日。用它最后一条
+     * 分时记录的累计成交额/累计成交量算出全天真实VWAP。
+     * 返回 Object[]{Double vwap, String date}；vwap<=0或异常时 {0.0, null}。
+     * date格式统一成"yyyy-MM-dd"，跟MarketDataManager.KlineBar.date同一口径，方便比对。
+     */
+    private Object[] parsePrevDayVwap(String body, String code) {
+        try {
+            JSONObject root = new JSONObject(body);
+            JSONObject data = root.optJSONObject("data");
+            if (data == null) { Log.w(TAG, "day/query响应无data字段: " + truncate(body)); return new Object[]{0.0, null}; }
+            String fullCode = market(code) + code;
+            JSONObject stockObj = data.optJSONObject(fullCode);
+            if (stockObj == null) {
+                java.util.Iterator<String> keys = data.keys();
+                if (keys.hasNext()) stockObj = data.optJSONObject(keys.next());
+            }
+            if (stockObj == null) { Log.w(TAG, "day/query响应未找到股票数据: " + truncate(body)); return new Object[]{0.0, null}; }
+            JSONArray days = stockObj.optJSONArray("data");
+            if (days == null) { Log.w(TAG, "day/query响应无data数组: " + truncate(body)); return new Object[]{0.0, null}; }
+
+            String today = new java.text.SimpleDateFormat("yyyyMMdd", Locale.CHINA).format(new java.util.Date());
+            for (int i = days.length() - 1; i >= 0; i--) {
+                JSONObject dayObj = days.optJSONObject(i);
+                if (dayObj == null) continue;
+                String rawDate = dayObj.optString("date", "");
+                if (rawDate.length() != 8 || rawDate.equals(today)) continue;
+                JSONArray minuteArr = dayObj.optJSONArray("data");
+                if (minuteArr == null || minuteArr.length() == 0) continue;
+                String lastLine = minuteArr.optString(minuteArr.length() - 1, "");
+                String[] parts = lastLine.split("\\s+");
+                if (parts.length < 4) continue;
+                double cumVolLots = d(parts[2]);   // 累计成交量，单位"手"(1手=100股)
+                double cumAmount = d(parts[3]);    // 累计成交额，单位"元"
+                if (cumVolLots <= 0) continue;
+                double vwap = cumAmount / (cumVolLots * 100.0);
+                if (vwap <= 0) continue;
+                String formattedDate = rawDate.substring(0, 4) + "-" + rawDate.substring(4, 6) + "-" + rawDate.substring(6, 8);
+                return new Object[]{vwap, formattedDate};
+            }
+            Log.w(TAG, "day/query未找到有效的已收盘交易日 " + code);
+        } catch (Exception e) {
+            Log.w(TAG, "day/query解析异常 " + code, e);
+        }
+        return new Object[]{0.0, null};
     }
 
     private String truncate(String s) { return s != null && s.length() > 300 ? s.substring(0, 300) + "..." : s; }

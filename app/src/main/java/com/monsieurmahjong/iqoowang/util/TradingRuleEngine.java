@@ -1,5 +1,7 @@
 package com.monsieurmahjong.iqoowang.util;
 
+import android.util.Log;
+
 import java.text.SimpleDateFormat;
 import java.util.Calendar;
 import java.util.Date;
@@ -19,6 +21,8 @@ import java.util.Locale;
  * 所有阈值从 TradingRuleConfig 读取，AI 复核在 RealtimeMonitorService 层完成。
  */
 public class TradingRuleEngine {
+
+    private static final String TAG = "TradingRuleEngine";
 
     public enum Action {
         NONE,
@@ -69,6 +73,10 @@ public class TradingRuleEngine {
 
     public static class PrevDayRef {
         public double prevClose, prevLow, prevHigh, prevOpen;
+        /** 【2026-08-20新增】昨日全天真实VWAP（成交量加权均价，来自RealtimeQuoteManager.
+         *  fetchPrevDayVwap()异步获取），不是近似值。<=0表示还没抓到（App刚重启或刚换新的一天，
+         *  异步请求还在路上），调用方（低开底仓路径）此时应跳过本轮判断，等下一轮tick自动重试。 */
+        public double prevAvgPrice;
         public String prevDate;
         public boolean hasData;
         public boolean isStale;
@@ -114,6 +122,31 @@ public class TradingRuleEngine {
             ref.hasData = true;
             ref.expectedDate = MarketDataManager.get().computeExpectedTradeDate();
             ref.isStale = ref.prevDate == null || ref.prevDate.compareTo(ref.expectedDate) < 0;
+
+            // 【2026-08-20新增】昨日全天真实VWAP——有缓存且日期对得上（同一个"昨日"）就直接用；
+            // 没有或者日期对不上（App刚重启、或者刚跨入新交易日还没抓过）就先给0，调用方
+            // （低开底仓路径）要自己处理"暂时没有，先跳过本轮评估"，同时这里顺手在后台异步
+            // 补抓一次，抓到后存进缓存，下一轮tick（60~120秒后）自然就有了，不会一直卡住。
+            Double cachedAvg = WatchlistManager.get().getPrevDayVwapIfMatches(code, ref.prevDate);
+            if (cachedAvg != null) {
+                ref.prevAvgPrice = cachedAvg;
+            } else {
+                ref.prevAvgPrice = 0;
+                RealtimeQuoteManager.get().fetchPrevDayVwap(code, (c, vwap, date) -> {
+                    if (vwap > 0 && date != null) {
+                        WatchlistManager.get().savePrevDayVwap(c, vwap, date);
+                        Log.i(TAG, "已获取" + c + "昨日(" + date + ")真实VWAP=" + String.format(Locale.CHINA, "%.4f", vwap));
+                        try {
+                            DecisionLogger.get().logPrevDayVwapFetch(c, true, vwap, date, null);
+                        } catch (Exception ignored) {}
+                    } else {
+                        Log.w(TAG, "获取" + c + "昨日真实VWAP失败，本轮低开路径底仓判断将跳过");
+                        try {
+                            DecisionLogger.get().logPrevDayVwapFetch(c, false, 0, null, "接口请求或解析失败");
+                        } catch (Exception ignored) {}
+                    }
+                });
+            }
         } catch (Exception ignored) {}
         return ref;
     }
@@ -162,7 +195,7 @@ public class TradingRuleEngine {
 
         // ── 持仓：止损优先 ──
         if (isHolding(status)) {
-            RuleResult stop = evaluateStopLoss(quote, prevDay, vol, state, hour, minute);
+            RuleResult stop = evaluateStopLoss(quote, prevDay, vol, state, pattern, hour, minute);
             if (stop.action != Action.NONE) {
                 stop.metrics = result.metrics + " | " + stop.metrics;
                 stop.stateUpdate = state;
@@ -226,45 +259,53 @@ public class TradingRuleEngine {
     // 买入：底仓
     // ══════════════════════════════════════════
 
+    /**
+     * 【2026-08-20 买入逻辑改造】底仓判断——按今开 vs 昨收分成两条路径，不再是单一的
+     * "水下(相对昨收)+站上今日VWAP+持续N分钟"。这是根据操盘手新材料重新梳理的：
+     *   低开(今开<昨收，视为示弱)：等现价站上"昨日全天真实VWAP"（不是昨收，是真正的
+     *   昨天成交量加权均价），站上即视为解套确认，不再额外要求持续分钟数。
+     *   高开/平开(今开大于等于昨收，不要求现价低于任何东西)：只要求现价回踩到当日VWAP、
+     *   不破，到了当日VWAP就算数——不再要求连续N分钟站稳，简化为即时判定。
+     * 这条改动直接解决了"股票一直卡在候选池、永远等不到买入提示"的问题——原来的实现只有
+     * "水下"这一条路径，一支高开/平开、一直在水线上方运行的强势股，不管它表现多好，
+     * 永远没有路径能触发底仓，这是之前版本的一个真实缺口，不是市场行情本身导致的。
+     */
     private RuleResult evaluateStarter(RealtimeQuoteManager.Quote quote, PrevDayRef prevDay,
                                         List<RealtimeQuoteManager.MinutePoint> minutePoints,
                                         VolumeCheck vol, double vwap, double waterLine, String metrics) {
+        boolean gapDown = quote.open > 0 && waterLine > 0 && quote.open < waterLine;
+        return gapDown
+                ? evaluateStarterGapDown(quote, prevDay, vol, waterLine, metrics)
+                : evaluateStarterGapUpOrFlat(quote, minutePoints, vol, vwap, waterLine, metrics);
+    }
+
+    /**
+     * 低开路径：今开 < 昨收，视为示弱，严禁在"昨日均价下方"直接买入。等现价站上"昨日全天
+     * 真实VWAP"（成交量加权均价，见RealtimeQuoteManager.fetchPrevDayVwap()注释）才打底仓——
+     * 站上意味着昨日被套资金解套、抛压减轻。如果现价一直在昨日均价下方运行，说明大部分
+     * 资金仍被套，坚决不介入，这是预期内的、不算bug。
+     */
+    private RuleResult evaluateStarterGapDown(RealtimeQuoteManager.Quote quote, PrevDayRef prevDay,
+                                               VolumeCheck vol, double waterLine, String metrics) {
         RuleResult result = new RuleResult();
         result.metrics = metrics;
 
-        boolean underwater = quote.price < waterLine;
-        if (!underwater) {
-            result.note = String.format(Locale.CHINA,
-                    "现价¥%.2f已在水线¥%.2f上方，底仓条件为【水下+站上VWAP】，本轮不满足——这支股票还没买过，“突破水线加仓”那一条只适用于已持底仓的股票，对这里不适用。如果它回踩到水线以下并站稳VWAP，会重新进入底仓判定；如果一直强势不回踩，按本套规则就不会触发买入，这是预期内的。",
-                    quote.price, waterLine);
+        if (prevDay.prevAvgPrice <= 0) {
+            result.note = "【低开路径】正在异步获取昨日全天真实均价数据，本轮暂不评估底仓，下一轮tick自动重试";
             return result;
         }
 
-        if (vwap <= 0) {
-            result.note = minutePoints == null || minutePoints.isEmpty()
-                    ? "分时数据缺失且无法从行情总量/总额倒推VWAP，继续观察"
-                    : "VWAP无效，继续观察";
-            return result;
-        }
-
-        if (quote.price < vwap) {
+        if (quote.price < prevDay.prevAvgPrice) {
             result.note = String.format(Locale.CHINA,
-                    "水下观察中：现价¥%.2f < VWAP¥%.2f，尚未站上分时均价，一股都不能买",
-                    quote.price, vwap);
-            return result;
-        }
-
-        int aboveMinutes = countConsecutiveAboveVwap(minutePoints);
-        if (aboveMinutes < mCfg.vwapConfirmMinutes) {
-            result.note = String.format(Locale.CHINA,
-                    "现价¥%.2f已高于VWAP¥%.2f，但仅持续%d分钟（需≥%d分钟确认），继续观察",
-                    quote.price, vwap, aboveMinutes, mCfg.vwapConfirmMinutes);
+                    "【低开路径】今开¥%.2f<昨收¥%.2f，现价¥%.2f仍低于昨日全天真实均价¥%.2f，尚未站上，大部分资金仍被套，暂不介入",
+                    quote.open, waterLine, quote.price, prevDay.prevAvgPrice);
             return result;
         }
 
         if (!vol.confirmed) {
             result.note = String.format(Locale.CHINA,
-                    "水下+站上VWAP已满足，但%s，暂不触发底仓信号（日量比%.2fx／近5分钟量比%.2fx，需达到%.2fx）",
+                    "【低开路径】现价¥%.2f已站上昨日全天真实均价¥%.2f，但%s，暂不触发底仓（日量比%.2fx／近5分钟量比%.2fx，需达到%.2fx）",
+                    quote.price, prevDay.prevAvgPrice,
                     vol.shrinkBreak ? "缩量突破，需等待放量确认" : "量比未达阈值",
                     vol.dayRatio, vol.recent5Ratio, vol.threshold);
             return result;
@@ -274,8 +315,68 @@ public class TradingRuleEngine {
         result.actionLabel = "建议底仓";
         result.triggerPrice = quote.price;
         result.note = String.format(Locale.CHINA,
-                "【%s】水下(¥%.2f<水线¥%.2f)+站上VWAP(¥%.2f≥¥%.2f，持续%d分钟)+放量确认(%s)",
-                result.actionLabel, quote.price, waterLine, quote.price, vwap, aboveMinutes, vol.detail);
+                "【%s·低开路径】今开¥%.2f<昨收¥%.2f(低开示弱)，现价¥%.2f已站上昨日全天真实均价¥%.2f(解套确认)+放量确认(%s)",
+                result.actionLabel, quote.open, waterLine, quote.price, prevDay.prevAvgPrice, vol.detail);
+        try {
+            DecisionLogger.get().logBuyLogicTrace("", quote.code, String.format(Locale.CHINA,
+                    "低开路径命中底仓：今开¥%.2f 昨收¥%.2f 昨日真实VWAP¥%.2f 现价¥%.2f",
+                    quote.open, waterLine, prevDay.prevAvgPrice, quote.price));
+        } catch (Exception ignored) {}
+        return result;
+    }
+
+    /**
+     * 高开/平开路径：今开大于等于昨收，不要求现价低于任何东西。只要求现价回踩到当日VWAP、
+     * 不破，到了当日VWAP就算数——这里故意简化成即时判定（检查最近10分钟低点是否守住VWAP
+     * 附近、当前价是否大于等于VWAP），不再像原来"水下路径"那样额外要求连续N分钟持续站稳。
+     */
+    private RuleResult evaluateStarterGapUpOrFlat(RealtimeQuoteManager.Quote quote,
+                                                   List<RealtimeQuoteManager.MinutePoint> minutePoints,
+                                                   VolumeCheck vol, double vwap, double waterLine, String metrics) {
+        RuleResult result = new RuleResult();
+        result.metrics = metrics;
+
+        if (vwap <= 0) {
+            result.note = "【高开/平开路径】VWAP数据无效，继续观察";
+            return result;
+        }
+
+        boolean pullbackHold = false;
+        if (minutePoints != null && !minutePoints.isEmpty()) {
+            int n = minutePoints.size();
+            int look = Math.min(10, n);
+            double minRecent = Double.MAX_VALUE;
+            for (int i = n - look; i < n; i++) {
+                if (minutePoints.get(i).price < minRecent) minRecent = minutePoints.get(i).price;
+            }
+            pullbackHold = minRecent >= vwap * 0.999 && quote.price >= vwap;
+        }
+
+        if (!pullbackHold) {
+            result.note = String.format(Locale.CHINA,
+                    "【高开/平开路径】今开大于等于昨收¥%.2f，现价¥%.2f VWAP¥%.2f，尚未回踩确认到分时均价附近，继续观察",
+                    waterLine, quote.price, vwap);
+            return result;
+        }
+
+        if (!vol.confirmed) {
+            result.note = String.format(Locale.CHINA,
+                    "【高开/平开路径】已回踩VWAP¥%.2f不破，但%s，暂不触发底仓（日量比%.2fx／近5分钟量比%.2fx，需达到%.2fx）",
+                    vwap, vol.shrinkBreak ? "缩量，需等待放量确认" : "量比未达阈值",
+                    vol.dayRatio, vol.recent5Ratio, vol.threshold);
+            return result;
+        }
+
+        result.action = Action.BUY_STARTER;
+        result.actionLabel = "建议底仓";
+        result.triggerPrice = quote.price;
+        result.note = String.format(Locale.CHINA,
+                "【%s·高开/平开路径】今开大于等于昨收¥%.2f，现价¥%.2f回踩分时均价¥%.2f不破+放量确认(%s)",
+                result.actionLabel, waterLine, quote.price, vwap, vol.detail);
+        try {
+            DecisionLogger.get().logBuyLogicTrace("", quote.code, String.format(Locale.CHINA,
+                    "高开/平开路径命中底仓：昨收¥%.2f 当日VWAP¥%.2f 现价¥%.2f", waterLine, vwap, quote.price));
+        } catch (Exception ignored) {}
         return result;
     }
 
@@ -378,23 +479,46 @@ public class TradingRuleEngine {
 
     private RuleResult evaluateStopLoss(RealtimeQuoteManager.Quote quote, PrevDayRef prevDay,
                                          VolumeCheck vol, DivergenceState state,
-                                         int hour, int minute) {
+                                         PatternRef pattern, int hour, int minute) {
         RuleResult result = new RuleResult();
         double mid = computeStopMid(prevDay, state);
         double divLow = state.divKLow;
         double yangLow = state.prevYangLow;
+        // 【2026-08-20改造·方案B】独立破位止损参照价改成固定的"选股当天(形态日)最低价"，
+        // 不再用会随时间推移变化的"最近一根阳线最低价"。有形态日数据就用形态日最低价；
+        // 没有(比如手动同步进来的持仓，没走过选股流程)就退回旧的动态前阳线最低价兜底，
+        // 保证止损这个安全网任何情况下都不会彻底失效。
+        boolean usePatternLow = pattern != null && pattern.hasData && pattern.low > 0;
+        double stopRefPrice = usePatternLow ? pattern.low : yangLow;
+        String stopRefLabel = usePatternLow
+                ? String.format(Locale.CHINA, "形态日(%s)最低价", pattern.date != null ? pattern.date : "?")
+                : "前一根阳线最低价(无形态日数据，动态兜底)";
 
-        // 独立破位：前一根阳线最低价
-        if (yangLow > 0 && quote.price < yangLow) {
+        // 独立破位：固定参照选股当天(形态日)最低价——方案B
+        if (stopRefPrice > 0 && quote.price < stopRefPrice) {
             if (vol.shrinkBreak && !vol.confirmed) {
                 return buildWarnPressure(quote, prevDay, state,
-                        String.format(Locale.CHINA, "缩量跌破前阳低¥%.2f，降级为抛压观察", yangLow));
+                        String.format(Locale.CHINA, "缩量跌破%s¥%.2f，降级为抛压观察", stopRefLabel, stopRefPrice));
             }
-            return buildStopLoss(quote, StopLevel.YANG_BREAK, yangLow,
+            // 【2026-08-20改造】盘中瞬间跌破不算数，要等到收盘前patternLowStopNotifyMinutes分钟
+            // 仍未收复才真正确认离场——过滤掉日内插针/主力洗盘造成的误判。这个窗口跟"二级：
+            // 分歧K线中点"用的是两个独立配置(patternLowStopNotifyMinutes vs stopNotifyMinutesBeforeClose)。
+            boolean inWindow = isStopNotifyWindowMinutes(mCfg.patternLowStopNotifyMinutes);
+            RuleResult r = buildStopLoss(quote, StopLevel.YANG_BREAK, stopRefPrice,
                     String.format(Locale.CHINA,
-                            "【建议立即清仓止损】跌破前一根阳线最低价¥%.2f（独立破位规则），现价¥%.2f，%s",
-                            yangLow, quote.price, vol.detail),
-                    true, state);
+                            "【建议立即清仓止损】跌破%s¥%.2f（独立破位规则），现价¥%.2f，%s",
+                            stopRefLabel, stopRefPrice, quote.price, vol.detail),
+                    inWindow, state);
+            if (!inWindow) {
+                r.note += String.format(Locale.CHINA, "（盘中瞬间跌破不算，将持续观察到收盘前%d分钟仍未收复才确认离场并推送提醒）",
+                        mCfg.patternLowStopNotifyMinutes);
+            }
+            try {
+                DecisionLogger.get().logBuyLogicTrace("", quote.code, String.format(Locale.CHINA,
+                        "独立破位止损判定：参照=%s(¥%.2f) 现价¥%.2f 是否已进入收盘前%d分钟确认窗口=%s",
+                        stopRefLabel, stopRefPrice, quote.price, mCfg.patternLowStopNotifyMinutes, inWindow));
+            } catch (Exception ignored) {}
+            return r;
         }
 
         // 三级：分歧K线最低点
@@ -680,6 +804,20 @@ public class TradingRuleEngine {
         long closeMs = cal.getTimeInMillis();
         long nowMs = System.currentTimeMillis();
         long windowMs = mCfg.stopNotifyMinutesBeforeClose * 60_000L;
+        return closeMs - nowMs <= windowMs && nowMs <= closeMs;
+    }
+
+    /** 跟 isStopNotifyWindow(hour, minute) 逻辑一样，只是窗口分钟数可以单独指定——独立破位
+     *  止损用自己单独配置的 patternLowStopNotifyMinutes，跟分歧K线中点用的
+     *  stopNotifyMinutesBeforeClose 是两个独立的配置项，互不影响，可以分别调整。 */
+    boolean isStopNotifyWindowMinutes(int minutesBeforeClose) {
+        Calendar cal = Calendar.getInstance();
+        cal.set(Calendar.HOUR_OF_DAY, mCfg.marketCloseHour);
+        cal.set(Calendar.MINUTE, mCfg.marketCloseMinute);
+        cal.set(Calendar.SECOND, 0);
+        long closeMs = cal.getTimeInMillis();
+        long nowMs = System.currentTimeMillis();
+        long windowMs = minutesBeforeClose * 60_000L;
         return closeMs - nowMs <= windowMs && nowMs <= closeMs;
     }
 
