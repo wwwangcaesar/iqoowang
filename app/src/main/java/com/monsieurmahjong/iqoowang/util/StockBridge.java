@@ -225,30 +225,51 @@ public class StockBridge implements RealtimeMonitorService.Listener {
     public long recordTrade(String code, String name, String direction,
                             double price, int quantity, String signalType, int aiScore) {
         int sellableBefore = "SELL".equals(direction) ? mDb.getSellableQuantity(code) : 0;
-        try {
-            long id = mDb.insertTrade(code, name, direction, price, quantity, signalType, aiScore);
-            try {
-                DecisionLogger.get().logManualTrade(name, code, direction, price, quantity, id, sellableBefore);
-            } catch (Exception e) {
-                Log.e(TAG, "写手动交易日志失败", e);
-            }
-            if (id > 0 && "SELL".equals(direction)) {
-                // 卖出成交后：按真实盈亏给本地AI加经验，并检查这次卖出是否让持仓彻底清零——
-                // 清零说明"买入到卖出"一个完整周期结束了，记一条待复盘，不自动跑AI
-                com.monsieurmahjong.iqoowang.dao.TradeRecord justInserted = findTradeById(id);
-                double realizedPnl = justInserted != null ? justInserted.getRealizedPnl() : 0;
-                mAgent.gainExpFromTrade(realizedPnl);
 
-                com.monsieurmahjong.iqoowang.dao.Position posAfter = mDb.getPositionByCode(code);
-                if (posAfter == null || posAfter.getQuantity() <= 0) {
-                    TradeLessonManager.get().markCycleClosed(code, name, id, System.currentTimeMillis());
-                }
-            }
-            return id;
+        // 【2026-08-27修复】只有这一步（真正写数据库）失败才允许返回-1。
+        // 之前整个方法体共用一个try/catch，导致下面"锦上添花"的辅助记录（AI经验值、
+        // 待复盘登记、日志）里任何一步抛异常，都会被这个外层catch吞掉、让已经成功的
+        // 交易被误判成失败——真实发生过的例子：TradeLessonManager忘了init()，
+        // 导致每次整仓清仓都在这里炸出IllegalStateException，进而让前端弹出
+        // "卖出失败，请检查持仓"，但数据库其实早已正确清空持仓，只有重启App才能看到真相。
+        long id;
+        try {
+            id = mDb.insertTrade(code, name, direction, price, quantity, signalType, aiScore);
         } catch (Exception e) {
             Log.e(TAG, "recordTrade error", e);
             return -1;
         }
+
+        try {
+            DecisionLogger.get().logManualTrade(name, code, direction, price, quantity, id, sellableBefore);
+        } catch (Exception e) {
+            Log.e(TAG, "写手动交易日志失败（不影响本笔交易结果）", e);
+        }
+
+        if (id > 0 && "SELL".equals(direction)) {
+            // 卖出成交后：按真实盈亏给本地AI加经验。单独try/catch，
+            // 这一步出问题不该连累下面"标记待复盘"也执行不到。
+            try {
+                com.monsieurmahjong.iqoowang.dao.TradeRecord justInserted = findTradeById(id);
+                double realizedPnl = justInserted != null ? justInserted.getRealizedPnl() : 0;
+                mAgent.gainExpFromTrade(realizedPnl);
+            } catch (Exception e) {
+                Log.e(TAG, "交易后AI经验值更新失败（不影响本笔交易结果）", e);
+            }
+
+            // 检查这次卖出是否让持仓彻底清零——清零说明"买入到卖出"一个完整周期结束了，
+            // 记一条待复盘，不自动跑AI。同样单独try/catch，绝不能让这里的失败
+            // 反过来让上面已经成功的insertTrade被报告为失败。
+            try {
+                com.monsieurmahjong.iqoowang.dao.Position posAfter = mDb.getPositionByCode(code);
+                if (posAfter == null || posAfter.getQuantity() <= 0) {
+                    TradeLessonManager.get().markCycleClosed(code, name, id, System.currentTimeMillis());
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "标记待复盘周期失败（不影响本笔交易结果）", e);
+            }
+        }
+        return id;
     }
     /** 账户核心数据（现金/总资产/总盈亏/今日盈亏），WebView启动和每次交易后都要刷新这个 */
     @JavascriptInterface

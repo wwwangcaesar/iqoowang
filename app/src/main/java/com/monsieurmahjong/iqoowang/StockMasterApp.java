@@ -56,6 +56,16 @@ public class StockMasterApp extends Application {
         com.monsieurmahjong.iqoowang.util.WisdomManager.init(this);
         Log.i(TAG, "WisdomManager initialized");
 
+        // 初始化交易周期复盘知识库（买入到清仓的完整周期记录）。
+        // 【2026-08-27修复】这一行之前遗漏了——TradeLessonManager.get()在没有init()的情况下
+        // 会抛IllegalStateException。这个异常发生在StockBridge.recordTrade()清仓卖出分支里，
+        // 导致本来已经成功写库的整仓卖出被外层catch吞掉、误判成交易失败返回-1，
+        // 前端因此弹"卖出失败，请检查持仓"，而实际上数据库已经正确清空了这笔持仓——
+        // 只有重启App重新读库才会发现其实卖成功了。同时因为markCycleClosed()从未真正执行成功，
+        // "AI大脑"页的待复盘交易列表也永远不会出现任何完全卖出的股票。
+        com.monsieurmahjong.iqoowang.util.TradeLessonManager.init(this);
+        Log.i(TAG, "TradeLessonManager initialized");
+
         // 初始化决策日志（每次规则+AI判断都记录到本地文件，供事后复盘）
         com.monsieurmahjong.iqoowang.util.DecisionLogger.init(this);
         Log.i(TAG, "DecisionLogger initialized");
