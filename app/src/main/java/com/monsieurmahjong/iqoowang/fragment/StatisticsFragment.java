@@ -14,10 +14,11 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
-
+import android.content.Intent;
 import com.monsieurmahjong.iqoowang.R;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
+import com.monsieurmahjong.iqoowang.map.MapExploreActivity;
 import com.monsieurmahjong.iqoowang.utils.AnimationUtils;
 import com.monsieurmahjong.iqoowang.view.PercentagePieChartView;
 import com.monsieurmahjong.iqoowang.view.SegmentedControlView;
@@ -75,6 +76,13 @@ public class StatisticsFragment extends Fragment {
         tvActiveDays = view.findViewById(R.id.tv_active_days);
         ImageView tvCalendarMonth = view.findViewById(R.id.iv_calendar);
         tvCalendarMonth.setOnClickListener(v -> openCalendarDialog());
+
+        View btnMapExplore = view.findViewById(R.id.btn_map_explore);
+        if (btnMapExplore != null) {
+            btnMapExplore.setOnClickListener(v ->
+                    startActivity(new Intent(requireContext(), MapExploreActivity.class)));
+        }
+
         db = AppDatabase.getDatabase(requireContext());
 
         setupChartInteractions();

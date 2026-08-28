@@ -33,7 +33,6 @@ import com.monsieurmahjong.iqoowang.dao.Expense;
 import com.monsieurmahjong.iqoowang.pet.PetActivity;
 import com.monsieurmahjong.iqoowang.piggy.PiggyBankActivity;
 import com.monsieurmahjong.iqoowang.streak.StreakActivity;
-import com.monsieurmahjong.iqoowang.map.MapExploreActivity;
 import com.monsieurmahjong.iqoowang.service.ShakeDetectService;
 import com.monsieurmahjong.iqoowang.utils.AccessibilityStatusUtils;
 import com.monsieurmahjong.iqoowang.utils.AchievementCelebrationDialog;
@@ -188,12 +187,6 @@ public class SettingsFragment extends Fragment {
         }
         setupBudgetSlider();
         setupShakeToggle();
-
-        CardView cardMapExplore = view.findViewById(R.id.card_map_explore);
-        if (cardMapExplore != null) {
-            cardMapExplore.setOnClickListener(v ->
-                    startActivity(new Intent(requireContext(), MapExploreActivity.class)));
-        }
 
         // 加载家庭新闻（模拟网络请求）
         loadFamilyNews();
