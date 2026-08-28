@@ -191,15 +191,45 @@ public class LocationMapActivity extends AppCompatActivity implements RouteSearc
      * 定位那一步坚持用高德自己的定位 SDK（见 LocationHelper），坐标系从头到尾保持一致。
      */
     private void openAmapNavigation(double lat, double lon, String name) {
-        String uri = "amapuri://route/plan/?sourceApplication=iqoowang"
-                + "&dlat=" + lat + "&dlon=" + lon
-                + "&dname=" + Uri.encode(name)
-                + "&dev=0&t=0";
-        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uri));
-        intent.setPackage(AMAP_PACKAGE);
-        if (intent.resolveActivity(getPackageManager()) != null) {
-            startActivity(intent);
-        } else {
+        try {
+            // 优先使用 Android 高德地图原生 Scheme (androidamap://)
+            // t=0 为驾车，dev=0 为 GCJ-02 坐标系（高德坐标）
+            String uriString = "androidamap://route/plan/?sourceApplication=iqoowang"
+                    + "&dlat=" + lat
+                    + "&dlon=" + lon
+                    + "&dname=" + Uri.encode(name)
+                    + "&dev=0&t=0";
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriString));
+            intent.setPackage(AMAP_PACKAGE);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+
+            if (intent.resolveActivity(getPackageManager()) != null) {
+                startActivity(intent);
+                return;
+            }
+
+            // 降级使用通用的 amapuri://
+            String fallbackUri = "amapuri://route/plan/?sourceApplication=iqoowang"
+                    + "&dlat=" + lat
+                    + "&dlon=" + lon
+                    + "&dname=" + Uri.encode(name)
+                    + "&dev=0&t=0";
+            Intent fallbackIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUri));
+            fallbackIntent.setPackage(AMAP_PACKAGE);
+            fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            if (fallbackIntent.resolveActivity(getPackageManager()) != null) {
+                startActivity(fallbackIntent);
+                return;
+            }
+
+            // 降级使用外部浏览器唤起高德
+            String webUri = "https://uri.amap.com/navigation?to=" + lon + "," + lat + "," + Uri.encode(name)
+                    + "&mode=car&src=iqoowang&coordinate=gaode&callnative=1";
+            Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(webUri));
+            webIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(webIntent);
+        } catch (Exception e) {
+            Log.e(TAG, "唤起高德导航异常", e);
             Toast.makeText(this, "未安装高德地图，无法导航", Toast.LENGTH_SHORT).show();
         }
     }

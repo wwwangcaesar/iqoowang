@@ -22,6 +22,7 @@ import com.monsieurmahjong.iqoowang.R;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
 import com.monsieurmahjong.iqoowang.dao.Expense;
 import com.monsieurmahjong.iqoowang.map.LocationMapActivity;
+import com.monsieurmahjong.iqoowang.map.LocationPickerActivity;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -66,22 +67,33 @@ public class EditExpenseDialog {
 
         setupCategoryDropdown(activity, db, dv.etCategory, currentCategory);
 
-        // 位置信息：只有已经有经纬度的记录才显示这一行。currentLocationName 用单元素数组包一层，
-        // 是因为长按改名要在内部的 AlertDialog 回调里改这个值，保存按钮的回调里还要读到改名后的
+        // 位置信息：只有已经有经纬度的记录才显示这一行。用单元素数组包一层，
+        // 是因为长按地图校准要在回调里改这些值，保存按钮的回调里还要读到改名/校准后的
         // 结果——lambda 里能捕获的局部变量必须是"事实上的 final"，包一层数组绕开这个限制。
         Double lat = expense.getLatitude();
         Double lon = expense.getLongitude();
+        final Double[] currentLat = {lat};
+        final Double[] currentLon = {lon};
         final String[] currentLocationName = {expense.getLocationName()};
+        final String[] currentProvince = {expense.getProvince()};
+        final String[] currentCity = {expense.getCity()};
+        final String[] currentDistrict = {expense.getDistrict()};
+        final String[] currentAdCode = {expense.getAdCode()};
+
         if (lat != null && lon != null) {
             dv.tvLocation.setVisibility(View.VISIBLE);
             refreshLocationText(dv.tvLocation, currentLocationName[0]);
 
             dv.tvLocation.setOnLongClickListener(v -> {
-                showRenameLocationDialog(activity, dv.tvLocation, currentLocationName);
+                openLocationPicker(activity, dv, currentLocationName, currentLat, currentLon,
+                        currentProvince, currentCity, currentDistrict, currentAdCode);
                 return true;
             });
-            dv.tvLocation.setOnClickListener(v ->
-                    openLocationMap(activity, lat, lon, currentLocationName[0]));
+            dv.tvLocation.setOnClickListener(v -> {
+                if (currentLat[0] != null && currentLon[0] != null) {
+                    openLocationMap(activity, currentLat[0], currentLon[0], currentLocationName[0]);
+                }
+            });
         }
 
         dv.btnSave.setOnClickListener(v -> {
@@ -99,8 +111,14 @@ public class EditExpenseDialog {
                 expense.setAmount(newAmountCents);
                 expense.setCategoryName(newCategory.isEmpty() ? "其他支出" : newCategory);
                 expense.setRemark(newRemark);
-                if (lat != null && lon != null) {
+                if (currentLat[0] != null && currentLon[0] != null) {
+                    expense.setLatitude(currentLat[0]);
+                    expense.setLongitude(currentLon[0]);
                     expense.setLocationName(currentLocationName[0]);
+                    expense.setProvince(currentProvince[0]);
+                    expense.setCity(currentCity[0]);
+                    expense.setDistrict(currentDistrict[0]);
+                    expense.setAdCode(currentAdCode[0]);
                 }
 
                 new Thread(() -> {
@@ -284,22 +302,43 @@ public class EditExpenseDialog {
         tvLocation.setText("📍 " + (name != null && !name.trim().isEmpty() ? name : "未命名地点"));
     }
 
-    /** 长按位置信息弹出的重命名输入框，和"新增分类"用的是同一套 AlertDialog+EditText 模式 */
-    private static void showRenameLocationDialog(Context ctx, TextView tvLocation, String[] currentLocationName) {
-        EditText input = new EditText(ctx);
-        input.setHint("位置名称");
-        if (currentLocationName[0] != null) input.setText(currentLocationName[0]);
+    /**
+     * 长按位置信息：跳转到高德地图底图校准页面，拖动地图/图钉手动校准位置。
+     * 确认后更新 tvLocation 显示及经纬度、省市区字段。
+     */
+    private static void openLocationPicker(Activity activity,
+                                           DialogViews dv,
+                                           String[] currentLocationName,
+                                           Double[] currentLat,
+                                           Double[] currentLon,
+                                           String[] currentProvince,
+                                           String[] currentCity,
+                                           String[] currentDistrict,
+                                           String[] currentAdCode) {
+        LocationPickerActivity.setOnLocationPickedListener((lat, lon, name, province, city, district, adCode) -> {
+            currentLat[0] = lat;
+            currentLon[0] = lon;
+            currentLocationName[0] = name;
+            currentProvince[0] = province;
+            currentCity[0] = city;
+            currentDistrict[0] = district;
+            currentAdCode[0] = adCode;
 
-        new AlertDialog.Builder(ctx)
-                .setTitle("修改位置名称")
-                .setView(input)
-                .setPositiveButton("确定", (d, which) -> {
-                    String newName = input.getText().toString().trim();
-                    currentLocationName[0] = newName.isEmpty() ? null : newName;
-                    refreshLocationText(tvLocation, currentLocationName[0]);
-                })
-                .setNegativeButton("取消", null)
-                .show();
+            activity.runOnUiThread(() -> {
+                refreshLocationText(dv.tvLocation, name);
+                Toast.makeText(activity, "位置已校准: " + name, Toast.LENGTH_SHORT).show();
+            });
+        });
+
+        Intent intent = new Intent(activity, LocationPickerActivity.class);
+        intent.putExtra(LocationPickerActivity.EXTRA_LAT, currentLat[0] != null ? currentLat[0] : 39.9042);
+        intent.putExtra(LocationPickerActivity.EXTRA_LON, currentLon[0] != null ? currentLon[0] : 116.4074);
+        intent.putExtra(LocationPickerActivity.EXTRA_NAME, currentLocationName[0]);
+        intent.putExtra(LocationPickerActivity.EXTRA_PROVINCE, currentProvince[0]);
+        intent.putExtra(LocationPickerActivity.EXTRA_CITY, currentCity[0]);
+        intent.putExtra(LocationPickerActivity.EXTRA_DISTRICT, currentDistrict[0]);
+        intent.putExtra(LocationPickerActivity.EXTRA_ADCODE, currentAdCode[0]);
+        activity.startActivity(intent);
     }
 
     /** 跳转到独立的地图页面，展示这笔账单记录时的位置 */

@@ -6,6 +6,10 @@
          即使安装了高德地图，resolveActivity 也可能查不到，误判成未安装 -->
     <queries>
         <package android:name="com.autonavi.minimap" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="androidamap" />
+        </intent>
     </queries>
 
     <uses-permission android:name="android.permission.CAMERA" />
@@ -119,6 +123,9 @@
             android:exported="false" />
         <activity
             android:name=".map.LocationMapActivity"
+            android:exported="false" />
+        <activity
+            android:name=".map.LocationPickerActivity"
             android:exported="false" />
         <activity
             android:name=".map.MapExploreActivity"
