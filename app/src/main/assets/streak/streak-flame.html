@@ -38,16 +38,26 @@
   @keyframes badgePop{ 0%{transform:scale(0) rotate(-8deg);} 65%{transform:scale(1.12) rotate(3deg);} 100%{transform:scale(1) rotate(0deg);} }
   .streak-badge .mini-flame{ width:22px;height:22px; }
   .streak-badge b{ font-size:15px; }
+
+  /* 舞台区域与深色背景平滑渐变层 */
   .stage{ position:relative; height:280px; display:flex; align-items:center; justify-content:center; margin-top:6px; }
+  .stage-dark-backdrop{
+    position:absolute; width:340px; height:340px; border-radius:50%;
+    background:radial-gradient(circle, rgba(16,10,26,0.85) 0%, rgba(25,15,38,0.65) 45%, rgba(35,20,50,0.2) 70%, transparent 100%);
+    opacity:0; transition:opacity 1.0s cubic-bezier(0.4, 0, 0.2, 1);
+    pointer-events:none; z-index:0;
+  }
+  .stage-dark-backdrop.active{ opacity:1; }
+
   .flame-glow{
     position:absolute; width:200px; height:200px; border-radius:50%;
     background:radial-gradient(circle, rgba(255,180,60,.0) 0%, rgba(255,180,60,0) 100%);
-    filter:blur(4px); transition:background 1s ease;
+    filter:blur(4px); transition:background 1s ease; z-index:1;
   }
   .flame-glow.lit{ animation:glowPulse 2.6s ease-in-out infinite; }
   @keyframes glowPulse{ 0%,100%{ transform:scale(.95); opacity:.85;} 50%{ transform:scale(1.08); opacity:1;} }
-  .flame-wrap{ position:relative; width:150px; height:190px; }
-  .flame-poke-wrap{ position:relative; width:150px; height:190px; cursor:pointer; }
+  .flame-wrap{ position:relative; width:150px; height:190px; z-index:2; }
+  .flame-poke-wrap{ position:relative; width:150px; height:190px; cursor:pointer; z-index:2; }
   .flame-poke-wrap.poked{ animation:pokeBump .22s cubic-bezier(.34,1.56,.64,1); }
   @keyframes pokeBump{
     0%{ transform:scale(1) rotate(0deg); }
@@ -193,6 +203,8 @@
     </div>
   </div>
   <div class="stage">
+    <!-- 火焰周围大圈深色过渡层 -->
+    <div class="stage-dark-backdrop" id="stageDarkBackdrop"></div>
     <div class="flame-glow" id="flameGlow"></div>
     <div class="combo-text" id="comboText"></div>
     <div class="flame-poke-wrap" id="flamePokeWrap" onclick="pokeFlame(event)">
@@ -362,7 +374,7 @@ function renderBase(){
   applyFlameVisual();
 }
 
-/* ---- Canvas FX ---- */
+/* ---- Canvas FX 系统 ---- */
 const cvs = document.getElementById('fx');
 const ctx = cvs.getContext('2d');
 function resize(){ cvs.width=innerWidth*devicePixelRatio; cvs.height=innerHeight*devicePixelRatio; cvs.style.width=innerWidth+'px'; cvs.style.height=innerHeight+'px'; ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); }
@@ -371,7 +383,7 @@ resize(); addEventListener('resize', resize);
 let particles = [];
 function flameCenter(){
   const r = document.getElementById('flameWrap').getBoundingClientRect();
-  return {x:r.left+r.width/2, y:r.top+r.height*0.35};
+  return {x:r.left+r.width/2, y:r.top+r.height*0.38};
 }
 function spawnEmber(){
   if(!state.checkedToday) return;
@@ -387,136 +399,217 @@ function spawnConfetti(cx,cy,count){
 }
 function spawnSmoke(cx, cy, count){
   for(let i=0;i<count;i++){
-    const ang = -Math.PI/2 + (Math.random()-.5)*1.2;
-    const spd = 0.4 + Math.random()*0.6;
-    particles.push({ x:cx+(Math.random()-.5)*30, y:cy+10, vx:Math.cos(ang)*spd, vy:Math.sin(ang)*spd, life:1, decay:0.008+Math.random()*0.006, r:10+Math.random()*14, type:'smoke', spin:(Math.random()-.5)*0.03, angle:0 });
+    const ang = -Math.PI/2 + (Math.random()-.5)*1.4;
+    const spd = 0.5 + Math.random()*0.8;
+    particles.push({ x:cx+(Math.random()-.5)*40, y:cy+20, vx:Math.cos(ang)*spd, vy:Math.sin(ang)*spd, life:1, decay:0.006+Math.random()*0.005, r:14+Math.random()*18, type:'smoke', spin:(Math.random()-.5)*0.03, angle:0 });
   }
 }
 let shockwaves = [];
 function spawnShockwave(cx, cy, color){
-  shockwaves.push({ x:cx, y:cy, r:10, maxR:120, life:1, color:color||'#FFC93C' });
+  shockwaves.push({ x:cx, y:cy, r:10, maxR:160, life:1, color:color||'#FFC93C' });
 }
+
+/* ---- 大范围高亮电弧闪电系统 ---- */
 let lightningBolts = [];
-function createLightningBolt(x1,y1,x2,y2,depth){
+function createLightningBolt(x1,y1,x2,y2,depth,dispFactor){
+  dispFactor = dispFactor || 0.45;
   if(depth<=0) return [{x:x1,y:y1},{x:x2,y:y2}];
-  const mx=(x1+x2)/2 + (Math.random()-.5)*(Math.hypot(x2-x1,y2-y1)*0.4);
-  const my=(y1+y2)/2 + (Math.random()-.5)*(Math.hypot(x2-x1,y2-y1)*0.4);
-  return createLightningBolt(x1,y1,mx,my,depth-1).concat(createLightningBolt(mx,my,x2,y2,depth-1));
+  const dist = Math.hypot(x2-x1, y2-y1);
+  const mx = (x1+x2)/2 + (Math.random()-.5)*(dist * dispFactor);
+  const my = (y1+y2)/2 + (Math.random()-.5)*(dist * dispFactor);
+  let segs = createLightningBolt(x1,y1,mx,my,depth-1,dispFactor).concat(createLightningBolt(mx,my,x2,y2,depth-1,dispFactor));
+  // 随机生成分叉子电弧
+  if(depth >= 2 && Math.random() < 0.42){
+    const forkAng = Math.atan2(y2-y1, x2-x1) + (Math.random()>0.5 ? 0.7 : -0.7);
+    const forkLen = dist * 0.4;
+    const fx = mx + Math.cos(forkAng)*forkLen;
+    const fy = my + Math.sin(forkAng)*forkLen;
+    segs = segs.concat(createLightningBolt(mx,my,fx,fy,depth-2,dispFactor*0.8));
+  }
+  return segs;
 }
-function spawnLightning(cx, cy){
-  const count = 3 + Math.floor(Math.random()*3);
-  for(let i=0;i<count;i++){
-    const ang = Math.random()*Math.PI*2;
-    const len = 50 + Math.random()*60;
-    const ex = cx + Math.cos(ang)*len;
-    const ey = cy + Math.sin(ang)*len;
-    const pts = createLightningBolt(cx,cy,ex,ey,4);
-    const colors = ['#AAFFFF','#FFFFFF','#CCE5FF','#FFFAAA'];
-    lightningBolts.push({ pts:pts, life:1, decay:0.06+Math.random()*0.06, color:colors[Math.floor(Math.random()*colors.length)], width:1.2+Math.random() });
+
+function spawnLightningBurst(cx, cy){
+  const colors = ['#00FFFF', '#FFFFFF', '#70E5FF', '#FFE600', '#E0B0FF'];
+  // 连续劈出 4 波闪电电弧，覆盖大范围
+  for(let wave=0; wave<4; wave++){
+    setTimeout(function(){
+      const boltCount = 4 + Math.floor(Math.random()*4);
+      for(let i=0; i<boltCount; i++){
+        const ang = (i / boltCount) * Math.PI * 2 + (Math.random() - 0.5)*0.8;
+        const len = 110 + Math.random()*110; // 大范围延伸（110~220px）
+        const ex = cx + Math.cos(ang)*len;
+        const ey = cy + Math.sin(ang)*len;
+        const pts = createLightningBolt(cx, cy, ex, ey, 4, 0.42);
+        const col = colors[Math.floor(Math.random()*colors.length)];
+        lightningBolts.push({
+          pts: pts, life: 1, decay: 0.05 + Math.random()*0.04,
+          color: col, width: 2.2 + Math.random()*1.8
+        });
+        // 在电弧末端产生火花闪烁
+        for(let s=0; s<2; s++){
+          particles.push({
+            x: ex, y: ey, vx: (Math.random()-.5)*3.5, vy: (Math.random()-.5)*3.5,
+            life: 1, decay: 0.03 + Math.random()*0.02, r: 2.5 + Math.random()*2,
+            color: col, type: 'spark'
+          });
+        }
+      }
+    }, wave * 130);
   }
 }
+
 let lcActive=false, lcAlpha=0, lcDir=1, lcCx=0, lcCy=0, lcAngle=0;
 function activateLightCurtain(cx, cy){
   lcActive=true; lcCx=cx; lcCy=cy; lcAlpha=0; lcDir=1;
-  setTimeout(function(){ lcDir=-1; }, 2200);
-  setTimeout(function(){ lcActive=false; }, 3200);
+  setTimeout(function(){ lcDir=-1; }, 2400);
+  setTimeout(function(){ lcActive=false; }, 3400);
 }
 
-/* ---- Random FX scheduler ---- */
+/* ---- 随机特效调度：提前 1 秒淡入深色背景，随后触发特效 ---- */
 const FX_TYPES = ['lightning','smoke','shockwave','curtain'];
 let fxCooldown = false;
+
 function playRandomFx(){
   if(!state.checkedToday || fxCooldown) return;
   fxCooldown = true;
+
+  const darkBackdrop = document.getElementById('stageDarkBackdrop');
+  // 1. 提前 1 秒平滑淡入火焰周围的深色暗场
+  if(darkBackdrop) darkBackdrop.classList.add('active');
+
   const c = flameCenter();
   const type = FX_TYPES[Math.floor(Math.random()*FX_TYPES.length)];
-  if(type==='lightning'){
-    spawnLightning(c.x, c.y-30);
-    setTimeout(function(){ spawnLightning(c.x, c.y-20); }, 180);
-    setTimeout(function(){ spawnLightning(c.x, c.y-10); }, 360);
-  } else if(type==='smoke'){
-    spawnSmoke(c.x, c.y, 18);
-  } else if(type==='shockwave'){
-    spawnShockwave(c.x, c.y+20);
-    setTimeout(function(){ spawnShockwave(c.x,c.y+20,'#FFE0A0'); }, 350);
-  } else if(type==='curtain'){
-    activateLightCurtain(c.x, c.y+60);
-  }
-  const next = 4000 + Math.random()*5000;
-  setTimeout(function(){ fxCooldown=false; }, next);
+
+  // 2. 1秒后平滑开始随机特效
+  setTimeout(function(){
+    let duration = 2200;
+    if(type === 'lightning'){
+      duration = 2400;
+      spawnLightningBurst(c.x, c.y - 15);
+    } else if(type === 'smoke'){
+      duration = 2800;
+      spawnSmoke(c.x, c.y, 28);
+    } else if(type === 'shockwave'){
+      duration = 2200;
+      spawnShockwave(c.x, c.y+20, '#FFC93C');
+      setTimeout(function(){ spawnShockwave(c.x, c.y+20, '#FFE0A0'); }, 300);
+      setTimeout(function(){ spawnShockwave(c.x, c.y+20, '#80FFFF'); }, 600);
+    } else if(type === 'curtain'){
+      duration = 3200;
+      activateLightCurtain(c.x, c.y+60);
+    }
+
+    // 3. 特效播放完成后，平滑淡出深色背景
+    setTimeout(function(){
+      if(darkBackdrop) darkBackdrop.classList.remove('active');
+    }, duration);
+
+  }, 1000);
+
+  // 下次随机特效：6~11 秒后
+  const next = 6500 + Math.random()*5000;
+  setTimeout(function(){ fxCooldown = false; }, next);
 }
+
 function scheduleFxLoop(){
-  const delay = 4500 + Math.random()*5000;
+  const delay = 5000 + Math.random()*5000;
   setTimeout(function(){ playRandomFx(); scheduleFxLoop(); }, delay);
 }
 setTimeout(function(){ playRandomFx(); scheduleFxLoop(); }, 2000);
 
-/* ---- Main render loop ---- */
+/* ---- 主渲染循环 ---- */
 let emberTick=0;
 function tick(){
   ctx.clearRect(0,0,innerWidth,innerHeight);
   emberTick++;
   if(emberTick%5===0) spawnEmber();
-  /* Light curtain */
+
+  /* 底层光幕法阵 */
   if(lcActive){
     lcAngle+=0.012;
-    if(lcDir>0) lcAlpha=Math.min(0.72,lcAlpha+0.018);
-    else lcAlpha=Math.max(0,lcAlpha-0.015);
-    const cx=lcCx, cy=lcCy, R=90;
-    ctx.save(); ctx.globalAlpha=lcAlpha*0.45;
-    for(let i=0;i<12;i++){
-      const a=lcAngle+(i/12)*Math.PI*2;
+    if(lcDir>0) lcAlpha=Math.min(0.78, lcAlpha+0.018);
+    else lcAlpha=Math.max(0, lcAlpha-0.015);
+    const cx=lcCx, cy=lcCy, R=120;
+    ctx.save(); ctx.globalAlpha=lcAlpha*0.55;
+    for(let i=0;i<14;i++){
+      const a=lcAngle+(i/14)*Math.PI*2;
       const grd=ctx.createLinearGradient(cx,cy,cx+Math.cos(a)*R,cy+Math.sin(a)*R);
-      grd.addColorStop(0,'rgba(255,200,80,0.7)'); grd.addColorStop(1,'rgba(255,160,40,0)');
+      grd.addColorStop(0,'rgba(255,220,100,0.85)'); grd.addColorStop(1,'rgba(255,140,40,0)');
       ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+Math.cos(a)*R,cy+Math.sin(a)*R);
-      ctx.lineWidth=6; ctx.strokeStyle=grd; ctx.stroke();
+      ctx.lineWidth=7; ctx.strokeStyle=grd; ctx.stroke();
     }
-    ctx.globalAlpha=lcAlpha*0.3;
+    ctx.globalAlpha=lcAlpha*0.35;
     const egrd=ctx.createRadialGradient(cx,cy+10,2,cx,cy+10,R);
-    egrd.addColorStop(0,'rgba(255,210,100,0.9)'); egrd.addColorStop(1,'rgba(255,140,40,0)');
+    egrd.addColorStop(0,'rgba(255,225,120,0.95)'); egrd.addColorStop(1,'rgba(255,140,40,0)');
     ctx.fillStyle=egrd; ctx.beginPath(); ctx.ellipse(cx,cy+10,R*0.85,R*0.38,0,0,Math.PI*2); ctx.fill();
     ctx.restore();
   }
-  /* Lightning */
+
+  /* 闪电电弧渲染（外发光 + 核心高亮双层绘制） */
   lightningBolts = lightningBolts.filter(function(b){ return b.life>0; });
-  for(let bi=0;bi<lightningBolts.length;bi++){
-    const b=lightningBolts[bi]; b.life-=b.decay;
-    ctx.save(); ctx.globalAlpha=Math.max(0,b.life*0.85); ctx.strokeStyle=b.color;
-    ctx.lineWidth=b.width*Math.max(0.3,b.life); ctx.shadowColor=b.color; ctx.shadowBlur=10;
-    ctx.globalCompositeOperation='lighter';
+  for(let bi=0; bi<lightningBolts.length; bi++){
+    const b=lightningBolts[bi]; b.life -= b.decay;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, b.life * 0.95);
+    ctx.strokeStyle = b.color;
+    ctx.lineWidth = b.width * Math.max(0.4, b.life);
+    ctx.shadowColor = b.color;
+    ctx.shadowBlur = 18;
+    ctx.globalCompositeOperation = 'lighter';
     ctx.beginPath();
-    for(let pi=0;pi<b.pts.length;pi++){ if(pi===0) ctx.moveTo(b.pts[pi].x,b.pts[pi].y); else ctx.lineTo(b.pts[pi].x,b.pts[pi].y); }
-    ctx.stroke(); ctx.restore();
+    for(let pi=0; pi<b.pts.length; pi++){
+      if(pi===0) ctx.moveTo(b.pts[pi].x, b.pts[pi].y);
+      else ctx.lineTo(b.pts[pi].x, b.pts[pi].y);
+    }
+    ctx.stroke();
+    // 纯白高亮内芯
+    ctx.globalAlpha = Math.max(0, b.life * 0.8);
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = Math.max(1, b.width * 0.45);
+    ctx.stroke();
+    ctx.restore();
   }
-  /* Shockwaves */
+
+  /* 光环冲击波 */
   shockwaves = shockwaves.filter(function(s){ return s.life>0; });
-  for(let si=0;si<shockwaves.length;si++){
-    const s=shockwaves[si]; s.r+=(s.maxR-s.r)*0.08; s.life-=0.028;
-    ctx.save(); ctx.globalAlpha=Math.max(0,s.life*0.5); ctx.strokeStyle=s.color;
-    ctx.lineWidth=3*s.life; ctx.shadowColor=s.color; ctx.shadowBlur=14;
-    ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.stroke();
-    ctx.globalAlpha=Math.max(0,s.life*0.2); ctx.strokeStyle='#FFFFFF'; ctx.lineWidth=1.5*s.life;
-    ctx.beginPath(); ctx.arc(s.x,s.y,s.r*0.75,0,Math.PI*2); ctx.stroke(); ctx.restore();
+  for(let si=0; si<shockwaves.length; si++){
+    const s=shockwaves[si]; s.r += (s.maxR - s.r)*0.08; s.life -= 0.024;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, s.life * 0.6);
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 3.5 * s.life;
+    ctx.shadowColor = s.color;
+    ctx.shadowBlur = 16;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.stroke();
+    ctx.globalAlpha = Math.max(0, s.life * 0.25);
+    ctx.strokeStyle = '#FFFFFF';
+    ctx.lineWidth = 1.8 * s.life;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r*0.78, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
   }
-  /* Particles */
+
+  /* 粒子（火星、纸屑、烟气） */
   particles = particles.filter(function(p){ return p.life>0; });
-  for(let pi=0;pi<particles.length;pi++){
+  for(let pi=0; pi<particles.length; pi++){
     const p=particles[pi];
     if(p.type==='confetti'){ p.vy+=p.grav; p.x+=p.vx; p.y+=p.vy; p.rot+=p.vr; }
-    else if(p.type==='smoke'){ p.x+=p.vx; p.y+=p.vy; p.r+=0.28; p.angle+=p.spin; }
+    else if(p.type==='smoke'){ p.x+=p.vx; p.y+=p.vy; p.r+=0.32; p.angle+=p.spin; }
     else { p.x+=p.vx; p.y+=p.vy; p.vx*=0.985; }
-    p.life-=p.decay;
-    ctx.save(); ctx.globalAlpha=Math.max(0,p.life);
+    p.life -= p.decay;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, p.life);
     if(p.type==='confetti'){
-      ctx.translate(p.x,p.y); ctx.rotate(p.rot);
+      ctx.translate(p.x, p.y); ctx.rotate(p.rot);
       ctx.fillStyle=p.color; ctx.fillRect(-p.r,-p.r*0.6,p.r*2,p.r*1.2);
     } else if(p.type==='smoke'){
-      ctx.translate(p.x,p.y); ctx.rotate(p.angle);
+      ctx.translate(p.x, p.y); ctx.rotate(p.angle);
       const sg=ctx.createRadialGradient(0,0,0,0,0,p.r);
-      sg.addColorStop(0,'rgba(200,170,140,0.12)'); sg.addColorStop(1,'rgba(200,170,140,0)');
+      sg.addColorStop(0,'rgba(215,185,155,0.18)');
+      sg.addColorStop(1,'rgba(215,185,155,0)');
       ctx.fillStyle=sg; ctx.beginPath(); ctx.arc(0,0,p.r,0,Math.PI*2); ctx.fill();
     } else {
-      ctx.fillStyle=p.color; ctx.shadowColor=p.color; ctx.shadowBlur=6;
+      ctx.fillStyle=p.color; ctx.shadowColor=p.color; ctx.shadowBlur=8;
       ctx.beginPath(); ctx.arc(p.x,p.y,p.r*Math.max(.2,p.life),0,Math.PI*2); ctx.fill();
     }
     ctx.restore();
@@ -525,7 +618,7 @@ function tick(){
 }
 tick();
 
-/* ---- Poke ---- */
+/* ---- 点击火苗互动 ---- */
 let pokeCombo=0, pokeComboTimer=null, lastPokeAt=0, audioCtxPoke=null;
 function ensureAudioPoke(){
   if(!audioCtxPoke){ try{ audioCtxPoke=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return; } }
@@ -577,7 +670,7 @@ function pokeFlame(evt){
   else if(pokeCombo>=20 && pokeCombo%10===0) showToast('🔥🔥🔥 传说级连击！');
 }
 
-/* ---- Check-in ---- */
+/* ---- 点亮打卡 ---- */
 function checkIn(){
   if(state.checkedToday) return;
   const flameWrap=document.getElementById('flameWrap'), glow=document.getElementById('flameGlow');
@@ -604,7 +697,8 @@ function checkIn(){
     document.getElementById('statusSub').textContent='火苗正旺，明天继续哦';
     btn.textContent='已完成'; renderWeek(); renderRecoverCard(); applyFlameVisual();
     const c=flameCenter(); spawnConfetti(c.x,c.y-20,justRestored?90:(evolved?70:46));
-    spawnShockwave(c.x,c.y+20); setTimeout(function(){ spawnShockwave(c.x,c.y+20,'#FFE0A0'); }, 280);
+    spawnShockwave(c.x,c.y+20, '#FFC93C');
+    setTimeout(function(){ spawnShockwave(c.x,c.y+20,'#FFE0A0'); }, 280);
     if(justRestored) showToast('🎉 补签成功！已恢复至 '+state.streak+' 天');
     else if(wasRecovering){ const left=state.recoveryTarget-state.recoveryProgress; showToast('🔥 补签第 '+state.recoveryProgress+'/'+state.recoveryTarget+' 天，再坚持 '+left+' 天'); }
     else showToast(evolved ? '🔥 火苗进化成了'+newTier.name+'！' : milestoneText(state.streak));
@@ -615,7 +709,7 @@ function checkIn(){
 function milestoneText(n){ if(n%30===0) return '🔥 连续 '+n+' 天！你就是打卡达人'; if(n%7===0) return '🔥 连续 '+n+' 天！满一周啦'; return '🔥 火苗又亮了一天！'; }
 function showToast(text){ const t=document.getElementById('toast'); t.textContent=text; t.classList.remove('show'); void t.offsetWidth; t.classList.add('show'); }
 
-/* ---- Tier Modal ---- */
+/* ---- 火焰等级排行榜 Modal ---- */
 function buildTierColors(tier, n){
   const res=[];
   for(let i=0;i<n;i++){
@@ -663,7 +757,7 @@ function openTierModal(){
 function closeTierModal(){ document.getElementById('tierModalBg').classList.remove('open'); }
 function closeTierModalOnBg(e){ if(e.target===document.getElementById('tierModalBg')) closeTierModal(); }
 
-/* ---- Init ---- */
+/* ---- 初始化 ---- */
 function initFromBridge(){
   try{
     if(window.StreakBridge && StreakBridge.getStreakData){
