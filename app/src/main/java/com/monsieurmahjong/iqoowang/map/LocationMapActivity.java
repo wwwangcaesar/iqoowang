@@ -192,23 +192,38 @@ public class LocationMapActivity extends AppCompatActivity implements RouteSearc
      */
     private void openAmapNavigation(double lat, double lon, String name) {
         try {
-            // 优先使用 Android 高德地图原生 Scheme (androidamap://)
-            // t=0 为驾车，dev=0 为 GCJ-02 坐标系（高德坐标）
-            String uriString = "androidamap://route/plan/?sourceApplication=iqoowang"
+            // 1. 优先使用高德地图导航协议 (androidamap://navi)
+            // 该协议直接以精确经纬度 (lat, lon) 作为导航终点坐标，dev=0 (高德GCJ02坐标系)，style=2 (驾车导航)，
+            // poiname 为目的地展示名称。这样高德地图会严格按照 GPS 坐标导航，绝不会误搜到其他同名地点或旧地点。
+            String naviUri = "androidamap://navi?sourceApplication=iqoowang"
+                    + "&lat=" + lat
+                    + "&lon=" + lon
+                    + "&dev=0&style=2"
+                    + "&poiname=" + Uri.encode(name);
+            Intent naviIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(naviUri));
+            naviIntent.setPackage(AMAP_PACKAGE);
+            naviIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+
+            if (naviIntent.resolveActivity(getPackageManager()) != null) {
+                startActivity(naviIntent);
+                return;
+            }
+
+            // 2. 降级使用路径规划协议 (androidamap://route/plan/)
+            String routeUri = "androidamap://route/plan/?sourceApplication=iqoowang"
                     + "&dlat=" + lat
                     + "&dlon=" + lon
                     + "&dname=" + Uri.encode(name)
                     + "&dev=0&t=0";
-            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(uriString));
-            intent.setPackage(AMAP_PACKAGE);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-
-            if (intent.resolveActivity(getPackageManager()) != null) {
-                startActivity(intent);
+            Intent routeIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(routeUri));
+            routeIntent.setPackage(AMAP_PACKAGE);
+            routeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            if (routeIntent.resolveActivity(getPackageManager()) != null) {
+                startActivity(routeIntent);
                 return;
             }
 
-            // 降级使用通用的 amapuri://
+            // 3. 降级使用通用的 amapuri://
             String fallbackUri = "amapuri://route/plan/?sourceApplication=iqoowang"
                     + "&dlat=" + lat
                     + "&dlon=" + lon
@@ -216,13 +231,13 @@ public class LocationMapActivity extends AppCompatActivity implements RouteSearc
                     + "&dev=0&t=0";
             Intent fallbackIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUri));
             fallbackIntent.setPackage(AMAP_PACKAGE);
-            fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
             if (fallbackIntent.resolveActivity(getPackageManager()) != null) {
                 startActivity(fallbackIntent);
                 return;
             }
 
-            // 降级使用外部浏览器唤起高德
+            // 4. 降级使用外部浏览器唤起高德 Web 导航
             String webUri = "https://uri.amap.com/navigation?to=" + lon + "," + lat + "," + Uri.encode(name)
                     + "&mode=car&src=iqoowang&coordinate=gaode&callnative=1";
             Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(webUri));
