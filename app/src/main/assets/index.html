@@ -578,6 +578,24 @@
   <!-- ══ 首页 ══ -->
   <div class="page active" id="page-home">
 
+    <!-- 总资产面板：总盈亏（大字醒目）→今日盈亏→总资产/可用资产并排。
+         原底部"账户概览"3格已合并到这里并上移到搜索栏上方 -->
+    <div class="asset-panel" id="homeAssetPanel">
+      <div class="asset-label">总盈亏</div>
+      <div class="asset-total" id="homeTotalPnl">+0</div>
+      <div class="profit-badge up" id="homeTodayPnl" style="margin-top:8px;">今日 +0</div>
+      <div class="asset-row" style="margin-top:12px;">
+        <div class="asset-item">
+          <div class="asset-item-label">总资产</div>
+          <div class="asset-item-val" id="totalAsset">10.0万</div>
+        </div>
+        <div class="asset-item">
+          <div class="asset-item-label">可用资产</div>
+          <div class="asset-item-val" id="cashVal">10.0万</div>
+        </div>
+      </div>
+    </div>
+
     <!-- 搜索栏 -->
     <div style="padding:8px 12px 0;">
       <div style="display:flex;gap:8px;align-items:center;
@@ -680,22 +698,6 @@
           <div class="empty-icon" style="font-size:28px;">📰</div>
           <div class="empty-text">搜索股票后，AI将筛选最核心的资讯</div>
         </div>
-      </div>
-    </div>
-
-    <!-- 账户概览 -->
-    <div style="margin:0 12px 12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center;">
-        <div style="font-size:9px;color:var(--text-dim);">总资产</div>
-        <div id="totalAsset" style="font-size:13px;font-weight:700;color:var(--accent-gold);margin-top:3px;">10.0万</div>
-      </div>
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center;">
-        <div style="font-size:9px;color:var(--text-dim);">可用资金</div>
-        <div id="cashVal" style="font-size:13px;font-weight:700;color:var(--text-prime);margin-top:3px;">10.0万</div>
-      </div>
-      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center;">
-        <div style="font-size:9px;color:var(--text-dim);">浮动盈亏</div>
-        <div id="floatPnl" style="font-size:13px;font-weight:700;margin-top:3px;" class="c-up">+0</div>
       </div>
     </div>
 

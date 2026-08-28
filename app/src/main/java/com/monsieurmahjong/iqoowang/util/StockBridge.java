@@ -271,6 +271,53 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         }
         return id;
     }
+
+    /**
+     * 按分类查询指定日期的日志。category取值见DecisionLogger.CAT_*
+     * （monitor监控/decision决策/ai_analysis AI分析/operation操作/other其他）
+     */
+    @JavascriptInterface
+    public String getDecisionLog(String dayStr, String category) {
+        try {
+            return DecisionLogger.get().getLogContent(dayStr, category);
+        } catch (Exception e) {
+            Log.e(TAG, "getDecisionLog(分类)失败", e);
+            return "";
+        }
+    }
+
+    /** 按分类查询有日志的日期列表（新→旧） */
+    @JavascriptInterface
+    public String getDecisionLogDates(String category) {
+        try {
+            return new JSONArray(java.util.Arrays.asList(DecisionLogger.get().listLogDates(category))).toString();
+        } catch (Exception e) {
+            Log.e(TAG, "getDecisionLogDates(分类)失败", e);
+            return "[]";
+        }
+    }
+
+    /** 5个日志分类的{key,label}列表，供前端渲染分类选择器 */
+    @JavascriptInterface
+    public String getLogCategories() {
+        try {
+            return DecisionLogger.get().getCategoriesJson();
+        } catch (Exception e) {
+            return "[]";
+        }
+    }
+
+    /** AI当前能力说明——展示在"AI分析日志"顶部，帮助用户了解AI现在具备哪些能力、
+     *  学了多少话术、复盘过多少笔真实交易。纯只读，不触发推理。 */
+    @JavascriptInterface
+    public String getAiCapabilitiesSummary() {
+        try {
+            return mAgent.buildCapabilitiesSummary();
+        } catch (Exception e) {
+            Log.e(TAG, "getAiCapabilitiesSummary失败", e);
+            return "";
+        }
+    }
     /** 账户核心数据（现金/总资产/总盈亏/今日盈亏），WebView启动和每次交易后都要刷新这个 */
     @JavascriptInterface
     public String getAccountSummary() {
