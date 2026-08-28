@@ -1096,6 +1096,62 @@ public class LocalAIAgent {
         } catch (Exception e) { return "{}"; }
     }
 
+    /**
+     * 生成"AI当前能力说明"——给"AI分析日志"顶部展示用，让用户一眼看清楚AI现在：
+     * 用的是真实本地大模型还是降级到专家规则、当前等级/经验、内置了哪些操盘手经验和选股公式、
+     * 自己教过多少条话术（按判断类型分类计数）、真实复盘过多少笔完整交易。
+     * 纯只读汇总，不触发任何推理，调用开销很小，可以随时调用（比如每次打开日志面板时）。
+     */
+    public String buildCapabilitiesSummary() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("═══ AI当前能力说明 ═══\n");
+        boolean llmActuallyReady = mEngineReady && mEngine.isReady();
+        sb.append("引擎状态：").append(llmActuallyReady
+                ? "本地大模型已加载（Qwen3.5-4B-Instruct-INT4），完全离线推理，约20-40 tokens/s，数据不出设备"
+                : "本地大模型未就绪，当前降级为专家规则系统（确定性规则输出，不是大模型）").append("\n");
+        sb.append("当前等级：Level ").append(mLevel).append(" · ").append(levelTitle(mLevel))
+                .append("（累计经验").append(mExp).append("）\n\n");
+
+        sb.append("【内置能力，出厂自带，不依赖你有没有教过话术】\n");
+        sb.append("· 选股公式：通达信EMA(2)+11层嵌套EMA+布林上轨+SAR的量化选股逻辑，硬条件价格≥3元、流通市值20-320亿，排除创业板/科创板/涨幅≥20%/ST\n");
+        sb.append("· 操盘手方法论：买入按水线(昨收)+VWAP(分时均价)+放量三重确认分底仓/加仓/满仓；持仓后按分歧K线做三级动态止损；量价关系与市值偏好判断\n");
+        sb.append("· 信号二次验证：只对规则引擎已经触发的信号做定性复核，不会主动创造信号，也不预测涨跌方向，只判断眼前证据是否足够可信\n\n");
+
+        try {
+            java.util.List<com.monsieurmahjong.iqoowang.util.WisdomManager.WisdomEntry> wisdom =
+                    com.monsieurmahjong.iqoowang.util.WisdomManager.get().getAll();
+            java.util.Map<String, Integer> byCat = new java.util.LinkedHashMap<>();
+            for (com.monsieurmahjong.iqoowang.util.WisdomManager.WisdomEntry e : wisdom) {
+                String c = (e.category == null || e.category.isEmpty()) ? "通用" : e.category;
+                byCat.merge(c, 1, Integer::sum);
+            }
+            sb.append("【你教过的话术】共").append(wisdom.size()).append("条");
+            if (!byCat.isEmpty()) {
+                sb.append("（");
+                boolean first = true;
+                for (java.util.Map.Entry<String, Integer> e : byCat.entrySet()) {
+                    if (!first) sb.append("，");
+                    sb.append(e.getKey()).append(" ").append(e.getValue()).append("条");
+                    first = false;
+                }
+                sb.append("）");
+            }
+            sb.append("\n");
+        } catch (Exception e) {
+            sb.append("【你教过的话术】读取失败：").append(e.getMessage()).append("\n");
+        }
+
+        try {
+            int reviewedCount = com.monsieurmahjong.iqoowang.util.TradeLessonManager.get().getReviewed().size();
+            int pendingCount = com.monsieurmahjong.iqoowang.util.TradeLessonManager.get().getPending().size();
+            sb.append("【真实交易复盘】已复盘").append(reviewedCount).append("笔完整买卖周期，待复盘").append(pendingCount).append("笔\n");
+        } catch (Exception e) {
+            sb.append("【真实交易复盘】读取失败：").append(e.getMessage()).append("\n");
+        }
+        sb.append("═══════════════════\n\n");
+        return sb.toString();
+    }
+
     // ──────────────────────────────────────────
     // 内嵌专家规则系统（降级方案）
     // ──────────────────────────────────────────
