@@ -17,4 +17,15 @@
         <attr name="lpv_progress_color" format="color" />
         <attr name="lpv_track_color" format="color" />
     </declare-styleable>
+
+    <!-- 动态渐变流光文字属性 -->
+    <declare-styleable name="AnimatedGradientTextView">
+        <attr name="gradient_style" format="enum">
+            <enum name="gold" value="0" />
+            <enum name="cyan" value="1" />
+            <enum name="flame" value="2" />
+            <enum name="rainbow" value="3" />
+        </attr>
+        <attr name="gradient_speed" format="integer" />
+    </declare-styleable>
 </resources>

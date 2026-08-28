@@ -41,14 +41,15 @@
                     android:text="🗺️"
                     android:textSize="26sp" />
 
-                <TextView
+                <com.monsieurmahjong.iqoowang.view.AnimatedGradientTextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="8dp"
                     android:text="消费足迹地图"
-                    android:textColor="#111C2D"
                     android:textSize="22sp"
-                    android:textStyle="bold" />
+                    android:textStyle="bold"
+                    app:gradient_style="gold"
+                    app:gradient_speed="3200" />
             </LinearLayout>
 
             <ImageView

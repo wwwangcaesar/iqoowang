@@ -41,13 +41,14 @@
                 app:layout_constraintStart_toEndOf="@id/iv_avatar"
                 app:layout_constraintTop_toTopOf="@id/iv_avatar">
 
-                <TextView
+                <com.monsieurmahjong.iqoowang.view.AnimatedGradientTextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="每日打卡"
-                    android:textColor="@color/on_surface"
                     android:textSize="20sp"
-                    android:textStyle="bold"/>
+                    android:textStyle="bold"
+                    app:gradient_style="flame"
+                    app:gradient_speed="2800" />
 
                 <TextView
                     android:id="@+id/tv_streak_days"

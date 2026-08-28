@@ -24,8 +24,11 @@
   .back{ width:36px;height:36px;border-radius:50%; display:flex;align-items:center;justify-content:center;
     background:var(--card); box-shadow:0 10px 24px rgba(255,150,60,.18); font-size:20px; border:1px solid var(--card-line); }
   .title{ font-size:17px; font-weight:800; }
-  .spacer{ width:36px; }
-
+  .tier-rank-btn{
+    width:36px;height:36px;border-radius:50%; display:flex;align-items:center;justify-content:center;
+    background:var(--card); box-shadow:0 10px 24px rgba(255,150,60,.18); font-size:18px; border:1px solid var(--card-line);
+    cursor:pointer;
+  }
   .hero{ position:relative; margin-top:6px; padding:10px 20px 6px; text-align:center; }
   .streak-badge{
     display:inline-flex; align-items:center; gap:8px; background:var(--card); border-radius:999px; padding:8px 18px 8px 10px;
@@ -35,9 +38,7 @@
   @keyframes badgePop{ 0%{transform:scale(0) rotate(-8deg);} 65%{transform:scale(1.12) rotate(3deg);} 100%{transform:scale(1) rotate(0deg);} }
   .streak-badge .mini-flame{ width:22px;height:22px; }
   .streak-badge b{ font-size:15px; }
-
   .stage{ position:relative; height:280px; display:flex; align-items:center; justify-content:center; margin-top:6px; }
-
   .flame-glow{
     position:absolute; width:200px; height:200px; border-radius:50%;
     background:radial-gradient(circle, rgba(255,180,60,.0) 0%, rgba(255,180,60,0) 100%);
@@ -45,7 +46,6 @@
   }
   .flame-glow.lit{ animation:glowPulse 2.6s ease-in-out infinite; }
   @keyframes glowPulse{ 0%,100%{ transform:scale(.95); opacity:.85;} 50%{ transform:scale(1.08); opacity:1;} }
-
   .flame-wrap{ position:relative; width:150px; height:190px; }
   .flame-poke-wrap{ position:relative; width:150px; height:190px; cursor:pointer; }
   .flame-poke-wrap.poked{ animation:pokeBump .22s cubic-bezier(.34,1.56,.64,1); }
@@ -66,18 +66,11 @@
     100%{ opacity:0; transform:translate(-50%,-78%) scale(1); }
   }
   .flame-svg{ width:100%; height:100%; transform-origin:50% 92%; }
-  /* 每一层火焰的颜色现在由 JS 按连续天数对应的"火焰阶级"直接写 fill 属性，
-     不再写死灰色/白热两种状态 —— 这也修复了之前"打卡后火焰一直显示灰色"的问题 */
   .flame-layer{ transition:fill 1s ease, opacity .5s ease; transform-box:fill-box; }
-
-  /* 呼吸感：点亮状态下持续轻微缩放，比 idle 摆动更明显一点，像真的在呼吸 */
   .flame-wrap.lit{ animation:breathePulse 2.8s ease-in-out infinite; }
   @keyframes breathePulse{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.045);} }
-
-  /* 臻彩阶（第13阶）：整层火焰持续过一遍色相，呈现炫目全息感 */
   .flame-layers.prismatic{ animation:hueSpin 3.2s linear infinite; }
   @keyframes hueSpin{ 0%{ filter:hue-rotate(0deg) saturate(1.3);} 100%{ filter:hue-rotate(360deg) saturate(1.3);} }
-
   .flame-wrap.idle-sway .flame-svg{ animation:sway 2.4s ease-in-out infinite; }
   @keyframes sway{
     0%,100%{ transform:rotate(-2.2deg) scaleY(1); }
@@ -98,20 +91,16 @@
     50%{ transform:translateY(0) scale(.97,1.05); }
     75%{ transform:translateY(-4px) scale(1.02,.98); }
   }
-
   .face{ opacity:0; transition:opacity .6s ease .5s; }
   .flame-wrap.lit .face{ opacity:1; }
   .tier-label{ text-align:center; font-size:11px; color:var(--sub); margin-top:2px; letter-spacing:1px; min-height:14px; }
-
   canvas#fx{ position:fixed; inset:0; pointer-events:none; z-index:30; }
-
   .count-zone{ text-align:center; margin-top:0px; }
   .count-num{ font-size:52px; font-weight:900; line-height:1; color:var(--gray2); transition:color .8s ease; }
   .count-num.lit{ background:linear-gradient(90deg,var(--orange),var(--gold)); -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent; color:transparent; }
   .count-num.pop{ animation:numPop .55s cubic-bezier(.34,1.56,.64,1); }
   @keyframes numPop{ 0%{transform:scale(.5); } 65%{ transform:scale(1.22);} 100%{ transform:scale(1);} }
   .count-label{ font-size:13px; color:var(--sub); margin-top:2px; letter-spacing:1px; }
-
   .status-card{ margin:22px 20px 0; padding:18px 20px; border-radius:22px; background:var(--card); border:1px solid var(--card-line);
     box-shadow:0 12px 30px rgba(255,150,60,.14); display:flex; align-items:center; justify-content:space-between; }
   .status-text{ font-size:14px; font-weight:700; }
@@ -120,22 +109,18 @@
     background:linear-gradient(135deg,var(--orange),var(--gold)); box-shadow:0 10px 22px rgba(255,150,40,.4); }
   .checkin-btn[disabled]{ background:#E4DFD5; color:#B4AC9C; box-shadow:none; }
   .checkin-btn:active:not([disabled]){ transform:scale(.95); }
-
   .recover-card{ margin:14px 20px 0; padding:14px 16px; border-radius:18px; background:#FFF1EC;
     border:1px solid rgba(255,90,60,.18); display:flex; align-items:center; gap:10px; }
   .recover-emoji{ font-size:22px; line-height:1; }
   .recover-title{ font-size:13px; font-weight:800; color:#D6291F; }
   .recover-sub{ font-size:11px; color:#B8664F; margin-top:3px; line-height:1.5; }
-
   .week-row{ display:flex; justify-content:space-between; margin:16px 20px 0; }
   .week-dot{ flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; }
   .week-dot .dot{ width:30px;height:30px;border-radius:50%; background:var(--gray1); display:flex;align-items:center;justify-content:center; font-size:14px; color:#fff; transition:all .4s; }
   .week-dot.done .dot{ background:linear-gradient(135deg,var(--orange),var(--gold)); box-shadow:0 6px 14px rgba(255,150,40,.4); }
   .week-dot.today .dot{ box-shadow:0 0 0 3px rgba(255,150,40,.28); }
   .week-dot span{ font-size:11px; color:var(--sub); }
-
   .hint{ text-align:center; font-size:12px; color:var(--sub); margin-top:20px; padding:0 30px; line-height:1.6; }
-
   .toast{
     position:fixed; left:50%; bottom:34px; transform:translate(-50%,20px); opacity:0;
     background:var(--text); color:#fff; padding:10px 18px; border-radius:999px; font-size:13px; font-weight:700; z-index:40;
@@ -145,25 +130,68 @@
     0%{ opacity:0; transform:translate(-50%,20px);} 12%{ opacity:1; transform:translate(-50%,0);}
     82%{ opacity:1; transform:translate(-50%,0);} 100%{ opacity:0; transform:translate(-50%,-8px);}
   }
+  /* Tier modal */
+  .tier-modal-bg{
+    position:fixed; inset:0; background:rgba(20,10,5,.65); z-index:50;
+    display:flex; align-items:flex-end; justify-content:center;
+    opacity:0; pointer-events:none; transition:opacity .25s ease;
+  }
+  .tier-modal-bg.open{ opacity:1; pointer-events:all; }
+  .tier-modal{
+    width:100%; max-height:86vh; border-radius:28px 28px 0 0; background:#FFF7EC;
+    padding:0 0 env(safe-area-inset-bottom,16px);
+    transform:translateY(100%); transition:transform .35s cubic-bezier(.32,1,.68,1);
+    overflow:hidden; display:flex; flex-direction:column;
+  }
+  .tier-modal-bg.open .tier-modal{ transform:translateY(0); }
+  .tier-modal-header{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:20px 20px 12px; border-bottom:1px solid rgba(150,100,40,.08);
+    flex-shrink:0;
+  }
+  .tier-modal-title{ font-size:17px; font-weight:900; color:#3A2A17; }
+  .tier-modal-close{
+    width:32px;height:32px;border-radius:50%; background:rgba(150,100,40,.1);
+    display:flex;align-items:center;justify-content:center; font-size:18px; cursor:pointer;
+  }
+  .tier-modal-scroll{ overflow-y:auto; padding:16px 16px 24px; flex:1; }
+  .tier-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+  .tier-card{
+    border-radius:18px; background:#fff; border:1.5px solid rgba(150,100,40,.1);
+    padding:14px 8px 12px; display:flex; flex-direction:column; align-items:center; gap:8px;
+    position:relative; overflow:hidden; box-shadow:0 4px 14px rgba(255,150,40,.08);
+  }
+  .tier-card.current-tier{ border-color:var(--orange); box-shadow:0 6px 20px rgba(255,140,60,.3); }
+  .tier-card .mini-svg{ width:52px; height:66px; }
+  .tier-card .tc-name{ font-size:11px; font-weight:800; color:#3A2A17; text-align:center; line-height:1.3; }
+  .tier-card .tc-days{ font-size:10px; color:#9A8367; text-align:center; }
+  .tier-card.locked::after{
+    content:''; position:absolute; inset:0; background:rgba(255,252,248,.82);
+    backdrop-filter:blur(2px); -webkit-backdrop-filter:blur(2px); border-radius:18px;
+  }
+  .tier-card.locked .lock-icon{
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    font-size:26px; z-index:2; opacity:.75; pointer-events:none;
+  }
+  .tier-card .current-badge{
+    position:absolute; top:7px; right:7px; background:var(--orange);
+    color:#fff; font-size:9px; font-weight:800; padding:2px 6px; border-radius:99px;
+  }
 </style>
 </head>
 <body>
-
   <canvas id="fx"></canvas>
-
   <div class="topbar">
-    <div class="back" onclick="window.StreakBridge && StreakBridge.close && StreakBridge.close()">‹</div>
+    <div class="back" onclick="window.StreakBridge && StreakBridge.close && StreakBridge.close()">&#8249;</div>
     <div class="title">连续打卡</div>
-    <div class="spacer"></div>
+    <div class="tier-rank-btn" onclick="openTierModal()">&#127942;</div>
   </div>
-
   <div class="hero">
     <div class="streak-badge" id="streakBadge">
       <svg class="mini-flame" viewBox="0 0 24 24"><path fill="#FF8A3D" d="M12 2c1 3-2 4-2 7a4 4 0 108 0c2 2 2 5 0 8a8 8 0 11-11-11c1-1 2-2 5-4z"/></svg>
       <b id="badgeText">连续 12 天</b>
     </div>
   </div>
-
   <div class="stage">
     <div class="flame-glow" id="flameGlow"></div>
     <div class="combo-text" id="comboText"></div>
@@ -188,13 +216,11 @@
     </div>
     </div>
   </div>
-
   <div class="count-zone">
     <div class="count-num" id="countNum">12</div>
     <div class="count-label">已连续打卡天数</div>
     <div class="tier-label" id="tierLabel"></div>
   </div>
-
   <div class="status-card">
     <div>
       <div class="status-text" id="statusText">今天还没打卡哦</div>
@@ -202,34 +228,32 @@
     </div>
     <button class="checkin-btn" id="checkinBtn" onclick="checkIn()">点亮打卡</button>
   </div>
-
   <div class="recover-card" id="recoverCard" style="display:none;">
-    <div class="recover-emoji">💔</div>
+    <div class="recover-emoji">&#128148;</div>
     <div>
       <div class="recover-title" id="recoverTitle"></div>
       <div class="recover-sub" id="recoverSub"></div>
     </div>
   </div>
-
   <div class="week-row" id="weekRow"></div>
-
   <div class="hint">每天打卡一次，连续不中断，火苗会越烧越旺；不小心断签也别灰心，连续补签几天就能找回之前的天数～</div>
-
   <div class="toast" id="toast"></div>
-
+  <!-- 火焰等级排行榜 -->
+  <div class="tier-modal-bg" id="tierModalBg" onclick="closeTierModalOnBg(event)">
+    <div class="tier-modal" id="tierModal">
+      <div class="tier-modal-header">
+        <div class="tier-modal-title">&#127942; 火焰等级排行</div>
+        <div class="tier-modal-close" onclick="closeTierModal()">&#215;</div>
+      </div>
+      <div class="tier-modal-scroll">
+        <div class="tier-grid" id="tierGrid"></div>
+      </div>
+    </div>
+  </div>
 <script>
-/* ════════════════════════════════════════════════════════════
-   数据状态（后续由 Android JavascriptInterface 注入真实数据）
-   window.StreakBridge.getStreakData() -> {currentStreak, checkedToday, last7Days:[bool*7]}
-   window.StreakBridge.close()
-   ════════════════════════════════════════════════════════════ */
 let state = { streak:12, checkedToday:false, week:[true,true,false,true,true,true,false],
   pendingRestore:0, recoveryTarget:0, recoveryProgress:0 };
 
-/* ════════════════════════════════════════════════════════════
-   火焰"阶级"系统：连续打卡天数越多，火焰颜色越绚丽、层数越多（3层→7层）
-   灰色只在"今天还没打卡"时出现；只要点亮了，就按 streak 天数换算阶级显示对应颜色。
-   ════════════════════════════════════════════════════════════ */
 const GRAY_TIER = { name:'', layers:3, mode:'solid', edge:'#C7C1B8', hot:'#A9A294', glow:'rgba(180,176,168,0)' };
 const FLAME_TIERS = [
   { minDays:1,   name:'淡黄火苗', layers:3, mode:'solid', edge:'#FFE9A8', hot:'#FFFBEF', glow:'rgba(255,220,140,.55)' },
@@ -260,51 +284,34 @@ function lerpColor(c1,c2,t){
   return '#'+r.map(v=>Math.round(Math.max(0,Math.min(255,v))).toString(16).padStart(2,'0')).join('');
 }
 
-/** 按当前 streak/打卡状态，重绘火焰层数、每层颜色、光晕颜色、阶级名 */
 function applyFlameVisual(){
   const tier = state.checkedToday ? getFlameTier(state.streak) : GRAY_TIER;
   const layerEls = document.querySelectorAll('.flame-layer');
   const n = tier.layers;
-
   layerEls.forEach((el, i)=>{
     if(i >= n){ el.style.opacity = '0'; return; }
     el.style.opacity = '1';
     let color;
-    if(tier.mode === 'rainbow'){
-      color = tier.palette[i % tier.palette.length];
-    } else if(tier.mode === 'prismatic'){
-      color = '#FF3355'; // 基础色，实际炫彩效果由 hueSpin 动画持续旋转色相产生
-    } else {
-      const t = n>1 ? i/(n-1) : 1; // 0=最外层(edge色) → 1=最内层(hot色)
-      color = lerpColor(tier.edge, tier.hot, t);
-    }
+    if(tier.mode === 'rainbow') color = tier.palette[i % tier.palette.length];
+    else if(tier.mode === 'prismatic') color = '#FF3355';
+    else { const t = n>1 ? i/(n-1) : 1; color = lerpColor(tier.edge, tier.hot, t); }
     el.setAttribute('fill', color);
   });
-
   document.getElementById('flameLayers').classList.toggle('prismatic', tier.mode === 'prismatic');
-
   const glow = document.getElementById('flameGlow');
   glow.style.background = state.checkedToday
     ? `radial-gradient(circle, ${tier.glow} 0%, rgba(255,255,255,0) 55%, transparent 75%)`
     : 'radial-gradient(circle, rgba(255,180,60,0) 0%, transparent 100%)';
-
-  // 深黑/臻彩等偏暗背景下，把表情换成浅色，保证在深色火焰上依然看得清
   const isDarkTier = state.checkedToday && (tier.name==='深黑火苗' || tier.name==='淡黑火苗');
   document.querySelectorAll('.face circle, .face path').forEach(el=>{
     if(el.tagName==='circle') el.setAttribute('fill', isDarkTier ? '#F0E9FF' : '#5A3416');
     else el.setAttribute('stroke', isDarkTier ? '#F0E9FF' : '#5A3416');
   });
-
   const label = document.getElementById('tierLabel');
   if(label) label.textContent = state.checkedToday ? tier.name : '';
 }
 
-
-/* 【修复】state.week 是"今天往前推6天"的滚动窗口，today 可能是周一到周日中的任意一天，
-   不能像之前那样把7个格子写死标成"一二三四五六日"——那样只有today恰好是周日时才是对的，
-   其余情况全部错位。改成按每个格子实际对应的日期现算星期几。 */
-const weekdayCharByJsDay = ['日','一','二','三','四','五','六']; // JS Date.getDay(): 0=周日
-
+const weekdayCharByJsDay = ['日','一','二','三','四','五','六'];
 function renderWeek(){
   const row = document.getElementById('weekRow');
   row.innerHTML='';
@@ -315,38 +322,32 @@ function renderWeek(){
     d.className = 'week-dot' + (done?' done':'') + (i===todayIdx?' today':'');
     const cellDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (todayIdx - i));
     const label = weekdayCharByJsDay[cellDate.getDay()];
-    d.innerHTML = `<div class="dot">${done?'✓':''}</div><span>${label}</span>`;
+    d.innerHTML = '<div class="dot">'+(done?'✓':'')+'</div><span>'+label+'</span>';
     row.appendChild(d);
   });
 }
 
-/** 断签补签提示条：有 pendingRestore 时展示"还差几天恢复"，否则隐藏 */
 function renderRecoverCard(){
   const card = document.getElementById('recoverCard');
   if(!card) return;
   if(state.pendingRestore > 0){
     card.style.display = 'flex';
-    document.getElementById('recoverTitle').textContent = `断签了，之前连续 ${state.pendingRestore} 天`;
+    document.getElementById('recoverTitle').textContent = '断签了，之前连续 '+state.pendingRestore+' 天';
     const left = Math.max(0, state.recoveryTarget - state.recoveryProgress);
     document.getElementById('recoverSub').textContent = state.recoveryProgress > 0
-      ? `已连续补签 ${state.recoveryProgress}/${state.recoveryTarget} 天，再坚持 ${left} 天就能恢复`
-      : `再连续签到 ${state.recoveryTarget} 天即可恢复（不会清零重来）`;
-  } else {
-    card.style.display = 'none';
-  }
+      ? '已连续补签 '+state.recoveryProgress+'/'+state.recoveryTarget+' 天，再坚持 '+left+' 天就能恢复'
+      : '再连续签到 '+state.recoveryTarget+' 天即可恢复（不会清零重来）';
+  } else { card.style.display = 'none'; }
 }
 
 function renderBase(){
   document.getElementById('countNum').textContent = state.streak;
   document.getElementById('badgeText').textContent = '连续 ' + state.streak + ' 天';
-  renderWeek();
-  renderRecoverCard();
-
+  renderWeek(); renderRecoverCard();
   const flameWrap = document.getElementById('flameWrap');
   const glow = document.getElementById('flameGlow');
   const countNum = document.getElementById('countNum');
   const btn = document.getElementById('checkinBtn');
-
   if(state.checkedToday){
     flameWrap.classList.add('lit'); glow.classList.add('lit'); countNum.classList.add('lit');
     document.getElementById('statusText').textContent = '今天已打卡！';
@@ -361,9 +362,7 @@ function renderBase(){
   applyFlameVisual();
 }
 
-/* ════════════════════════════════════════════════════════════
-   粒子：火星飘浮（常驻，微弱） + 打卡纸屑爆发
-   ════════════════════════════════════════════════════════════ */
+/* ---- Canvas FX ---- */
 const cvs = document.getElementById('fx');
 const ctx = cvs.getContext('2d');
 function resize(){ cvs.width=innerWidth*devicePixelRatio; cvs.height=innerHeight*devicePixelRatio; cvs.style.width=innerWidth+'px'; cvs.style.height=innerHeight+'px'; ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0); }
@@ -377,38 +376,145 @@ function flameCenter(){
 function spawnEmber(){
   if(!state.checkedToday) return;
   const c = flameCenter();
-  particles.push({
-    x:c.x+(Math.random()-.5)*46, y:c.y+20+Math.random()*20,
-    vx:(Math.random()-.5)*0.5, vy:-(0.6+Math.random()*0.8),
-    life:1, decay:0.012+Math.random()*0.01, r:1.6+Math.random()*1.8,
-    color: Math.random()>0.5 ? '#FF8A3D' : '#FFC93C', type:'ember'
-  });
+  particles.push({ x:c.x+(Math.random()-.5)*46, y:c.y+20+Math.random()*20, vx:(Math.random()-.5)*0.5, vy:-(0.6+Math.random()*0.8), life:1, decay:0.012+Math.random()*0.01, r:1.6+Math.random()*1.8, color: Math.random()>0.5 ? '#FF8A3D' : '#FFC93C', type:'ember' });
 }
-function spawnConfetti(cx,cy,count=40){
+function spawnConfetti(cx,cy,count){
+  count=count||40;
   const colors = ['#FF8A3D','#FFC93C','#FFF3CE','#FF6F91'];
   for(let i=0;i<count;i++){
-    particles.push({
-      x:cx+(Math.random()-.5)*30, y:cy-10, vx:(Math.random()-.5)*4.2, vy:-(4+Math.random()*4),
-      life:1, decay:0.011+Math.random()*0.006, r:3+Math.random()*3,
-      color:colors[i%colors.length], type:'confetti', rot:Math.random()*Math.PI, vr:(Math.random()-.5)*0.35, grav:0.17
-    });
+    particles.push({ x:cx+(Math.random()-.5)*30, y:cy-10, vx:(Math.random()-.5)*4.2, vy:-(4+Math.random()*4), life:1, decay:0.011+Math.random()*0.006, r:3+Math.random()*3, color:colors[i%colors.length], type:'confetti', rot:Math.random()*Math.PI, vr:(Math.random()-.5)*0.35, grav:0.17 });
   }
 }
+function spawnSmoke(cx, cy, count){
+  for(let i=0;i<count;i++){
+    const ang = -Math.PI/2 + (Math.random()-.5)*1.2;
+    const spd = 0.4 + Math.random()*0.6;
+    particles.push({ x:cx+(Math.random()-.5)*30, y:cy+10, vx:Math.cos(ang)*spd, vy:Math.sin(ang)*spd, life:1, decay:0.008+Math.random()*0.006, r:10+Math.random()*14, type:'smoke', spin:(Math.random()-.5)*0.03, angle:0 });
+  }
+}
+let shockwaves = [];
+function spawnShockwave(cx, cy, color){
+  shockwaves.push({ x:cx, y:cy, r:10, maxR:120, life:1, color:color||'#FFC93C' });
+}
+let lightningBolts = [];
+function createLightningBolt(x1,y1,x2,y2,depth){
+  if(depth<=0) return [{x:x1,y:y1},{x:x2,y:y2}];
+  const mx=(x1+x2)/2 + (Math.random()-.5)*(Math.hypot(x2-x1,y2-y1)*0.4);
+  const my=(y1+y2)/2 + (Math.random()-.5)*(Math.hypot(x2-x1,y2-y1)*0.4);
+  return createLightningBolt(x1,y1,mx,my,depth-1).concat(createLightningBolt(mx,my,x2,y2,depth-1));
+}
+function spawnLightning(cx, cy){
+  const count = 3 + Math.floor(Math.random()*3);
+  for(let i=0;i<count;i++){
+    const ang = Math.random()*Math.PI*2;
+    const len = 50 + Math.random()*60;
+    const ex = cx + Math.cos(ang)*len;
+    const ey = cy + Math.sin(ang)*len;
+    const pts = createLightningBolt(cx,cy,ex,ey,4);
+    const colors = ['#AAFFFF','#FFFFFF','#CCE5FF','#FFFAAA'];
+    lightningBolts.push({ pts:pts, life:1, decay:0.06+Math.random()*0.06, color:colors[Math.floor(Math.random()*colors.length)], width:1.2+Math.random() });
+  }
+}
+let lcActive=false, lcAlpha=0, lcDir=1, lcCx=0, lcCy=0, lcAngle=0;
+function activateLightCurtain(cx, cy){
+  lcActive=true; lcCx=cx; lcCy=cy; lcAlpha=0; lcDir=1;
+  setTimeout(function(){ lcDir=-1; }, 2200);
+  setTimeout(function(){ lcActive=false; }, 3200);
+}
+
+/* ---- Random FX scheduler ---- */
+const FX_TYPES = ['lightning','smoke','shockwave','curtain'];
+let fxCooldown = false;
+function playRandomFx(){
+  if(!state.checkedToday || fxCooldown) return;
+  fxCooldown = true;
+  const c = flameCenter();
+  const type = FX_TYPES[Math.floor(Math.random()*FX_TYPES.length)];
+  if(type==='lightning'){
+    spawnLightning(c.x, c.y-30);
+    setTimeout(function(){ spawnLightning(c.x, c.y-20); }, 180);
+    setTimeout(function(){ spawnLightning(c.x, c.y-10); }, 360);
+  } else if(type==='smoke'){
+    spawnSmoke(c.x, c.y, 18);
+  } else if(type==='shockwave'){
+    spawnShockwave(c.x, c.y+20);
+    setTimeout(function(){ spawnShockwave(c.x,c.y+20,'#FFE0A0'); }, 350);
+  } else if(type==='curtain'){
+    activateLightCurtain(c.x, c.y+60);
+  }
+  const next = 4000 + Math.random()*5000;
+  setTimeout(function(){ fxCooldown=false; }, next);
+}
+function scheduleFxLoop(){
+  const delay = 4500 + Math.random()*5000;
+  setTimeout(function(){ playRandomFx(); scheduleFxLoop(); }, delay);
+}
+setTimeout(function(){ playRandomFx(); scheduleFxLoop(); }, 2000);
+
+/* ---- Main render loop ---- */
 let emberTick=0;
 function tick(){
   ctx.clearRect(0,0,innerWidth,innerHeight);
   emberTick++;
   if(emberTick%5===0) spawnEmber();
-  particles = particles.filter(p=>p.life>0);
-  for(const p of particles){
+  /* Light curtain */
+  if(lcActive){
+    lcAngle+=0.012;
+    if(lcDir>0) lcAlpha=Math.min(0.72,lcAlpha+0.018);
+    else lcAlpha=Math.max(0,lcAlpha-0.015);
+    const cx=lcCx, cy=lcCy, R=90;
+    ctx.save(); ctx.globalAlpha=lcAlpha*0.45;
+    for(let i=0;i<12;i++){
+      const a=lcAngle+(i/12)*Math.PI*2;
+      const grd=ctx.createLinearGradient(cx,cy,cx+Math.cos(a)*R,cy+Math.sin(a)*R);
+      grd.addColorStop(0,'rgba(255,200,80,0.7)'); grd.addColorStop(1,'rgba(255,160,40,0)');
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(cx+Math.cos(a)*R,cy+Math.sin(a)*R);
+      ctx.lineWidth=6; ctx.strokeStyle=grd; ctx.stroke();
+    }
+    ctx.globalAlpha=lcAlpha*0.3;
+    const egrd=ctx.createRadialGradient(cx,cy+10,2,cx,cy+10,R);
+    egrd.addColorStop(0,'rgba(255,210,100,0.9)'); egrd.addColorStop(1,'rgba(255,140,40,0)');
+    ctx.fillStyle=egrd; ctx.beginPath(); ctx.ellipse(cx,cy+10,R*0.85,R*0.38,0,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+  /* Lightning */
+  lightningBolts = lightningBolts.filter(function(b){ return b.life>0; });
+  for(let bi=0;bi<lightningBolts.length;bi++){
+    const b=lightningBolts[bi]; b.life-=b.decay;
+    ctx.save(); ctx.globalAlpha=Math.max(0,b.life*0.85); ctx.strokeStyle=b.color;
+    ctx.lineWidth=b.width*Math.max(0.3,b.life); ctx.shadowColor=b.color; ctx.shadowBlur=10;
+    ctx.globalCompositeOperation='lighter';
+    ctx.beginPath();
+    for(let pi=0;pi<b.pts.length;pi++){ if(pi===0) ctx.moveTo(b.pts[pi].x,b.pts[pi].y); else ctx.lineTo(b.pts[pi].x,b.pts[pi].y); }
+    ctx.stroke(); ctx.restore();
+  }
+  /* Shockwaves */
+  shockwaves = shockwaves.filter(function(s){ return s.life>0; });
+  for(let si=0;si<shockwaves.length;si++){
+    const s=shockwaves[si]; s.r+=(s.maxR-s.r)*0.08; s.life-=0.028;
+    ctx.save(); ctx.globalAlpha=Math.max(0,s.life*0.5); ctx.strokeStyle=s.color;
+    ctx.lineWidth=3*s.life; ctx.shadowColor=s.color; ctx.shadowBlur=14;
+    ctx.beginPath(); ctx.arc(s.x,s.y,s.r,0,Math.PI*2); ctx.stroke();
+    ctx.globalAlpha=Math.max(0,s.life*0.2); ctx.strokeStyle='#FFFFFF'; ctx.lineWidth=1.5*s.life;
+    ctx.beginPath(); ctx.arc(s.x,s.y,s.r*0.75,0,Math.PI*2); ctx.stroke(); ctx.restore();
+  }
+  /* Particles */
+  particles = particles.filter(function(p){ return p.life>0; });
+  for(let pi=0;pi<particles.length;pi++){
+    const p=particles[pi];
     if(p.type==='confetti'){ p.vy+=p.grav; p.x+=p.vx; p.y+=p.vy; p.rot+=p.vr; }
+    else if(p.type==='smoke'){ p.x+=p.vx; p.y+=p.vy; p.r+=0.28; p.angle+=p.spin; }
     else { p.x+=p.vx; p.y+=p.vy; p.vx*=0.985; }
-    p.life -= p.decay;
-    ctx.save();
-    ctx.globalAlpha = Math.max(0,p.life);
+    p.life-=p.decay;
+    ctx.save(); ctx.globalAlpha=Math.max(0,p.life);
     if(p.type==='confetti'){
       ctx.translate(p.x,p.y); ctx.rotate(p.rot);
       ctx.fillStyle=p.color; ctx.fillRect(-p.r,-p.r*0.6,p.r*2,p.r*1.2);
+    } else if(p.type==='smoke'){
+      ctx.translate(p.x,p.y); ctx.rotate(p.angle);
+      const sg=ctx.createRadialGradient(0,0,0,0,0,p.r);
+      sg.addColorStop(0,'rgba(200,170,140,0.12)'); sg.addColorStop(1,'rgba(200,170,140,0)');
+      ctx.fillStyle=sg; ctx.beginPath(); ctx.arc(0,0,p.r,0,Math.PI*2); ctx.fill();
     } else {
       ctx.fillStyle=p.color; ctx.shadowColor=p.color; ctx.shadowBlur=6;
       ctx.beginPath(); ctx.arc(p.x,p.y,p.r*Math.max(.2,p.life),0,Math.PI*2); ctx.fill();
@@ -419,214 +525,153 @@ function tick(){
 }
 tick();
 
-/* ════════════════════════════════════════════════════════════
-   点击火苗互动：单次点击也有反馈（跳一下 + 火星 + 声音），
-   连续快速点击会累积连击数，连击越高反馈越强烈，达到里程碑弹提示。
-   纯装饰性互动，不产生任何数据变化，和"点亮打卡"按钮完全独立。
-   ════════════════════════════════════════════════════════════ */
-let pokeCombo = 0;
-let pokeComboTimer = null;
-let lastPokeAt = 0;
-
-let audioCtxPoke = null;
+/* ---- Poke ---- */
+let pokeCombo=0, pokeComboTimer=null, lastPokeAt=0, audioCtxPoke=null;
 function ensureAudioPoke(){
-  if(!audioCtxPoke){
-    try{ audioCtxPoke = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return; }
-  }
-  if(audioCtxPoke && audioCtxPoke.state === 'suspended') audioCtxPoke.resume();
+  if(!audioCtxPoke){ try{ audioCtxPoke=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ return; } }
+  if(audioCtxPoke && audioCtxPoke.state==='suspended') audioCtxPoke.resume();
 }
 function playPokeSound(combo){
   if(!audioCtxPoke) return;
-  const t0 = audioCtxPoke.currentTime;
-  const osc = audioCtxPoke.createOscillator();
-  const gain = audioCtxPoke.createGain();
-  const base = 300 + Math.min(420, combo*22);
-  osc.type = 'triangle';
-  osc.frequency.setValueAtTime(base, t0);
-  osc.frequency.exponentialRampToValueAtTime(Math.max(90, base*0.5), t0+0.09);
-  gain.gain.setValueAtTime(0.0001, t0);
-  gain.gain.exponentialRampToValueAtTime(0.13, t0+0.006);
-  gain.gain.exponentialRampToValueAtTime(0.0001, t0+0.12);
-  osc.connect(gain); gain.connect(audioCtxPoke.destination);
-  osc.start(t0); osc.stop(t0+0.14);
+  const t0=audioCtxPoke.currentTime, osc=audioCtxPoke.createOscillator(), gain=audioCtxPoke.createGain();
+  const base=300+Math.min(420,combo*22); osc.type='triangle';
+  osc.frequency.setValueAtTime(base,t0); osc.frequency.exponentialRampToValueAtTime(Math.max(90,base*0.5),t0+0.09);
+  gain.gain.setValueAtTime(0.0001,t0); gain.gain.exponentialRampToValueAtTime(0.13,t0+0.006); gain.gain.exponentialRampToValueAtTime(0.0001,t0+0.12);
+  osc.connect(gain); gain.connect(audioCtxPoke.destination); osc.start(t0); osc.stop(t0+0.14);
 }
-
-/** 按当前火焰阶级取一组配色，给戳一下的火星用；未打卡时是灰白色火星 */
 function pokeSparkColors(){
   if(!state.checkedToday) return ['#C7C1B8','#EDEAE4'];
-  const tier = getFlameTier(state.streak);
-  if(tier.mode === 'rainbow') return tier.palette;
-  if(tier.mode === 'prismatic') return ['#FF5B5B','#5BE0FF','#FFD75B','#B35BFF','#5BFFA0'];
+  const tier=getFlameTier(state.streak);
+  if(tier.mode==='rainbow') return tier.palette;
+  if(tier.mode==='prismatic') return ['#FF5B5B','#5BE0FF','#FFD75B','#B35BFF','#5BFFA0'];
   return [tier.edge, tier.hot];
 }
-
-function spawnPokeSparks(cx, cy, count, combo){
-  const colors = pokeSparkColors();
+function spawnPokeSparks(cx,cy,count,combo){
+  const colors=pokeSparkColors();
   for(let i=0;i<count;i++){
-    const ang = Math.random()*Math.PI*2;
-    const speed = 1.8 + Math.random()*2.6 + Math.min(2.4, combo*0.15);
-    particles.push({
-      x:cx, y:cy, vx:Math.cos(ang)*speed, vy:Math.sin(ang)*speed - 1,
-      life:1, decay:0.022+Math.random()*0.014, r:2+Math.random()*2.2,
-      color: colors[i % colors.length], type:'spark'
-    });
+    const ang=Math.random()*Math.PI*2, speed=1.8+Math.random()*2.6+Math.min(2.4,combo*0.15);
+    particles.push({ x:cx, y:cy, vx:Math.cos(ang)*speed, vy:Math.sin(ang)*speed-1, life:1, decay:0.022+Math.random()*0.014, r:2+Math.random()*2.2, color:colors[i%colors.length], type:'spark' });
   }
 }
-
-function comboColor(combo){
-  if(combo>=20) return '#FF2FD0';
-  if(combo>=10) return '#FF3B2E';
-  if(combo>=5)  return '#FF8A3D';
-  return '#FFC93C';
-}
-
+function comboColor(combo){ if(combo>=20) return '#FF2FD0'; if(combo>=10) return '#FF3B2E'; if(combo>=5) return '#FF8A3D'; return '#FFC93C'; }
 function showComboText(combo){
-  if(combo < 2) return; // 单次点击不刷 combo 数字，只有连续快速点击才显示
-  const el = document.getElementById('comboText');
-  el.textContent = 'x' + combo;
-  el.style.color = comboColor(combo);
+  if(combo<2) return;
+  const el=document.getElementById('comboText');
+  el.textContent='x'+combo; el.style.color=comboColor(combo);
   el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
 }
-
 function pokeFlame(evt){
-  if(evt) evt.stopPropagation();
-  ensureAudioPoke();
-
-  const now = performance.now();
-  const rapid = (now - lastPokeAt) < 600; // 600ms 内算连续快速点击
-  lastPokeAt = now;
-  pokeCombo = rapid ? pokeCombo + 1 : 1;
-
-  clearTimeout(pokeComboTimer);
-  pokeComboTimer = setTimeout(()=>{ pokeCombo = 0; }, 700);
-
-  // 跳一下的幅度随连击数增加，做出"越戳越兴奋"的感觉（有上限，不会跳飞）
-  const wrap = document.getElementById('flamePokeWrap');
-  const intensity = Math.min(1, 0.35 + pokeCombo*0.1);
-  wrap.style.setProperty('--poke-scale', (1 + intensity*0.16).toFixed(3));
-  wrap.style.setProperty('--poke-rot', ((Math.random()>0.5?1:-1) * (2 + intensity*3)).toFixed(1) + 'deg');
+  if(evt) evt.stopPropagation(); ensureAudioPoke();
+  const now=performance.now(), rapid=(now-lastPokeAt)<600; lastPokeAt=now;
+  pokeCombo=rapid?pokeCombo+1:1;
+  clearTimeout(pokeComboTimer); pokeComboTimer=setTimeout(function(){ pokeCombo=0; }, 700);
+  const wrap=document.getElementById('flamePokeWrap');
+  const intensity=Math.min(1,0.35+pokeCombo*0.1);
+  wrap.style.setProperty('--poke-scale',(1+intensity*0.16).toFixed(3));
+  wrap.style.setProperty('--poke-rot',((Math.random()>0.5?1:-1)*(2+intensity*3)).toFixed(1)+'deg');
   wrap.classList.remove('poked'); void wrap.offsetWidth; wrap.classList.add('poked');
-
-  const c = flameCenter();
-  const sparkCount = Math.min(20, 4 + pokeCombo*2);
-  spawnPokeSparks(c.x, c.y, sparkCount, pokeCombo);
-  playPokeSound(pokeCombo);
-  showComboText(pokeCombo);
-
-  if(pokeCombo === 5)       showToast('🔥 手速不错！');
-  else if(pokeCombo === 10) showToast('🔥🔥 火焰要炸了！');
-  else if(pokeCombo >= 20 && pokeCombo % 10 === 0) showToast('🔥🔥🔥 传说级连击！');
+  const c=flameCenter(); const sparkCount=Math.min(20,4+pokeCombo*2);
+  spawnPokeSparks(c.x,c.y,sparkCount,pokeCombo); playPokeSound(pokeCombo); showComboText(pokeCombo);
+  if(pokeCombo===5) showToast('🔥 手速不错！');
+  else if(pokeCombo===10) showToast('🔥🔥 火焰要炸了！');
+  else if(pokeCombo>=20 && pokeCombo%10===0) showToast('🔥🔥🔥 传说级连击！');
 }
 
-/* ════════════════════════════════════════════════════════════
-   打卡序列：灰 → 橙 → 金 → 白芯，Glow，happy bounce，数字弹跳，
-   徽章弹出，纸屑，toast
-   ════════════════════════════════════════════════════════════ */
+/* ---- Check-in ---- */
 function checkIn(){
   if(state.checkedToday) return;
-  const flameWrap = document.getElementById('flameWrap');
-  const glow = document.getElementById('flameGlow');
-  const countNum = document.getElementById('countNum');
-  const badge = document.getElementById('streakBadge');
-  const btn = document.getElementById('checkinBtn');
-  btn.disabled = true;
-
-  flameWrap.classList.remove('idle-sway');
-  flameWrap.classList.add('ignite');
-  glow.classList.add('lit');
-
-  setTimeout(()=>{
-    flameWrap.classList.add('lit');
-  }, 120);
-
-  setTimeout(()=>{
-    flameWrap.classList.add('happy-bounce');
-  }, 300);
-
-  setTimeout(()=>{
-    const oldTier = getFlameTier(state.streak); // 累加前的阶级，用来判断这次打卡是否跨入新阶级
-    const wasRecovering = state.pendingRestore > 0; // 这次打卡之前，是否处于"补签中"状态
-
-    state.streak += 1;
-    state.checkedToday = true;
-    if(state.week.length) state.week[state.week.length-1] = true;
-
-    // 断签补签：本地先按和 StreakManager.checkIn() 一致的规则算一遍，UI 立即给反馈，
-    // 不用等桥接层往返；真正的持久化仍然由下面的 StreakBridge.checkIn() 完成。
-    let justRestored = false;
-    if(wasRecovering && state.streak >= state.recoveryTarget){
-      state.streak = state.pendingRestore + state.streak; // 冻结的天数 + 这一轮补签天数，一起加回来
-      state.pendingRestore = 0;
-      state.recoveryTarget = 0;
-      justRestored = true;
+  const flameWrap=document.getElementById('flameWrap'), glow=document.getElementById('flameGlow');
+  const countNum=document.getElementById('countNum'), badge=document.getElementById('streakBadge');
+  const btn=document.getElementById('checkinBtn'); btn.disabled=true;
+  flameWrap.classList.remove('idle-sway'); flameWrap.classList.add('ignite'); glow.classList.add('lit');
+  setTimeout(function(){ flameWrap.classList.add('lit'); }, 120);
+  setTimeout(function(){ flameWrap.classList.add('happy-bounce'); }, 300);
+  setTimeout(function(){
+    const oldTier=getFlameTier(state.streak), wasRecovering=state.pendingRestore>0;
+    state.streak+=1; state.checkedToday=true;
+    if(state.week.length) state.week[state.week.length-1]=true;
+    let justRestored=false;
+    if(wasRecovering && state.streak>=state.recoveryTarget){
+      state.streak=state.pendingRestore+state.streak; state.pendingRestore=0; state.recoveryTarget=0; justRestored=true;
     }
-    if(state.pendingRestore > 0) state.recoveryProgress = state.streak; // 还没补完，同步这一轮进度
-
-    const newTier = getFlameTier(state.streak);
-    const evolved = newTier.name !== oldTier.name;
-
-    countNum.textContent = state.streak;
-    countNum.classList.add('lit');
+    if(state.pendingRestore>0) state.recoveryProgress=state.streak;
+    const newTier=getFlameTier(state.streak), evolved=newTier.name!==oldTier.name;
+    countNum.textContent=state.streak; countNum.classList.add('lit');
     countNum.classList.remove('pop'); void countNum.offsetWidth; countNum.classList.add('pop');
-
-    document.getElementById('badgeText').textContent = '连续 ' + state.streak + ' 天';
+    document.getElementById('badgeText').textContent='连续 '+state.streak+' 天';
     badge.classList.remove('pop'); void badge.offsetWidth; badge.classList.add('pop');
-
-    document.getElementById('statusText').textContent = '今天已打卡！';
-    document.getElementById('statusSub').textContent = '火苗正旺，明天继续哦';
-    btn.textContent = '已完成';
-
-    renderWeek();
-    renderRecoverCard();
-    applyFlameVisual();
-
-    const c = flameCenter();
-    spawnConfetti(c.x, c.y-20, justRestored ? 90 : (evolved ? 70 : 46));
-
-    if(justRestored){
-      showToast(`🎉 补签成功！已恢复至 ${state.streak} 天`);
-    } else if(wasRecovering){
-      const left = state.recoveryTarget - state.recoveryProgress;
-      showToast(`🔥 补签第 ${state.recoveryProgress}/${state.recoveryTarget} 天，再坚持 ${left} 天`);
-    } else {
-      showToast(evolved ? `🔥 火苗进化成了${newTier.name}！` : milestoneText(state.streak));
-    }
-
+    document.getElementById('statusText').textContent='今天已打卡！';
+    document.getElementById('statusSub').textContent='火苗正旺，明天继续哦';
+    btn.textContent='已完成'; renderWeek(); renderRecoverCard(); applyFlameVisual();
+    const c=flameCenter(); spawnConfetti(c.x,c.y-20,justRestored?90:(evolved?70:46));
+    spawnShockwave(c.x,c.y+20); setTimeout(function(){ spawnShockwave(c.x,c.y+20,'#FFE0A0'); }, 280);
+    if(justRestored) showToast('🎉 补签成功！已恢复至 '+state.streak+' 天');
+    else if(wasRecovering){ const left=state.recoveryTarget-state.recoveryProgress; showToast('🔥 补签第 '+state.recoveryProgress+'/'+state.recoveryTarget+' 天，再坚持 '+left+' 天'); }
+    else showToast(evolved ? '🔥 火苗进化成了'+newTier.name+'！' : milestoneText(state.streak));
     if(window.StreakBridge && StreakBridge.checkIn) StreakBridge.checkIn();
-
-    setTimeout(()=>{ flameWrap.classList.remove('ignite'); flameWrap.classList.add('idle-sway'); }, 900);
+    setTimeout(function(){ flameWrap.classList.remove('ignite'); flameWrap.classList.add('idle-sway'); }, 900);
   }, 620);
 }
+function milestoneText(n){ if(n%30===0) return '🔥 连续 '+n+' 天！你就是打卡达人'; if(n%7===0) return '🔥 连续 '+n+' 天！满一周啦'; return '🔥 火苗又亮了一天！'; }
+function showToast(text){ const t=document.getElementById('toast'); t.textContent=text; t.classList.remove('show'); void t.offsetWidth; t.classList.add('show'); }
 
-function milestoneText(n){
-  if(n % 30 === 0) return `🔥 连续 ${n} 天！你就是打卡达人`;
-  if(n % 7 === 0) return `🔥 连续 ${n} 天！满一周啦`;
-  return `🔥 火苗又亮了一天！`;
+/* ---- Tier Modal ---- */
+function buildTierColors(tier, n){
+  const res=[];
+  for(let i=0;i<n;i++){
+    let c;
+    if(tier.mode==='rainbow') c=tier.palette[i%tier.palette.length];
+    else if(tier.mode==='prismatic') c=['#FF3355','#FF8800','#FFEE00','#44FF88','#33CCFF'][i%5];
+    else { const t2=n>1?i/(n-1):1; c=lerpColor(tier.edge,tier.hot,t2); }
+    res.push(c);
+  }
+  return res;
 }
-function showToast(text){
-  const t = document.getElementById('toast');
-  t.textContent = text;
-  t.classList.remove('show'); void t.offsetWidth; t.classList.add('show');
+const SCALES=[1,0.84,0.68,0.53,0.40,0.29,0.19];
+const FPATH="M75 10c22 30-14 40-14 66a30 30 0 1060 0c14 16 14 42-2 62a58 58 0 11-78-84c8-16 20-30 34-44z";
+function renderMiniSVG(tier, locked){
+  const n=Math.min(tier.layers||3,7);
+  const colors=locked?new Array(n).fill('#D0C8BE'):buildTierColors(tier,n);
+  let layers='';
+  for(let i=0;i<n;i++){
+    const s=SCALES[i];
+    const xf=i>0?'transform="translate(75,178) scale('+s+') translate(-75,-178)"':'';
+    layers+='<path fill="'+colors[i]+'" '+xf+' d="'+FPATH+'"/>';
+  }
+  const prism=(!locked&&tier.mode==='prismatic')?'style="animation:hueSpin 3.2s linear infinite"':'';
+  return '<svg viewBox="0 0 150 190" class="mini-svg"><g '+prism+'>'+layers+'</g></svg>';
 }
+function openTierModal(){
+  const grid=document.getElementById('tierGrid'); grid.innerHTML='';
+  const currentTier=state.checkedToday?getFlameTier(state.streak):null;
+  FLAME_TIERS.forEach(function(tier,idx){
+    const unlocked=state.streak>=tier.minDays;
+    const isCurrent=currentTier&&currentTier.name===tier.name;
+    const card=document.createElement('div');
+    card.className='tier-card'+(isCurrent?' current-tier':'')+(!unlocked?' locked':'');
+    const nextMin=FLAME_TIERS[idx+1]?FLAME_TIERS[idx+1].minDays:null;
+    const daysLabel=nextMin?tier.minDays+'\u2013'+(nextMin-1)+'\u5929':'\u2265'+tier.minDays+'\u5929';
+    card.innerHTML=renderMiniSVG(tier,!unlocked)
+      +'<div class="tc-name">'+tier.name+'</div>'
+      +'<div class="tc-days">'+daysLabel+'</div>'
+      +(isCurrent?'<div class="current-badge">当前</div>':'')
+      +(!unlocked?'<div class="lock-icon">&#128274;</div>':'');
+    grid.appendChild(card);
+  });
+  document.getElementById('tierModalBg').classList.add('open');
+}
+function closeTierModal(){ document.getElementById('tierModalBg').classList.remove('open'); }
+function closeTierModalOnBg(e){ if(e.target===document.getElementById('tierModalBg')) closeTierModal(); }
 
-/* ════════════════════════════════════════════════════════════
-   初始化：尝试从 Android 注入的数据加载
-   ════════════════════════════════════════════════════════════ */
+/* ---- Init ---- */
 function initFromBridge(){
   try{
     if(window.StreakBridge && StreakBridge.getStreakData){
-      const data = JSON.parse(StreakBridge.getStreakData());
-      state.streak = data.currentStreak ?? state.streak;
-      state.checkedToday = !!data.checkedToday;
-      if(Array.isArray(data.last7Days) && data.last7Days.length===7) state.week = data.last7Days;
-      state.pendingRestore = data.pendingRestore ?? 0;
-      state.recoveryTarget = data.recoveryTarget ?? 0;
-      state.recoveryProgress = data.recoveryProgress ?? 0;
-      if(data.justRestored){
-        // 兜底：如果补签成功那次 checkIn() 因为 App 被系统杀掉没来得及播完庆祝动画，
-        // 冷启动重新弹一次。这个标记在 Java 端只会被读取消费一次，不会重复触发。
-        setTimeout(()=> showToast(`🎉 补签成功！已恢复至 ${data.justRestoredTotal} 天`), 500);
-      }
+      const data=JSON.parse(StreakBridge.getStreakData());
+      state.streak=data.currentStreak??state.streak; state.checkedToday=!!data.checkedToday;
+      if(Array.isArray(data.last7Days)&&data.last7Days.length===7) state.week=data.last7Days;
+      state.pendingRestore=data.pendingRestore??0; state.recoveryTarget=data.recoveryTarget??0; state.recoveryProgress=data.recoveryProgress??0;
+      if(data.justRestored) setTimeout(function(){ showToast('🎉 补签成功！已恢复至 '+data.justRestoredTotal+' 天'); }, 500);
     }
   }catch(e){}
   renderBase();
