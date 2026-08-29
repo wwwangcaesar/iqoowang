@@ -872,6 +872,7 @@
         <div id="aiReviewList"></div>
       </div>
       <div id="decisionLogPanel" style="display:none;padding:10px 12px 12px;">
+        <div id="logCategoryTabs" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;"></div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
           <select id="decisionLogDateSelect" onchange="loadDecisionLog(this.value)" style="background:var(--bg-card2);color:var(--text-prime);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;flex:1;margin-right:8px;"></select>
           <span id="decisionLogPath" style="font-size:9px;color:var(--text-dim);"></span>
@@ -1427,11 +1428,38 @@ function showReviewTab(tab, forceOpen) {
   if (_activeReviewTab === 'config') loadTradingConfig();
 }
 
-// ══ 决策日志 ══
+// ══ 分类日志：监控/决策/AI分析/操作/其他 ══
+let _activeLogCategory = 'decision';
+
 function initDecisionLogTab() {
   if (!IS_ANDROID) return;
   try {
-    const dates = JSON.parse(Android.getDecisionLogDates() || '[]');
+    const cats = JSON.parse(Android.getLogCategories() || '[]');
+    const tabsBox = document.getElementById('logCategoryTabs');
+    if (tabsBox && cats.length) {
+      tabsBox.innerHTML = cats.map(c => `<span onclick="switchLogCategory('${c.key}')" id="logCatTab_${c.key}"
+          style="padding:4px 10px;border-radius:14px;font-size:10px;cursor:pointer;
+                 border:1px solid ${c.key === _activeLogCategory ? 'var(--accent-cyan)' : 'var(--border)'};
+                 color:${c.key === _activeLogCategory ? 'var(--accent-cyan)' : 'var(--text-sub)'};">${c.label}</span>`).join('');
+    }
+  } catch (e) { console.error('[DecisionLog] 分类加载失败', e); }
+  loadLogDatesForCategory();
+}
+
+function switchLogCategory(cat) {
+  _activeLogCategory = cat;
+  document.querySelectorAll('[id^="logCatTab_"]').forEach(el => {
+    const active = el.id === 'logCatTab_' + cat;
+    el.style.borderColor = active ? 'var(--accent-cyan)' : 'var(--border)';
+    el.style.color = active ? 'var(--accent-cyan)' : 'var(--text-sub)';
+  });
+  loadLogDatesForCategory();
+}
+
+function loadLogDatesForCategory() {
+  if (!IS_ANDROID) return;
+  try {
+    const dates = JSON.parse(Android.getDecisionLogDates(_activeLogCategory) || '[]');
     const sel = document.getElementById('decisionLogDateSelect');
     const today = new Date().toISOString().slice(0, 10);
     const allDates = dates.includes(today) ? dates : [today, ...dates];
@@ -1443,8 +1471,16 @@ function initDecisionLogTab() {
 
 function loadDecisionLog(dayStr) {
   if (!IS_ANDROID) return;
-  const content = Android.getDecisionLog(dayStr) || '';
-  document.getElementById('decisionLogContent').textContent = content || '这一天还没有决策记录';
+  let content = Android.getDecisionLog(dayStr, _activeLogCategory) || '';
+  // AI分析日志顶部额外展示一份实时生成的"AI当前能力说明"（不写进日志文件本身，
+  // 避免几十天后文件里存的是当时早已过时的一份"能力快照"）
+  if (_activeLogCategory === 'ai_analysis') {
+    try {
+      const summary = Android.getAiCapabilitiesSummary() || '';
+      content = summary + content;
+    } catch (e) { console.error('[DecisionLog] AI能力说明获取失败', e); }
+  }
+  document.getElementById('decisionLogContent').textContent = content || '这一天这个分类还没有记录';
 }
 
 /** 交易规则参数配置字段清单，和TradingRuleConfig.java字段一一对应。
@@ -1698,9 +1734,34 @@ function removeWatchlistItem(code) {
 
 function confirmWatchlistSignal(code) {
   if (!IS_ANDROID) return;
+  // 【2026-08-27改造】之前"确认执行"只是把信号标记掉，然后提示用户自己去首页搜索这支股票——
+  // 候选池里躺着的正是"规则引擎认为现在就该动手"的股票，多这一步搜索纯粹是摩擦，还容易错过时机。
+  // 现在改成：先取到这条候选项当时的数据（赶在loadWatchlist()刷新掉STATE.watchlistItems之前），
+  // 确认信号后直接打开对应的买入/卖出弹窗并预填好价格，用户确认一下数量就能成交。
+  const item = (STATE.watchlistItems || []).find(w => w.code === code);
   Android.confirmSignal(code);
-  showToast('已确认，可去持仓页录入实际交易');
   loadWatchlist();
+  if (!item) { showToast('已确认'); return; }
+
+  const isStopType = item.status === 'PENDING_WARN' || item.status === 'PENDING_STOP';
+  if (isStopType) {
+    if (STATE.positions[code]) {
+      openSellModal(code);
+    } else {
+      showToast('已确认，但本地未找到对应持仓');
+    }
+  } else {
+    const stockObj = {
+      code: item.code,
+      name: item.name,
+      price: item.pendingPrice || 0,
+      latestClose: item.pendingPrice || 0,
+      score: item.score || 0,
+      signal: item.status,
+      board: code.startsWith('6') ? 'sh' : 'sz',
+    };
+    openTradeModal(code, stockObj);
+  }
 }
 
 function dismissWatchlistSignal(code) {
@@ -3118,7 +3179,7 @@ function sendChatMsg() {
   addThinkLine('sys', `[AI ] 本地推理：${msg.slice(0,20)}...`);
 
   if (IS_ANDROID) {
-    // 注入当前屏幕上下文，让本地大脑具备“记忆和视力”
+    // 注入当前屏幕上下文，让本地大脑具备"记忆和视力"
     let finalMsg = msg;
     if (STATE.currentKlineCode && STATE.currentKlineCode !== '000001') {
       const d = STATE.currentDetail;
@@ -3243,9 +3304,50 @@ function switchTab(tab) {
   document.getElementById(`page-${tab}`).classList.add('active');
   document.getElementById(`nav-${tab}`).classList.add('active');
 
-  if (tab === 'home') { drawKline(); drawPnlChart(); }
-  if (tab === 'position') renderPositions();
-  if (tab === 'agent') { refreshAgentStats(); loadPendingReviews(); }
+  // 【2026-08-27新增】切换tab时先挡一层loading、强制拉一次最新数据再渲染，避免用户在数据
+  // 刚切过去、还没刷新完的一瞬间点到已经变化的持仓/候选池条目（比如对着已经清空的持仓点卖出）。
+  // 这几个都是同步桥接调用，数据量小的时候loading一闪而过，数据量大时能真正挡住这个窗口期。
+  showTabLoading();
+  requestAnimationFrame(() => {
+    try {
+      if (tab === 'home') {
+        refreshAccountSummary();
+        drawKline(); drawPnlChart();
+        loadRecentTrades();
+      }
+      if (tab === 'position') {
+        if (IS_ANDROID) {
+          try {
+            const posJson = Android.getPositions();
+            if (posJson) window.initPositions(posJson);
+          } catch (e) { console.error('[Tab] 刷新持仓失败', e); }
+        }
+        renderPositions();
+      }
+      if (tab === 'screen') loadWatchlist();
+      if (tab === 'agent') { refreshAgentStats(); loadPendingReviews(); }
+    } finally {
+      hideTabLoading();
+    }
+  });
+}
+
+/** 轻量loading遮罩，盖住topbar和bottomnav之间的内容区，防止切页数据未刷新完时的误触 */
+function showTabLoading() {
+  let mask = document.getElementById('tabLoadingMask');
+  if (!mask) {
+    mask = document.createElement('div');
+    mask.id = 'tabLoadingMask';
+    mask.style.cssText = 'position:fixed;top:64px;left:0;right:0;bottom:66px;z-index:40;'
+      + 'background:rgba(10,18,30,0.35);display:flex;align-items:center;justify-content:center;';
+    mask.innerHTML = '<span class="loading-dots" style="transform:scale(1.6);"><span></span><span></span><span></span></span>';
+    document.body.appendChild(mask);
+  }
+  mask.style.display = 'flex';
+}
+function hideTabLoading() {
+  const mask = document.getElementById('tabLoadingMask');
+  if (mask) mask.style.display = 'none';
 }
 
 // ═══════════════════════════════════════
@@ -3532,8 +3634,8 @@ function openSellModal(code){
   const pnlStr=pnl>=0?`盈利 +¥${pnl.toFixed(0)}`:`亏损 -¥${Math.abs(pnl).toFixed(0)}`;
   document.getElementById('modalScore').textContent=pnlStr;
   document.getElementById('modalScore').style.color=pnl>=0?'var(--up-red)':'var(--down-green)';
-  let advice=pnl>=0?`持仓盈利${((curP-pos.cost)/pos.cost*100).toFixed(2)}%，默认卖出全部可卖股数，可点“−”减少`
-           :'持仓亏损，默认卖出全部可卖股数，可点“−”减少';
+  let advice=pnl>=0?`持仓盈利${((curP-pos.cost)/pos.cost*100).toFixed(2)}%，默认卖出全部可卖股数，可点"−"减少`
+           :'持仓亏损，默认卖出全部可卖股数，可点"−"减少';
   if (pos.lockedQty > 0) {
     advice += sellableQty > 0
       ? `；🔒${pos.lockedQty}股为今日买入，T+1前不可卖，本次最多可卖${sellableQty}股`
@@ -3553,6 +3655,27 @@ function openSellModal(code){
 // ═══════════════════════════════════════════════════════════
 // 资产显示（精简）
 // ═══════════════════════════════════════════════════════════
+const _numAnimState = {};
+/** 数字滚动特效：把元素当前显示值平滑过渡到targetValue，而不是瞬间跳变。
+ *  formatFn(value)返回要显示的字符串（自己处理符号/单位）。 */
+function animateNumber(elId, targetValue, formatFn, duration) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  duration = duration || 650;
+  const startValue = _numAnimState[elId] !== undefined ? _numAnimState[elId] : targetValue;
+  _numAnimState[elId] = targetValue;
+  if (Math.abs(targetValue - startValue) < 0.005) { el.textContent = formatFn(targetValue); return; }
+  const t0 = performance.now();
+  function frame(now) {
+    const p = Math.min(1, (now - t0) / duration);
+    const eased = 1 - Math.pow(1 - p, 3);
+    const cur = startValue + (targetValue - startValue) * eased;
+    el.textContent = formatFn(cur);
+    if (p < 1) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
 function updateAssetDisplay(){
   if (IS_ANDROID) { refreshAccountSummary(); return; }
   let posVal=0,floatPnl=0;
@@ -3561,18 +3684,21 @@ function updateAssetDisplay(){
     posVal+=p*pos.qty;floatPnl+=(p-pos.cost)*pos.qty;
   }
   const total=STATE.cash+posVal;
-  const fmt=v=>v>=10000?(v/10000).toFixed(1)+'万':v.toFixed(0);
+  const fmt=v=>Math.abs(v)>=10000?(v/10000).toFixed(1)+'万':Math.round(v).toLocaleString();
+  // 【修复】之前用Math.abs()把负号吃掉了，亏钱时显示的其实是正数外观（只靠标红提示），
+  // 现在显式补回符号，亏钱就是"-1,234"而不是"1,234"
+  const signed=v=>(v>=0?'+':'-')+fmt(Math.abs(v));
   const se=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
   se('totalAsset',fmt(total));
   se('cashVal',fmt(STATE.cash));
-  const fp=document.getElementById('floatPnl');
-  if(fp){fp.textContent=(floatPnl>=0?'+':'')+fmt(Math.abs(floatPnl));
-    fp.className=floatPnl>=0?'c-up':'c-down';}
+  const homeTotal=document.getElementById('homeTotalPnl');
+  if(homeTotal){homeTotal.textContent=signed(floatPnl);homeTotal.style.color=floatPnl>=0?'var(--up-red)':'var(--down-green)';}
+  const homeToday=document.getElementById('homeTodayPnl');
+  if(homeToday){homeToday.textContent='今日 '+signed(floatPnl);homeToday.className='profit-badge '+(floatPnl>=0?'up':'down');}
   const hc=document.getElementById('holdCount');
   if(hc)hc.textContent=Object.keys(STATE.positions).length;
   const tp=document.getElementById('totalPnlDisp');
-  if(tp){tp.textContent=(floatPnl>=0?'+':'')+Math.floor(floatPnl).toLocaleString();
-    tp.className=floatPnl>=0?'c-up':'c-down';}
+  if(tp){tp.textContent=signed(floatPnl);tp.className=floatPnl>=0?'c-up':'c-down';}
   se('statDecisions',STATE.decisions);
   se('statWins',STATE.wins);
   const sa=document.getElementById('statAlpha');
@@ -3586,29 +3712,35 @@ function refreshAccountSummary() {
   try {
     const acc = JSON.parse(Android.getAccountSummary());
     STATE.account = acc;
-    const fmt = v => Math.abs(v) >= 10000 ? (v/10000).toFixed(2) + '万' : v.toFixed(0);
+    const fmt = v => Math.abs(v) >= 10000 ? (v/10000).toFixed(2) + '万' : Math.round(v).toLocaleString();
+    // 【修复】同上，不再用Math.abs()吃掉负号
+    const signed = v => (v >= 0 ? '+' : '-') + fmt(Math.abs(v));
 
-    const elTotal = document.getElementById('totalAsset');
-    if (elTotal) elTotal.textContent = fmt(acc.totalAsset);
-    const elCash = document.getElementById('cashVal');
-    if (elCash) elCash.textContent = fmt(acc.cash);
+    animateNumber('totalAsset', acc.totalAsset, fmt);
+    animateNumber('cashVal', acc.cash, fmt);
 
-    // 首页"浮动盈亏"卡片：用今日盈亏（相对昨天收盘），不是持仓浮盈
-    const elFloat = document.getElementById('floatPnl');
-    if (elFloat) {
-      elFloat.textContent = (acc.todayPnl >= 0 ? '+' : '') + fmt(Math.abs(acc.todayPnl));
-      elFloat.className = acc.todayPnl >= 0 ? 'c-up' : 'c-down';
+    // 首页总资产面板：总盈亏（大字，相对初始10万本金，含已实现+浮动）
+    const elHomeTotal = document.getElementById('homeTotalPnl');
+    if (elHomeTotal) {
+      animateNumber('homeTotalPnl', acc.totalPnl, signed);
+      elHomeTotal.style.color = acc.totalPnl >= 0 ? 'var(--up-red)' : 'var(--down-green)';
+    }
+    // 首页总资产面板：今日盈亏（相对昨天收盘）
+    const elHomeToday = document.getElementById('homeTodayPnl');
+    if (elHomeToday) {
+      animateNumber('homeTodayPnl', acc.todayPnl, v => '今日 ' + signed(v));
+      elHomeToday.className = 'profit-badge ' + (acc.todayPnl >= 0 ? 'up' : 'down');
     }
     // 持仓页"今日盈亏"
     const elToday = document.getElementById('todayPnlDisp');
     if (elToday) {
-      elToday.textContent = (acc.todayPnl >= 0 ? '+' : '') + Math.round(Math.abs(acc.todayPnl)).toLocaleString();
+      animateNumber('todayPnlDisp', acc.todayPnl, signed);
       elToday.className = acc.todayPnl >= 0 ? 'c-up' : 'c-down';
     }
     // 持仓页"总盈亏"：相对初始10万本金，含已实现+浮动，不会因为卖飞就消失归零
     const elTotalPnl = document.getElementById('totalPnlDisp');
     if (elTotalPnl) {
-      elTotalPnl.textContent = (acc.totalPnl >= 0 ? '+' : '') + Math.round(Math.abs(acc.totalPnl)).toLocaleString();
+      animateNumber('totalPnlDisp', acc.totalPnl, signed);
       elTotalPnl.className = acc.totalPnl >= 0 ? 'c-up' : 'c-down';
     }
     const elHold = document.getElementById('holdCount');
@@ -3616,7 +3748,7 @@ function refreshAccountSummary() {
   } catch (e) { console.error('[Account] refresh failed', e); }
 }
 
-// “AI大脑”页的真实数据——updateAssetDisplay()里那块statDecisions/statWins/statAlpha/winRate
+// "AI大脑"页的真实数据——updateAssetDisplay()里那块statDecisions/statWins/statAlpha/winRate
 // 在IS_ANDROID时早已return掉了，从来没跑过，所以等级/胜率一直卡在初始占位值。
 // 这个函数才是真正取真实数据刷新的入口，跟 refreshAccountSummary() 同一套样式。
 function refreshAgentStats() {
