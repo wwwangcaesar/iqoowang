@@ -411,36 +411,87 @@ public class RealtimeQuoteManager {
     // ══════════════════════════════════════════
 
     /**
-     * 拿"最近一个已收盘交易日"（即昨日）的全天真实VWAP（成交量加权均价），不是近似值。
-     * 用的是腾讯"5日线"接口，跟 fetchMinuteLine() 同一个域名，只是路径不同（day/query
-     * 而不是 minute/query）。返回过去5个交易日、每天完整的分时数据，每条记录格式是
-     * "时间 价格 累计成交量(手) 累计成交额(元)"——注意是从当天开盘到这一刻的累计值，
-     * 不是单分钟的增量。取最后一条（即收盘那一刻）的累计成交额÷(累计成交量×100)，
-     * 就是这一天真实的、按成交量加权的全天平均价。
-     * 已用真实股票数据(sz000001, 2026-08-19)手工验证过换算结果落在当天实际价格区间内。
+     * 拿"最近一个已收盘交易日"（即昨日）的全天真实 VWAP（成交量加权均价）。
+     * 【重要修复】之前这里只请求一次腾讯接口，一旦失败就直接返回0，而调用方
+     * （TradingRuleEngine低开路径）又没有任何地方缓存“已经尝试过但失败了”这个事实，导致如果这个
+     * 接口持续不稳定，会每轮tick都重新发一次新请求、永远拿不到数据，低开路径就会永远卡在
+     * “正在异步获取”这一步，观察好几天也不会有任何进展。现在改成：先重试几次，
+     * 重试仍失败则退化为用日K缓存估算一个近似值，保证低开路径不会因为这一个接口的问题被无限期卡住。
+     * 精确值用的是腾讯"5日线"接口，取最后一条分时记录的累计成交额÷(累计成交量×100)；
+     * 已用真实股票数据(sz000001, 2026-08-19)人工验证过换算结果落在当天实际价格区间内。
      */
     public void fetchPrevDayVwap(String code, PrevDayVwapCallback cb) {
+        fetchPrevDayVwapAttempt(code, cb, 0);
+    }
+
+    private static final int PREV_VWAP_MAX_RETRY = 2; // 首次+最多2次重试，共最多3次尝试
+
+    private void fetchPrevDayVwapAttempt(String code, PrevDayVwapCallback cb, int attempt) {
         String url = String.format(Locale.US, URL_TENCENT_DAY_QUERY, market(code), code);
         Request req = new Request.Builder().url(url).build();
         HTTP.newCall(req).enqueue(new Callback() {
             @Override public void onFailure(Call call, IOException e) {
-                Log.w(TAG, "历史分时(day/query)请求失败 " + code + ": " + e.getMessage());
-                MAIN.post(() -> cb.onResult(code, 0, null));
+                retryOrFallbackVwap(code, cb, attempt, "请求失败: " + e.getMessage());
             }
             @Override public void onResponse(Call call, Response resp) {
                 try (Response r = resp) {
+                    if (!r.isSuccessful()) {
+                        retryOrFallbackVwap(code, cb, attempt, "HTTP " + r.code());
+                        return;
+                    }
                     byte[] bytes = r.body().bytes();
                     String body = new String(bytes, Charset.forName("UTF-8"));
                     Object[] parsed = parsePrevDayVwap(body, code);
                     double vwap = (Double) parsed[0];
                     String date = (String) parsed[1];
-                    MAIN.post(() -> cb.onResult(code, vwap, date));
+                    if (vwap > 0 && date != null) {
+                        MAIN.post(() -> cb.onResult(code, vwap, date));
+                    } else {
+                        retryOrFallbackVwap(code, cb, attempt, "响应中未找到有效的已收盘交易日分时数据");
+                    }
                 } catch (Exception e) {
-                    Log.w(TAG, "历史分时(day/query)解析异常 " + code, e);
-                    MAIN.post(() -> cb.onResult(code, 0, null));
+                    retryOrFallbackVwap(code, cb, attempt, "解析异常: " + e.getMessage());
                 }
             }
         });
+    }
+
+    /** 精确获取失败时先重试，重试用尽后改用日K缓存估算，不再无限期卡在原地重试。 */
+    private void retryOrFallbackVwap(String code, PrevDayVwapCallback cb, int attempt, String reason) {
+        if (attempt < PREV_VWAP_MAX_RETRY) {
+            Log.w(TAG, "昨日真实VWAP获取失败(" + code + " 第" + (attempt + 1) + "次): " + reason + "，800ms后重试");
+            MAIN.postDelayed(() -> fetchPrevDayVwapAttempt(code, cb, attempt + 1), 800L * (attempt + 1));
+            return;
+        }
+        Log.w(TAG, "昨日真实VWAP重试" + PREV_VWAP_MAX_RETRY + "次后仍失败(" + code + "): " + reason + "，改用日K缓存估算兜底");
+        fallbackVwapFromDailyKline(code, cb, reason);
+    }
+
+    /** 精确的分钟级VWAP多次重试仍失败时的兜底：用已有日K缓存算一个近似值——
+     *  (开+收*2+高+低)/5，比单纯用收盘价更贴近全天成交重心。虽不如真实成交量加权精确，
+     *  但能保证低开路径不会因为这一个接口的问题被无限期卡住，日K缓存现在也已经是腾讯+新浪
+     *  双源，比这个单一无重试的分时接口本身更可靠。 */
+    private void fallbackVwapFromDailyKline(String code, PrevDayVwapCallback cb, String preciseFailReason) {
+        try {
+            List<MarketDataManager.KlineBar> bars = MarketDataManager.get().getCachedKline(code, 3);
+            if (bars.isEmpty()) {
+                Log.w(TAG, "日K缓存也没有" + code + "的数据，本轮彻底放弃昨日VWAP");
+                MAIN.post(() -> cb.onResult(code, 0, null));
+                return;
+            }
+            MarketDataManager.KlineBar last = bars.get(bars.size() - 1);
+            double approx = (last.open + last.close * 2 + last.high + last.low) / 5.0;
+            if (approx <= 0) {
+                MAIN.post(() -> cb.onResult(code, 0, null));
+                return;
+            }
+            Log.i(TAG, "已用日K估算" + code + "昨日VWAP≈" + String.format(Locale.CHINA, "%.4f", approx)
+                    + "（精确值失败原因：" + preciseFailReason + "）");
+            MAIN.post(() -> cb.onResult(code, approx, last.date));
+        } catch (Exception e) {
+            Log.w(TAG, "日K估算兜底也失败(" + code + ")", e);
+            MAIN.post(() -> cb.onResult(code, 0, null));
+        }
     }
 
     /**
