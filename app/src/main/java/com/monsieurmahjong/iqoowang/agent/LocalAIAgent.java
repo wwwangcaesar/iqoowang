@@ -425,7 +425,7 @@ public class LocalAIAgent {
         try {
             com.monsieurmahjong.iqoowang.util.MarketIndexManager idx = com.monsieurmahjong.iqoowang.util.MarketIndexManager.get();
             idx.ensureFreshBlocking(6000);
-            sb.append("大盘环境：").append(idx.getMarketSummaryText()).append("\n");
+            sb.append("大盘环境（仅背景参考，不单独构成加/减仓理由）：").append(idx.getMarketSummaryText()).append("\n");
         } catch (Exception ignored) {}
         if (!trend.isEmpty()) sb.append("近期走势：").append(trend).append("\n");
         if (!histNote.isEmpty()) sb.append("历史交易：").append(histNote).append("\n");
@@ -825,7 +825,7 @@ public class LocalAIAgent {
             try {
                 com.monsieurmahjong.iqoowang.util.MarketIndexManager idx = com.monsieurmahjong.iqoowang.util.MarketIndexManager.get();
                 idx.ensureFreshBlocking(6000);
-                sb.append("【当前大盘】").append(idx.getMarketSummaryText()).append("\n\n");
+                sb.append("【当前大盘（仅背景参考，不能单独作为这支股票卖出/回避的理由，见上文判断优先级）】").append(idx.getMarketSummaryText()).append("\n\n");
             } catch (Exception ignored) {}
         }
 
@@ -940,6 +940,12 @@ public class LocalAIAgent {
                 "· 硬条件：价格≥SAR(10,2,20)，≥3元，流通市值20-320亿\n" +
                 "· 排除：创业板 科创板 涨幅≥20% ST\n\n" +
 
+                "【最重要的判断优先级——每次对具体某一支股票给买卖/加仓/减仓建议前必须先自检】\n" +
+                "→ 判断具体某一支股票该不该买/卖/加仓/减仓，第一依据永远是这支股票自己的具体信号（水线/VWAP/放量/分歧K线止损位），不是大盘涨跌。\n" +
+                "→ 大盘环境只是背景参考，可以用来提醒“整体仓位轻重”，但不能单独作为“这支股票该卖/该回避”的理由。如果只是大盘在跌，但这支股票自己的水线没破、VWAP没破、也没跌破分歧K线止损位，就不能建议卖出或减仓，最多提示“大盘偏弱，注意控制新增仓位”。\n" +
+                "→ 给出卖出/减仓建议时，必须明确说出触发的是哪一条具体规则（跌破水线/跌破前阳线低点/跌破分歧K线中点/跌破分歧K线最低点/当日涨幅回撤过半），并给出具体价位；只说“大盘不好，建议减仓”这种没落到具体规则和价位的建议是不合格的，相当于没回答。\n" +
+                "（注：上面这条只针对单一股票的买卖判断。选股阶段需要给出“整体偍激进还是保守”的大盘研判时，仍需结合大盘指数和市场宽度数据，不受此限制。）\n\n" +
+
                 "【资深操盘手经验（你必须深刻理解并融入判断）】\n" +
                 "以下是操盘手的原话，你要理解其含义并用于实战分析：\n\n" +
                 "经验1：买入时机——不是选出来就能买，也不是随便挂个价\n" +
@@ -961,7 +967,7 @@ public class LocalAIAgent {
                 "【你的职责】\n" +
                 "1. 分析股票时，主动结合操盘手经验给出具体挂单价区间\n" +
                 "2. 评估量价信号时，判断是信号A（放量突破）还是信号B（缩量整理）\n" +
-                "3. 必须结合给定的大盘指数、市场宽度、历史交易记录做判断，这些都是真实数据，不是可有可无的参考信息\n" +
+                "3. 必须结合给定的大盘指数、市场宽度、历史交易记录做判断，这些都是真实数据，不是可有可无的参考信息，但对单一股票的买卖判断，这些只能作为辅助背景，不能取代这支股票自己的具体规则\n" +
                 "4. 选股分析时按指定的结构化格式输出，不受字数限制\n"
                 + safeWisdomBlock(actionKey);
     }

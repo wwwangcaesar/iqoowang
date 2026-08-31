@@ -75,7 +75,7 @@ public class RealtimeMonitorService extends Service {
 
     // 周期性监控快照：不管有没有信号，定期把所有股票的现价/参考价/判断记一笔，
     // 证明监控确实在跑，不能靠“通知栏还在”来判断
-    private static final long SNAPSHOT_INTERVAL_MS = 15 * 60_000; // 15分钟一次
+    private static final long SNAPSHOT_INTERVAL_MS = 10 * 60_000; // 。10分钟一次（2026-08-30从15分钟调整而来）
     private volatile long mLastSnapshotAt = 0;
 
     // 行情双源全部失败时的日志节流：断网期间避免每个tick都刷一条，最多10分钟记一次

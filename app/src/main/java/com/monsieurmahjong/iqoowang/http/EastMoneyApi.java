@@ -61,6 +61,12 @@ public class EastMoneyApi {
     private static final String URL_KLINE_MIN =
             "https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=%s%s,%s,,%d";
 
+    // 【新增】新浪日K线备用源——腾讯失败/限流/返回异常时自动切换过来，不需要调用方感知。
+    // scale=240对应日K；symbol格式与腾讯相同(sh600000/sz000001)。只覆盖日K，分钟K新浪接口格式差异较大且
+    // 分钟图只影响图表浏览体验不影响核心交易判断（都用日K），暂不做分钟级备用。
+    private static final String URL_KLINE_SINA_DAY =
+            "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=%s%s&scale=240&ma=no&datalen=%d";
+
     // 实时行情（批量，每次最多约80个代码）
     private static final String URL_QUOTE_BASE = "https://qt.gtimg.cn/q=";
 
@@ -138,15 +144,16 @@ public class EastMoneyApi {
         enqueue(url, new Callback() {
             @Override
             public void onFailure(Call call, IOException e) {
-                Log.e(TAG, "fetchKline fail: " + code, e);
-                MAIN.post(() -> cb.onError(e.getMessage()));
+                Log.w(TAG, "腾讯日K线请求失败(" + code + ")，切换新浪源重试: " + e.getMessage());
+                fallbackToSinaOrError(mkt, code, isMinute, limit, cb, e.getMessage());
             }
 
             @Override
             public void onResponse(Call call, Response resp) throws IOException {
                 try (Response r = resp) {
                     if (!r.isSuccessful()) {
-                        MAIN.post(() -> cb.onError("HTTP " + r.code()));
+                        Log.w(TAG, "腾讯日K线HTTP" + r.code() + "(" + code + ")，切换新浪源重试");
+                        fallbackToSinaOrError(mkt, code, isMinute, limit, cb, "HTTP " + r.code());
                         return;
                     }
                     String body = r.body().string();
@@ -155,20 +162,20 @@ public class EastMoneyApi {
                     int retCode = root.optInt("code", 0);
                     if (retCode != 0) {
                         String msg = root.optString("msg", "API error " + retCode);
-                        MAIN.post(() -> cb.onError(msg));
+                        fallbackToSinaOrError(mkt, code, isMinute, limit, cb, msg);
                         return;
                     }
 
                     JSONObject data = root.optJSONObject("data");
                     if (data == null) {
-                        MAIN.post(() -> cb.onError("No data"));
+                        fallbackToSinaOrError(mkt, code, isMinute, limit, cb, "No data");
                         return;
                     }
 
                     String stockKey = mkt + code;
                     JSONObject stockData = data.optJSONObject(stockKey);
                     if (stockData == null) {
-                        MAIN.post(() -> cb.onError("No data for " + code));
+                        fallbackToSinaOrError(mkt, code, isMinute, limit, cb, "No data for " + code);
                         return;
                     }
 
@@ -197,7 +204,7 @@ public class EastMoneyApi {
                     }
 
                     if (klines == null || klines.length() == 0) {
-                        MAIN.post(() -> cb.onError("No kline data"));
+                        fallbackToSinaOrError(mkt, code, isMinute, limit, cb, "No kline data");
                         return;
                     }
 
@@ -206,11 +213,81 @@ public class EastMoneyApi {
                     final String n = name;
                     MAIN.post(() -> cb.onSuccess(bars, n));
                 } catch (Exception e) {
-                    Log.e(TAG, "fetchKline parse: " + code, e);
-                    MAIN.post(() -> cb.onError(e.getMessage()));
+                    Log.w(TAG, "腾讯日K线解析异常(" + code + ")，切换新浪源重试: " + e.getMessage());
+                    fallbackToSinaOrError(mkt, code, isMinute, limit, cb, e.getMessage());
                 }
             }
         });
+    }
+
+    /**
+     * 【新增】腾讯源失败后的兼底：日K可以切新浪源重试；分钟K线新浪接口格式差异较大，
+     * 暂不做分钟级兼底，直接报错（分钟图只影响图表浏览体验，不影响核心的止损/买入判断，那些都用日K）。
+     * 两个源都失败时，错误信息会同时包含两边的失败原因，方便排查到底是哪个环节出的问题。
+     */
+    private void fallbackToSinaOrError(String mkt, String code, boolean isMinute, int limit,
+                                        KlineCallback cb, String tencentErr) {
+        if (isMinute) {
+            MAIN.post(() -> cb.onError(tencentErr));
+            return;
+        }
+        String url = String.format(Locale.US, URL_KLINE_SINA_DAY, mkt, code, limit);
+        enqueue(url, new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                Log.e(TAG, "新浪日K线也失败(" + code + ")：" + e.getMessage());
+                MAIN.post(() -> cb.onError("腾讯:" + tencentErr + "；新浪:" + e.getMessage()));
+            }
+            @Override
+            public void onResponse(Call call, Response resp) throws IOException {
+                try (Response r = resp) {
+                    if (!r.isSuccessful()) {
+                        MAIN.post(() -> cb.onError("腾讯:" + tencentErr + "；新浪:HTTP" + r.code()));
+                        return;
+                    }
+                    String body = r.body().string();
+                    List<KlineBar> bars = parseSinaKlines(body);
+                    if (bars.isEmpty()) {
+                        MAIN.post(() -> cb.onError("腾讯:" + tencentErr + "；新浪:无数据"));
+                        return;
+                    }
+                    Log.i(TAG, "已通过新浪源补齐" + code + "的K线数据，共" + bars.size() + "条");
+                    MAIN.post(() -> cb.onSuccess(bars, code));
+                } catch (Exception e) {
+                    MAIN.post(() -> cb.onError("腾讯:" + tencentErr + "；新浪解析异常:" + e.getMessage()));
+                }
+            }
+        });
+    }
+
+    /** 解析新浪K线JSON：[{"day":"2026-07-09","open":"10.50","high":"10.80","low":"10.40","close":"10.75","volume":"12345600"}, ...] */
+    private List<KlineBar> parseSinaKlines(String body) {
+        List<KlineBar> bars = new ArrayList<>();
+        try {
+            JSONArray arr = new JSONArray(body);
+            double prevClose = 0;
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.optJSONObject(i);
+                if (o == null) continue;
+                KlineBar bar = new KlineBar();
+                bar.date = o.optString("day", "");
+                bar.open = d(o.optString("open", "0"));
+                bar.close = d(o.optString("close", "0"));
+                bar.high = d(o.optString("high", "0"));
+                bar.low = d(o.optString("low", "0"));
+                bar.volume = (long) d(o.optString("volume", "0"));
+                if (prevClose > 0 && bar.close > 0) {
+                    bar.changePct = (bar.close - prevClose) / prevClose * 100;
+                    bar.changeAmt = bar.close - prevClose;
+                    bar.amplitude = (bar.high - bar.low) / prevClose * 100;
+                }
+                if (bar.close > 0) prevClose = bar.close;
+                bars.add(bar);
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "解析新浪K线失败: " + e.getMessage());
+        }
+        return bars;
     }
 
     // ──────────────────────────────────────────

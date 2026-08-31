@@ -2401,6 +2401,12 @@ function updateModalAmount() {
 function confirmTrade() {
   const t = STATE.tradeTarget;
   if (!t) return;
+  // 兜底：如果名字看起来还是纯数字代码，说明前面某个环节没拿到真实名称，
+  // 用当前详情面板里已确认的真实名称顶替一下，避免持仓页显示成代码
+  if (t.name && /^\d{6}$/.test(t.name) && STATE.currentDetail && STATE.currentDetail.name
+      && STATE.currentDetail.name !== t.name && !/^\d+$/.test(STATE.currentDetail.name)) {
+    t.name = STATE.currentDetail.name;
+  }
   const price = t.latestClose || t.currentPrice || t.price || t.cost;
   const direction = t.isSell ? 'SELL' : 'BUY';
 
@@ -3487,6 +3493,13 @@ function loadStockDetail(code, name) {
 
 function updateDetailPanel(q) {
   STATE.currentDetail=q;
+  // 【修复】之前这里只更新了显示面板文字，没同步回STATE.currentKlineName。
+  // 首页搜索一个不在本地小模拟池里的代码时，doSearch()会先把代码本身当名字用，
+  // 等这里真实行情把正确名称带回来，如果不顺手同步这个变量，后面点"模拟买入"时
+  // openBuyByDetail()读到的还是没同步过的旧值，持仓页就会显示成代码而不是名称。
+  if (q.name && q.name !== q.code && !/^\d+$/.test(q.name)) {
+    STATE.currentKlineName = q.name;
+  }
   const preClose=q.preClose||q.price;
   const pct=q.changePct||((q.price-preClose)/preClose*100);
   const chg=q.change||(q.price-preClose);
@@ -4240,6 +4253,11 @@ function refreshDownloadStatusText() {
         el.style.color = 'var(--text-dim)';
       }
       document.getElementById('downloadBtn').innerHTML = '⬇ 重新下载最新数据';
+    } else if (status.stockCount > 0 && status.barCount === 0) {
+      // 【修复】之前这里什么都不做，会一直卡在初始的"未下载"占位文案，看起来像是
+      // 没下载过，其实是下载过但K线全部失败（多半是接口被限流），现在明确提示出来
+      el.innerHTML = `⚠️ 已尝试${status.stockCount}支但K线全部获取失败，请重新下载`;
+      el.style.color = 'var(--up-red)';
     }
   } catch(e){}
 }

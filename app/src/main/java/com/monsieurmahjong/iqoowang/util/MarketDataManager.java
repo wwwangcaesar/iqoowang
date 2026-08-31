@@ -65,6 +65,9 @@ public class MarketDataManager {
     private static final String URL_KLINE =
             "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%s%s,day,,,%d,qfq";
 
+    private static final String URL_KLINE_SINA =
+            "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=%s%s&scale=240&ma=no&datalen=%d";
+
     // 腾讯实时行情（批量查询）
     private static final String URL_QUOTE_BASE = "https://qt.gtimg.cn/q=";
 
@@ -468,67 +471,94 @@ public class MarketDataManager {
     }
 
     /**
-     * 同步下载单只股票的K线数据并存入DB（腾讯财经API）
+     * 同步下载单只股票的K线数据并存入DB。
+     *
+     * 【重要修复】之前2000+支股票之间零延迟连续请求腾讯接口，很容易中途被限流/拒绝，
+     * 而完成回调里报告的支数其实只是尝试过的支数，不代表真的拿到了数据——导致出现过
+     * 下载完成显示2322支但选股/K线全是空的偶发问题。现在加一个小延迟节流，并且腾讯失败时
+     * 自动切新浪源重试，两个源都失败才真正记为0条。
      * @return 实际写入的K线条数
      */
     private int downloadKlineForStock(String code, String name, String market) throws Exception {
         String mkt = code.startsWith("6") || code.startsWith("5") ? "sh" : "sz";
-        String url = String.format(Locale.US, URL_KLINE, mkt, code, KLINE_DAYS + 5);
 
-        Request req = new Request.Builder().url(url).get().build();
-        Response resp = HTTP.newCall(req).execute();
-        if (!resp.isSuccessful()) {
+        try { Thread.sleep(60); } catch (InterruptedException ignored) {}
+
+        int bars = tryDownloadFromTencent(code, name, market, mkt);
+        if (bars > 0) return bars;
+
+        Log.w(TAG, "下载K线失败或为空: " + code + "，切换新浪源重试");
+        bars = tryDownloadFromSina(code, name, market, mkt);
+        if (bars > 0) {
+            Log.i(TAG, "已通过新浪源补齐" + code + "的K线，共" + bars + "条");
+        }
+        return bars;
+    }
+
+    private int tryDownloadFromTencent(String code, String name, String market, String mkt) {
+        try {
+            String url = String.format(Locale.US, URL_KLINE, mkt, code, KLINE_DAYS + 5);
+            Request req = new Request.Builder().url(url).get().build();
+            Response resp = HTTP.newCall(req).execute();
+            if (!resp.isSuccessful()) { resp.close(); return 0; }
+            String body = resp.body().string();
             resp.close();
+
+            JSONObject root = new JSONObject(body);
+            if (root.optInt("code", -1) != 0) return 0;
+            JSONObject data = root.optJSONObject("data");
+            if (data == null) return 0;
+            String stockKey = mkt + code;
+            JSONObject stockData = data.optJSONObject(stockKey);
+            if (stockData == null) return 0;
+            JSONArray klines = stockData.optJSONArray("day");
+            if (klines == null) klines = stockData.optJSONArray("qfqday");
+            if (klines == null || klines.length() == 0) return 0;
+            double preClose = parseDouble(stockData.optString("prec", "0"));
+            return insertKlineFromTencent(code, name, market, klines, preClose);
+        } catch (Exception e) {
+            Log.w(TAG, "腾讯K线下载异常(" + code + "): " + e.getMessage());
             return 0;
         }
+    }
 
-        String body = resp.body().string();
-        resp.close();
+    private int tryDownloadFromSina(String code, String name, String market, String mkt) {
+        try {
+            String url = String.format(Locale.US, URL_KLINE_SINA, mkt, code, KLINE_DAYS + 5);
+            Request req = new Request.Builder().url(url).get().build();
+            Response resp = HTTP.newCall(req).execute();
+            if (!resp.isSuccessful()) { resp.close(); return 0; }
+            String body = resp.body().string();
+            resp.close();
+            JSONArray arr = new JSONArray(body);
+            if (arr.length() == 0) return 0;
+            return insertKlineFromSina(code, name, market, arr);
+        } catch (Exception e) {
+            Log.w(TAG, "新浪K线下载异常(" + code + "): " + e.getMessage());
+            return 0;
+        }
+    }
 
-        JSONObject root = new JSONObject(body);
-        if (root.optInt("code", -1) != 0) return 0;
-
-        JSONObject data = root.optJSONObject("data");
-        if (data == null) return 0;
-
-        String stockKey = mkt + code;
-        JSONObject stockData = data.optJSONObject(stockKey);
-        if (stockData == null) return 0;
-
-        // 查找日K线数组
-        JSONArray klines = stockData.optJSONArray("day");
-        if (klines == null) klines = stockData.optJSONArray("qfqday");
-        if (klines == null || klines.length() == 0) return 0;
-
-        // 前收盘（用于计算首根K线涨跌幅）
-        double preClose = parseDouble(stockData.optString("prec", "0"));
-
-        // 批量插入
+    private int insertKlineFromTencent(String code, String name, String market, JSONArray klines, double preClose) {
         mDb.beginTransaction();
         try {
             int count = 0;
             double prevClose = preClose;
-
             for (int i = 0; i < klines.length(); i++) {
                 JSONArray row = klines.optJSONArray(i);
                 if (row == null || row.length() < 6) continue;
-
-                // 腾讯K线字段: [日期, 开盘, 收盘, 最高, 最低, 成交量]
                 String tradeDate = row.optString(0, "");
                 double open      = parseDouble(row.optString(1, "0"));
                 double close     = parseDouble(row.optString(2, "0"));
                 double high      = parseDouble(row.optString(3, "0"));
                 double low       = parseDouble(row.optString(4, "0"));
                 long volume      = (long) parseDouble(row.optString(5, "0"));
-
-                // 计算衍生指标
                 double changePct = 0, changeAmt = 0, amplitude = 0;
                 if (prevClose > 0 && close > 0) {
                     changePct = (close - prevClose) / prevClose * 100;
                     changeAmt = close - prevClose;
                     amplitude = (high - low) / prevClose * 100;
                 }
-
                 ContentValues cv = new ContentValues();
                 cv.put("stock_code", code);
                 cv.put("stock_name", name);
@@ -544,10 +574,53 @@ public class MarketDataManager {
                 cv.put("change_pct", changePct);
                 cv.put("change_amt", changeAmt);
                 cv.put("turn_rate", 0.0);
+                mDb.insertWithOnConflict("kline_cache", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
+                if (close > 0) prevClose = close;
+                count++;
+            }
+            mDb.setTransactionSuccessful();
+            return count;
+        } finally {
+            mDb.endTransaction();
+        }
+    }
 
-                mDb.insertWithOnConflict("kline_cache", null, cv,
-                        SQLiteDatabase.CONFLICT_REPLACE);
-
+    private int insertKlineFromSina(String code, String name, String market, JSONArray arr) {
+        mDb.beginTransaction();
+        try {
+            int count = 0;
+            double prevClose = 0;
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.optJSONObject(i);
+                if (o == null) continue;
+                String tradeDate = o.optString("day", "");
+                double open  = parseDouble(o.optString("open", "0"));
+                double close = parseDouble(o.optString("close", "0"));
+                double high  = parseDouble(o.optString("high", "0"));
+                double low   = parseDouble(o.optString("low", "0"));
+                long volume  = (long) parseDouble(o.optString("volume", "0"));
+                double changePct = 0, changeAmt = 0, amplitude = 0;
+                if (prevClose > 0 && close > 0) {
+                    changePct = (close - prevClose) / prevClose * 100;
+                    changeAmt = close - prevClose;
+                    amplitude = (high - low) / prevClose * 100;
+                }
+                ContentValues cv = new ContentValues();
+                cv.put("stock_code", code);
+                cv.put("stock_name", name);
+                cv.put("market", market);
+                cv.put("trade_date", tradeDate);
+                cv.put("open", open);
+                cv.put("close", close);
+                cv.put("high", high);
+                cv.put("low", low);
+                cv.put("volume", volume);
+                cv.put("amount", 0.0);
+                cv.put("amplitude", amplitude);
+                cv.put("change_pct", changePct);
+                cv.put("change_amt", changeAmt);
+                cv.put("turn_rate", 0.0);
+                mDb.insertWithOnConflict("kline_cache", null, cv, SQLiteDatabase.CONFLICT_REPLACE);
                 if (close > 0) prevClose = close;
                 count++;
             }
