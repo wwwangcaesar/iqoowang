@@ -28,6 +28,8 @@ import com.amap.api.services.geocoder.GeocodeSearch;
 import com.amap.api.services.geocoder.RegeocodeAddress;
 import com.amap.api.services.geocoder.RegeocodeQuery;
 import com.amap.api.services.geocoder.RegeocodeResult;
+import com.amap.api.services.poisearch.PoiResult;
+import com.amap.api.services.poisearch.PoiSearch;
 import com.monsieurmahjong.iqoowang.R;
 
 import java.util.ArrayList;
@@ -40,7 +42,7 @@ import java.util.Locale;
  * 用户拖动地图或点击附近地点列表即可一键校准为该 POI 的名称及精确坐标。
  */
 public class LocationPickerActivity extends AppCompatActivity
-        implements AMap.OnCameraChangeListener, GeocodeSearch.OnGeocodeSearchListener {
+        implements AMap.OnCameraChangeListener, GeocodeSearch.OnGeocodeSearchListener, PoiSearch.OnPoiSearchListener {
 
     public static final String EXTRA_LAT = "extra_lat";
     public static final String EXTRA_LON = "extra_lon";
@@ -147,24 +149,36 @@ public class LocationPickerActivity extends AppCompatActivity
             Log.e(TAG, "初始化 GeocodeSearch 异常", e);
         }
 
-        // 初始自动发起一次逆地理编码查询
+        // 初始自动发起一次周边真实 POI 搜索与逆地理编码
         searchNearbyPois(currentLat, currentLon);
     }
 
     private void initMap() {
         aMap = mapView.getMap();
         LatLng targetLatLng = new LatLng(currentLat, currentLon);
-        aMap.moveCamera(CameraUpdateFactory.newLatLngZoom(targetLatLng, 16.5f));
+        aMap.moveCamera(CameraUpdateFactory.newLatLngZoom(targetLatLng, 17.5f));
         aMap.setOnCameraChangeListener(this);
     }
 
     private void searchNearbyPois(double lat, double lon) {
         if (geocodeSearch != null) {
             LatLonPoint point = new LatLonPoint(lat, lon);
-            // 范围扩大到 500 米，使用 EXTENSIONS_ALL 获取详细 POI 列表
-            RegeocodeQuery query = new RegeocodeQuery(point, 500, GeocodeSearch.AMAP);
+            RegeocodeQuery query = new RegeocodeQuery(point, 300, GeocodeSearch.AMAP);
             query.setExtensions("all");
             geocodeSearch.getFromLocationAsyn(query);
+        }
+
+        // 发起周边真实商户/店铺精准搜索 (PoiSearch)，按距离排序
+        try {
+            PoiSearch.Query poiQuery = new PoiSearch.Query("", "餐饮服务|购物服务|生活服务|商务住宅|公司企业|住宿服务|科教文化服务|交通设施服务|金融保险服务|医疗保健服务|风景名胜", currentCity != null ? currentCity : "");
+            poiQuery.setPageSize(35);
+            poiQuery.setPageNum(1);
+            PoiSearch poiSearch = new PoiSearch(this, poiQuery);
+            poiSearch.setBound(new PoiSearch.SearchBound(new LatLonPoint(lat, lon), 1000, true)); // true = 按距离升序
+            poiSearch.setOnPoiSearchListener(this);
+            poiSearch.searchPOIAsyn();
+        } catch (AMapException e) {
+            Log.e(TAG, "PoiSearch 异常", e);
         }
     }
 
@@ -185,13 +199,60 @@ public class LocationPickerActivity extends AppCompatActivity
             return;
         }
 
+        // 严格以地图中心图钉对应的真实坐标为准，不发生漂移
         currentLat = cameraPosition.target.latitude;
         currentLon = cameraPosition.target.longitude;
 
         tvCoords.setText(String.format(Locale.getDefault(), "%.6f, %.6f", currentLat, currentLon));
-        tvAddress.setText("正在解析附近地点…");
+        tvAddress.setText("正在解析附近店铺…");
 
         searchNearbyPois(currentLat, currentLon);
+    }
+
+    @Override
+    public void onPoiSearched(PoiResult result, int rCode) {
+        if (rCode == AMapException.CODE_AMAP_SUCCESS && result != null && result.getPois() != null) {
+            ArrayList<PoiItem> pois = result.getPois();
+            if (!pois.isEmpty()) {
+                poiList.clear();
+                for (int i = 0; i < pois.size(); i++) {
+                    PoiItem p = pois.get(i);
+                    if (p == null || p.getTitle() == null || p.getTitle().trim().isEmpty()) continue;
+                    double pLat = p.getLatLonPoint() != null ? p.getLatLonPoint().getLatitude() : currentLat;
+                    double pLon = p.getLatLonPoint() != null ? p.getLatLonPoint().getLongitude() : currentLon;
+                    String pSnippet = p.getSnippet();
+                    if (pSnippet == null || pSnippet.trim().isEmpty()) {
+                        pSnippet = (p.getCityName() != null ? p.getCityName() : "") + (p.getAdName() != null ? p.getAdName() : "");
+                    }
+                    if (p.getDistance() > 0) {
+                        pSnippet = pSnippet + " (距约 " + p.getDistance() + " 米)";
+                    }
+                    String prov = p.getProvinceName() != null && !p.getProvinceName().isEmpty() ? p.getProvinceName() : currentProvince;
+                    String city = p.getCityName() != null && !p.getCityName().isEmpty() ? p.getCityName() : currentCity;
+                    String dist = p.getAdName() != null && !p.getAdName().isEmpty() ? p.getAdName() : currentDistrict;
+                    String adCode = p.getAdCode() != null && !p.getAdCode().isEmpty() ? p.getAdCode() : currentAdCode;
+
+                    poiList.add(new PoiItemModel(p.getTitle().trim(), pSnippet, pLat, pLon, prov, city, dist, adCode, i == 0));
+                }
+
+                if (!poiList.isEmpty()) {
+                    PoiItemModel first = poiList.get(0);
+                    first.isSelected = true;
+                    currentName = first.title;
+                    if (first.province != null) currentProvince = first.province;
+                    if (first.city != null) currentCity = first.city;
+                    if (first.district != null) currentDistrict = first.district;
+                    if (first.adCode != null) currentAdCode = first.adCode;
+                    tvAddress.setText(currentName);
+                }
+                poiAdapter.notifyDataSetChanged();
+            }
+        }
+    }
+
+    @Override
+    public void onPoiItemSearched(PoiItem poiItem, int i) {
+        // 未使用
     }
 
     @Override
@@ -210,73 +271,39 @@ public class LocationPickerActivity extends AppCompatActivity
             if (dist != null && !dist.isEmpty()) currentDistrict = dist;
             if (adCode != null && !adCode.isEmpty()) currentAdCode = adCode;
 
-            poiList.clear();
-
-            // 1. 优先提取高德逆地理编码返回的真实周边 POI 列表
-            List<PoiItem> pois = addr.getPois();
-            if (pois != null && !pois.isEmpty()) {
-                for (int i = 0; i < pois.size(); i++) {
-                    PoiItem p = pois.get(i);
-                    if (p == null || p.getTitle() == null || p.getTitle().trim().isEmpty()) continue;
-                    double pLat = p.getLatLonPoint() != null ? p.getLatLonPoint().getLatitude() : currentLat;
-                    double pLon = p.getLatLonPoint() != null ? p.getLatLonPoint().getLongitude() : currentLon;
-                    String pSnippet = p.getSnippet();
-                    if (pSnippet == null || pSnippet.trim().isEmpty()) {
-                        pSnippet = addr.getFormatAddress();
-                    }
-                    if (p.getDistance() > 0) {
-                        pSnippet = pSnippet + " (距约 " + p.getDistance() + " 米)";
-                    }
-                    poiList.add(new PoiItemModel(p.getTitle().trim(), pSnippet, pLat, pLon, prov, city, dist, adCode, i == 0));
-                }
-            }
-
-            // 2. 如果周边包含 AOI 区域名（如商圈/园区），也补充进列表
-            List<AoiItem> aois = addr.getAois();
-            if (aois != null && !aois.isEmpty()) {
-                for (AoiItem aoi : aois) {
-                    if (aoi != null && aoi.getAoiName() != null && !aoi.getAoiName().trim().isEmpty()) {
-                        String name = aoi.getAoiName().trim();
-                        boolean alreadyHas = false;
-                        for (PoiItemModel m : poiList) {
-                            if (m.title.equals(name)) { alreadyHas = true; break; }
+            // 仅在 PoiSearch 尚未返回数据时，作为兜底填入列表
+            if (poiList.isEmpty()) {
+                List<PoiItem> pois = addr.getPois();
+                if (pois != null && !pois.isEmpty()) {
+                    for (int i = 0; i < pois.size(); i++) {
+                        PoiItem p = pois.get(i);
+                        if (p == null || p.getTitle() == null || p.getTitle().trim().isEmpty()) continue;
+                        double pLat = p.getLatLonPoint() != null ? p.getLatLonPoint().getLatitude() : currentLat;
+                        double pLon = p.getLatLonPoint() != null ? p.getLatLonPoint().getLongitude() : currentLon;
+                        String pSnippet = p.getSnippet();
+                        if (pSnippet == null || pSnippet.trim().isEmpty()) {
+                            pSnippet = addr.getFormatAddress();
                         }
-                        if (!alreadyHas) {
-                            poiList.add(new PoiItemModel(name, addr.getFormatAddress(), currentLat, currentLon, prov, city, dist, adCode, poiList.isEmpty()));
+                        if (p.getDistance() > 0) {
+                            pSnippet = pSnippet + " (距约 " + p.getDistance() + " 米)";
                         }
+                        poiList.add(new PoiItemModel(p.getTitle().trim(), pSnippet, pLat, pLon, prov, city, dist, adCode, i == 0));
                     }
                 }
-            }
 
-            // 3. 兜底添加格式化地址项
-            if (addr.getFormatAddress() != null && !addr.getFormatAddress().trim().isEmpty()) {
-                String formatAddr = addr.getFormatAddress().trim();
-                boolean alreadyHas = false;
-                for (PoiItemModel m : poiList) {
-                    if (m.title.equals(formatAddr)) { alreadyHas = true; break; }
-                }
-                if (!alreadyHas) {
+                if (addr.getFormatAddress() != null && !addr.getFormatAddress().trim().isEmpty()) {
+                    String formatAddr = addr.getFormatAddress().trim();
                     poiList.add(new PoiItemModel(formatAddr, "详细地址定位", currentLat, currentLon, prov, city, dist, adCode, poiList.isEmpty()));
                 }
-            }
 
-            // 默认选中第一个 POI 项
-            if (!poiList.isEmpty()) {
-                PoiItemModel selected = poiList.get(0);
-                selected.isSelected = true;
-                currentName = selected.title;
-                currentLat = selected.lat;
-                currentLon = selected.lon;
-                tvAddress.setText(currentName);
-                tvCoords.setText(String.format(Locale.getDefault(), "%.6f, %.6f", currentLat, currentLon));
-            } else {
-                tvAddress.setText(currentName);
+                if (!poiList.isEmpty()) {
+                    PoiItemModel selected = poiList.get(0);
+                    selected.isSelected = true;
+                    currentName = selected.title;
+                    tvAddress.setText(currentName);
+                }
+                poiAdapter.notifyDataSetChanged();
             }
-
-            poiAdapter.notifyDataSetChanged();
-        } else {
-            Log.w(TAG, "逆地理编码失败，rCode=" + rCode);
-            tvAddress.setText(currentName != null ? currentName : "未知位置");
         }
     }
 

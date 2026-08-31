@@ -409,53 +409,51 @@ function spawnShockwave(cx, cy, color){
   shockwaves.push({ x:cx, y:cy, r:10, maxR:160, life:1, color:color||'#FFC93C' });
 }
 
-/* ---- 大范围高亮电弧闪电系统 ---- */
+/* ---- 精致电弧闪电系统（细线条、低噪、惊艳电光） ---- */
 let lightningBolts = [];
 function createLightningBolt(x1,y1,x2,y2,depth,dispFactor){
-  dispFactor = dispFactor || 0.45;
+  dispFactor = dispFactor || 0.35;
   if(depth<=0) return [{x:x1,y:y1},{x:x2,y:y2}];
   const dist = Math.hypot(x2-x1, y2-y1);
   const mx = (x1+x2)/2 + (Math.random()-.5)*(dist * dispFactor);
   const my = (y1+y2)/2 + (Math.random()-.5)*(dist * dispFactor);
   let segs = createLightningBolt(x1,y1,mx,my,depth-1,dispFactor).concat(createLightningBolt(mx,my,x2,y2,depth-1,dispFactor));
-  // 随机生成分叉子电弧
-  if(depth >= 2 && Math.random() < 0.42){
-    const forkAng = Math.atan2(y2-y1, x2-x1) + (Math.random()>0.5 ? 0.7 : -0.7);
-    const forkLen = dist * 0.4;
+  // 仅在主分支偶尔产生一条极细子电弧
+  if(depth === 2 && Math.random() < 0.28){
+    const forkAng = Math.atan2(y2-y1, x2-x1) + (Math.random()>0.5 ? 0.6 : -0.6);
+    const forkLen = dist * 0.35;
     const fx = mx + Math.cos(forkAng)*forkLen;
     const fy = my + Math.sin(forkAng)*forkLen;
-    segs = segs.concat(createLightningBolt(mx,my,fx,fy,depth-2,dispFactor*0.8));
+    segs = segs.concat(createLightningBolt(mx,my,fx,fy,1,dispFactor*0.6));
   }
   return segs;
 }
 
 function spawnLightningBurst(cx, cy){
-  const colors = ['#00FFFF', '#FFFFFF', '#70E5FF', '#FFE600', '#E0B0FF'];
-  // 连续劈出 4 波闪电电弧，覆盖大范围
-  for(let wave=0; wave<4; wave++){
+  const colors = ['#00FFFF', '#FFFFFF', '#70E5FF', '#FFEB3B'];
+  // 精简为 2 波利落的闪电脉冲，条纹细腻不杂乱
+  for(let wave=0; wave<2; wave++){
     setTimeout(function(){
-      const boltCount = 4 + Math.floor(Math.random()*4);
+      const boltCount = 2 + Math.floor(Math.random()*2);
       for(let i=0; i<boltCount; i++){
-        const ang = (i / boltCount) * Math.PI * 2 + (Math.random() - 0.5)*0.8;
-        const len = 110 + Math.random()*110; // 大范围延伸（110~220px）
+        const ang = (i / boltCount) * Math.PI * 2 + (Math.random() - 0.5)*0.6;
+        const len = 70 + Math.random()*55; // 紧凑环绕火苗（70~125px）
         const ex = cx + Math.cos(ang)*len;
         const ey = cy + Math.sin(ang)*len;
-        const pts = createLightningBolt(cx, cy, ex, ey, 4, 0.42);
+        const pts = createLightningBolt(cx, cy, ex, ey, 4, 0.35);
         const col = colors[Math.floor(Math.random()*colors.length)];
         lightningBolts.push({
-          pts: pts, life: 1, decay: 0.05 + Math.random()*0.04,
-          color: col, width: 2.2 + Math.random()*1.8
+          pts: pts, life: 1, decay: 0.07 + Math.random()*0.04,
+          color: col, width: 1.1 + Math.random()*0.5
         });
-        // 在电弧末端产生火花闪烁
-        for(let s=0; s<2; s++){
-          particles.push({
-            x: ex, y: ey, vx: (Math.random()-.5)*3.5, vy: (Math.random()-.5)*3.5,
-            life: 1, decay: 0.03 + Math.random()*0.02, r: 2.5 + Math.random()*2,
-            color: col, type: 'spark'
-          });
-        }
+        // 电弧末端微弱电火花
+        particles.push({
+          x: ex, y: ey, vx: (Math.random()-.5)*2.5, vy: (Math.random()-.5)*2.5,
+          life: 1, decay: 0.04 + Math.random()*0.03, r: 1.8 + Math.random()*1.2,
+          color: col, type: 'spark'
+        });
       }
-    }, wave * 130);
+    }, wave * 160);
   }
 }
 
@@ -553,9 +551,9 @@ function tick(){
     ctx.save();
     ctx.globalAlpha = Math.max(0, b.life * 0.95);
     ctx.strokeStyle = b.color;
-    ctx.lineWidth = b.width * Math.max(0.4, b.life);
+    ctx.lineWidth = b.width * Math.max(0.5, b.life);
     ctx.shadowColor = b.color;
-    ctx.shadowBlur = 18;
+    ctx.shadowBlur = 10;
     ctx.globalCompositeOperation = 'lighter';
     ctx.beginPath();
     for(let pi=0; pi<b.pts.length; pi++){
@@ -564,9 +562,9 @@ function tick(){
     }
     ctx.stroke();
     // 纯白高亮内芯
-    ctx.globalAlpha = Math.max(0, b.life * 0.8);
+    ctx.globalAlpha = Math.max(0, b.life * 0.9);
     ctx.strokeStyle = '#FFFFFF';
-    ctx.lineWidth = Math.max(1, b.width * 0.45);
+    ctx.lineWidth = Math.max(0.6, b.width * 0.5);
     ctx.stroke();
     ctx.restore();
   }

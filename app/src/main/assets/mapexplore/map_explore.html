@@ -2041,7 +2041,7 @@ async function drillIntoCity(cityName, cityAdcode, center) {
         map: 'city_' + cityAdcode,
         roam: true,
         zoom: 1.15,
-        center: center || undefined,
+        scaleLimit: { min: 0.6, max: 10 },
         label: {
           show: true,
           color: '#FFFFFF',
@@ -2083,26 +2083,27 @@ async function drillIntoCity(cityName, cityAdcode, center) {
           name: '消费足迹',
           type: 'effectScatter',
           coordinateSystem: 'geo',
-          symbolSize: 14,
+          symbolSize: 12,
           rippleEffect: {
             brushType: 'stroke',
-            scale: 4,
-            period: 2.2,
+            scale: 2.6,
+            period: 2.5,
           },
           itemStyle: {
             color: '#00FFC6',
-            shadowBlur: 16,
+            shadowBlur: 14,
             shadowColor: '#00FFC6',
           },
           label: {
-            show: false, // 默认不显示文字，放大后自动显示
+            show: true,
             position: 'top',
             formatter: p => p.data.name,
-            color: '#FFF',
+            color: '#00FFC6',
             fontSize: 11,
-            distance: 8,
+            fontWeight: '600',
+            distance: 6,
             textBorderColor: '#000000',
-            textBorderWidth: 2.5,
+            textBorderWidth: 3.0,
           },
           data: cityPoints.map(pt => ({
             id: pt.id,
@@ -2469,27 +2470,13 @@ function setupMapInteractions() {
   });
 
   mapChart.on('georoam', params => {
-    if (state.mode === 'map') {
-      if (state.level === 'city' || state.level === 'district') {
+    if (state.mode === 'map' && state.level === 'country' && !state.isTransitioning) {
+      if (params.zoom !== undefined) {
         const currentOption = mapChart.getOption();
         if (currentOption && currentOption.geo && currentOption.geo[0]) {
           const currentZoom = currentOption.geo[0].zoom;
-          const shouldShow = currentZoom >= 2.0;
-          if (currentOption.series && currentOption.series[1] && currentOption.series[1].label) {
-            if (!!currentOption.series[1].label.show !== shouldShow) {
-              currentOption.series[1].label.show = shouldShow;
-              mapChart.setOption({ series: currentOption.series });
-            }
-          }
-        }
-      } else if (state.level === 'country' && !state.isTransitioning) {
-        if (params.zoom !== undefined) {
-          const currentOption = mapChart.getOption();
-          if (currentOption && currentOption.geo && currentOption.geo[0]) {
-            const currentZoom = currentOption.geo[0].zoom;
-            if (currentZoom < 0.55) {
-              exitToGlobeMode();
-            }
+          if (currentZoom < 0.55) {
+            exitToGlobeMode();
           }
         }
       }
