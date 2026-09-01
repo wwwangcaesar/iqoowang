@@ -136,6 +136,10 @@
         <activity
             android:name=".streak.StreakActivity"
             android:exported="false" />
+        <activity
+            android:name=".BatchImportActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
 
         <activity
             android:name=".NfcTriggerActivity"

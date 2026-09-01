@@ -26,6 +26,7 @@ import androidx.fragment.app.Fragment;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import com.monsieurmahjong.iqoowang.R;
+import com.monsieurmahjong.iqoowang.BatchImportActivity;
 import com.monsieurmahjong.iqoowang.connect.Achievement;
 import com.monsieurmahjong.iqoowang.dao.AchievementManager;
 import com.monsieurmahjong.iqoowang.dao.AppDatabase;
@@ -185,6 +186,13 @@ public class SettingsFragment extends Fragment {
             iv_piggy_bank.setOnClickListener(v -> startActivity(new Intent(requireContext(), PiggyBankActivity.class)));
             playPiggyIconShake(iv_piggy_bank);
         }
+
+        // 5. 批量补录卡片 → 跳转到批量补录页面
+        CardView cardBatchImport = view.findViewById(R.id.card_batch_import);
+        if (cardBatchImport != null) {
+            cardBatchImport.setOnClickListener(v -> startActivity(new Intent(requireContext(), BatchImportActivity.class)));
+        }
+
         setupBudgetSlider();
         setupShakeToggle();
 

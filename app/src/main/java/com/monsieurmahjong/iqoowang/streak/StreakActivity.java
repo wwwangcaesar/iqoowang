@@ -6,6 +6,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.appcompat.app.AppCompatActivity;
 
 /**
@@ -47,16 +48,19 @@ public class StreakActivity extends AppCompatActivity {
 
         webView.loadUrl("file:///android_asset/streak/streak-flame.html");
         overridePendingTransition(android.R.anim.fade_in, 0);
-    }
 
-    @Override
-    public void onBackPressed() {
-        if (webView != null && webView.canGoBack()) {
-            webView.goBack();
-        } else {
-            super.onBackPressed();
-            overridePendingTransition(0, android.R.anim.fade_out);
-        }
+        // 使用新的OnBackPressedDispatcher替代已弃用的onBackPressed
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (webView != null && webView.canGoBack()) {
+                    webView.goBack();
+                } else {
+                    finish();
+                    overridePendingTransition(0, android.R.anim.fade_out);
+                }
+            }
+        });
     }
 
     @Override

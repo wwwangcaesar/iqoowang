@@ -79,6 +79,33 @@
   .flame-layer{ transition:fill 1s ease, opacity .5s ease; transform-box:fill-box; }
   .flame-wrap.lit{ animation:breathePulse 2.8s ease-in-out infinite; }
   @keyframes breathePulse{ 0%,100%{ transform:scale(1);} 50%{ transform:scale(1.045);} }
+
+  /* 外层火焰轮廓拟真热浪摇曳晃动 */
+  .flame-wrap.lit .flame-layer[data-idx="0"] {
+    animation: outerWobble 2.4s ease-in-out infinite alternate;
+    transform-origin: 50% 92%;
+  }
+  @keyframes outerWobble {
+    0% { transform: scale(1) rotate(0deg); }
+    35% { transform: scale(1.02, 0.985) rotate(1.2deg); }
+    70% { transform: scale(0.985, 1.02) rotate(-1.2deg); }
+    100% { transform: scale(1.015, 1.01) rotate(0.6deg); }
+  }
+
+  /* ✨ 新增：内层火焰核心也有微微晃动，模拟真实火焰内核跳动 */
+  .flame-wrap.lit .flame-layer[data-idx="4"],
+  .flame-wrap.lit .flame-layer[data-idx="5"],
+  .flame-wrap.lit .flame-layer[data-idx="6"] {
+    animation: innerFlicker 1.8s ease-in-out infinite alternate;
+    transform-origin: 50% 88%;
+  }
+  @keyframes innerFlicker {
+    0% { transform: scale(1) translateY(0); }
+    40% { transform: scale(1.03, 0.98) translateY(-1px); }
+    80% { transform: scale(0.98, 1.04) translateY(1px); }
+    100% { transform: scale(1.01, 1) translateY(0); }
+  }
+
   .flame-layers.prismatic{ animation:hueSpin 3.2s linear infinite; }
   @keyframes hueSpin{ 0%{ filter:hue-rotate(0deg) saturate(1.3);} 100%{ filter:hue-rotate(360deg) saturate(1.3);} }
   .flame-wrap.idle-sway .flame-svg{ animation:sway 2.4s ease-in-out infinite; }
@@ -192,7 +219,7 @@
 <body>
   <canvas id="fx"></canvas>
   <div class="topbar">
-    <div class="back" onclick="window.StreakBridge && StreakBridge.close && StreakBridge.close()">&#8249;</div>
+    <div class="back" onclick="if(window.StreakBridge && StreakBridge.close){ StreakBridge.close(); } else { window.history.back(); }">&#8249;</div>
     <div class="title">连续打卡</div>
     <div class="tier-rank-btn" onclick="openTierModal()">&#127942;</div>
   </div>
@@ -385,10 +412,39 @@ function flameCenter(){
   const r = document.getElementById('flameWrap').getBoundingClientRect();
   return {x:r.left+r.width/2, y:r.top+r.height*0.38};
 }
+function getEmberColor(){
+  const tier = state.checkedToday ? getFlameTier(state.streak) : GRAY_TIER;
+  if(tier.mode === 'rainbow') return tier.palette[Math.floor(Math.random()*tier.palette.length)];
+  if(tier.mode === 'prismatic') return ['#FF5B5B','#5BE0FF','#FFD75B','#B35BFF','#5BFFA0'][Math.floor(Math.random()*5)];
+  return Math.random()>0.4 ? (tier.hot || '#FFC93C') : (tier.edge || '#FF8A3D');
+}
 function spawnEmber(){
   if(!state.checkedToday) return;
   const c = flameCenter();
-  particles.push({ x:c.x+(Math.random()-.5)*46, y:c.y+20+Math.random()*20, vx:(Math.random()-.5)*0.5, vy:-(0.6+Math.random()*0.8), life:1, decay:0.012+Math.random()*0.01, r:1.6+Math.random()*1.8, color: Math.random()>0.5 ? '#FF8A3D' : '#FFC93C', type:'ember' });
+  const col = getEmberColor();
+  
+  // ✨ 根据打卡天数调整火星数量和强度
+  let baseCount = 1;
+  if(state.streak >= 100) baseCount = 4;
+  else if(state.streak >= 50) baseCount = 3;
+  else if(state.streak >= 30) baseCount = 2;
+  else if(state.streak >= 10) baseCount = 2;
+  
+  const count = baseCount + (Math.random() > 0.7 ? 1 : 0);
+  
+  for(let i=0; i<count; i++){
+    particles.push({
+      x: c.x + (Math.random()-.5)*48,
+      y: c.y + 15 + Math.random()*25,
+      vx: (Math.random()-.5)*0.6,
+      vy: -(0.7 + Math.random()*1.0),
+      life: 1,
+      decay: 0.010 + Math.random()*0.008,
+      r: 1.6 + Math.random()*1.8 + (state.streak >= 50 ? 0.5 : 0),
+      color: col,
+      type: 'ember'
+    });
+  }
 }
 function spawnConfetti(cx,cy,count){
   count=count||40;
@@ -541,6 +597,37 @@ function tick(){
     const egrd=ctx.createRadialGradient(cx,cy+10,2,cx,cy+10,R);
     egrd.addColorStop(0,'rgba(255,225,120,0.95)'); egrd.addColorStop(1,'rgba(255,140,40,0)');
     ctx.fillStyle=egrd; ctx.beginPath(); ctx.ellipse(cx,cy+10,R*0.85,R*0.38,0,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+
+  /* ✨ 新增：火焰周围的环绕光点粒子（连续打卡天数越多，光点越多） */
+  if(state.checkedToday && state.streak >= 3){
+    const c = flameCenter();
+    const tier = getFlameTier(state.streak);
+    const orbitCount = Math.min(8, Math.floor(state.streak / 10) + 1); // 10天增加1个光点
+    const now = performance.now() * 0.001;
+    ctx.save();
+    for(let oi = 0; oi < orbitCount; oi++){
+      const angle = now * 0.8 + (oi / orbitCount) * Math.PI * 2;
+      const radius = 65 + Math.sin(now * 1.2 + oi) * 8;
+      const px = c.x + Math.cos(angle) * radius;
+      const py = c.y - 10 + Math.sin(angle) * radius * 0.6;
+      const size = 2.5 + Math.sin(now * 3 + oi * 1.3) * 0.8;
+      const alpha = 0.6 + Math.sin(now * 2.5 + oi * 0.7) * 0.3;
+      
+      ctx.globalAlpha = alpha;
+      let color;
+      if(tier.mode === 'rainbow') color = tier.palette[oi % tier.palette.length];
+      else if(tier.mode === 'prismatic') color = ['#FF5B5B','#5BE0FF','#FFD75B','#B35BFF','#5BFFA0'][oi % 5];
+      else color = tier.hot || '#FFC93C';
+      
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(px, py, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -733,27 +820,124 @@ function renderMiniSVG(tier, locked){
   const prism=(!locked&&tier.mode==='prismatic')?'style="animation:hueSpin 3.2s linear infinite"':'';
   return '<svg viewBox="0 0 150 190" class="mini-svg"><g '+prism+'>'+layers+'</g></svg>';
 }
+let isPreviewingTier = false;
+let previewLongPressTimer = null;
+
+function applyCustomTierVisual(tier){
+  const layerEls = document.querySelectorAll('.flame-layer');
+  const n = Math.min(tier.layers || 3, 7);
+  layerEls.forEach(function(el, i){
+    if(i >= n){ el.style.opacity = '0'; return; }
+    el.style.opacity = '1';
+    let color;
+    if(tier.mode === 'rainbow') color = tier.palette[i % tier.palette.length];
+    else if(tier.mode === 'prismatic') color = ['#FF3355','#FF8800','#FFEE00','#44FF88','#33CCFF'][i % 5];
+    else { const t = n > 1 ? i / (n - 1) : 1; color = lerpColor(tier.edge, tier.hot, t); }
+    el.setAttribute('fill', color);
+  });
+  const layersContainer = document.getElementById('flameLayers');
+  if(layersContainer) layersContainer.classList.toggle('prismatic', tier.mode === 'prismatic');
+  const glow = document.getElementById('flameGlow');
+  if(glow){
+    glow.style.background = 'radial-gradient(circle, ' + tier.glow + ' 0%, rgba(255,255,255,0) 55%, transparent 75%)';
+    glow.classList.add('lit');
+  }
+  const flameWrap = document.getElementById('flameWrap');
+  if(flameWrap){
+    flameWrap.classList.add('lit');
+    flameWrap.classList.remove('idle-sway');
+  }
+}
+
+function previewTier(idx){
+  const tier = FLAME_TIERS[idx];
+  if(!tier) return;
+  isPreviewingTier = true;
+  applyCustomTierVisual(tier);
+  showToast('🔥 正在预览【' + tier.name + '】（连续打卡 ' + tier.minDays + ' 天解锁）');
+  const c = flameCenter();
+  spawnPokeSparks(c.x, c.y, 16, 8);
+  spawnShockwave(c.x, c.y + 20, tier.mode === 'prismatic' ? '#FF3355' : tier.edge);
+  document.querySelectorAll('.tier-card').forEach(function(el, i){
+    el.style.boxShadow = (i === idx) ? '0 0 0 3px #FF8A3D, 0 8px 24px rgba(255,138,61,0.4)' : 'none';
+  });
+}
+
+function startPreviewLongPress(idx){
+  previewLongPressTimer = setTimeout(function(){
+    previewTier(idx);
+  }, 300);
+}
+
+function cancelPreviewLongPress(){
+  if(previewLongPressTimer){
+    clearTimeout(previewLongPressTimer);
+    previewLongPressTimer = null;
+  }
+}
+
 function openTierModal(){
-  const grid=document.getElementById('tierGrid'); grid.innerHTML='';
-  const currentTier=state.checkedToday?getFlameTier(state.streak):null;
-  FLAME_TIERS.forEach(function(tier,idx){
-    const unlocked=state.streak>=tier.minDays;
-    const isCurrent=currentTier&&currentTier.name===tier.name;
-    const card=document.createElement('div');
-    card.className='tier-card'+(isCurrent?' current-tier':'')+(!unlocked?' locked':'');
-    const nextMin=FLAME_TIERS[idx+1]?FLAME_TIERS[idx+1].minDays:null;
-    const daysLabel=nextMin?tier.minDays+'\u2013'+(nextMin-1)+'\u5929':'\u2265'+tier.minDays+'\u5929';
-    card.innerHTML=renderMiniSVG(tier,!unlocked)
-      +'<div class="tc-name">'+tier.name+'</div>'
-      +'<div class="tc-days">'+daysLabel+'</div>'
-      +(isCurrent?'<div class="current-badge">当前</div>':'')
-      +(!unlocked?'<div class="lock-icon">&#128274;</div>':'');
+  const grid = document.getElementById('tierGrid'); grid.innerHTML = '';
+  const currentTier = state.checkedToday ? getFlameTier(state.streak) : null;
+  FLAME_TIERS.forEach(function(tier, idx){
+    const unlocked = state.streak >= tier.minDays;
+    const isCurrent = currentTier && currentTier.name === tier.name;
+    const card = document.createElement('div');
+    card.className = 'tier-card' + (isCurrent ? ' current-tier' : '') + (!unlocked ? ' locked' : '');
+    
+    // 支持点击和长按预览
+    card.onclick = function(e){ 
+      e.stopPropagation();
+      cancelPreviewLongPress();
+      previewTier(idx); 
+    };
+    card.ontouchstart = function(e){ 
+      e.preventDefault();
+      startPreviewLongPress(idx); 
+    };
+    card.ontouchend = function(e){ 
+      e.preventDefault();
+      cancelPreviewLongPress(); 
+    };
+    card.ontouchcancel = function(){ cancelPreviewLongPress(); };
+    card.onmousedown = function(){ startPreviewLongPress(idx); };
+    card.onmouseup = function(){ cancelPreviewLongPress(); };
+    card.onmouseleave = function(){ cancelPreviewLongPress(); };
+    
+    const nextMin = FLAME_TIERS[idx+1] ? FLAME_TIERS[idx+1].minDays : null;
+    const daysLabel = nextMin ? tier.minDays + '\u2013' + (nextMin-1) + '\u5929' : '\u2265' + tier.minDays + '\u5929';
+    card.innerHTML = renderMiniSVG(tier, !unlocked)
+      + '<div class="tc-name">' + tier.name + '</div>'
+      + '<div class="tc-days">' + daysLabel + '</div>'
+      + (isCurrent ? '<div class="current-badge">当前</div>' : '')
+      + (!unlocked ? '<div class="lock-icon">&#128274;</div>' : '');
     grid.appendChild(card);
   });
   document.getElementById('tierModalBg').classList.add('open');
 }
-function closeTierModal(){ document.getElementById('tierModalBg').classList.remove('open'); }
-function closeTierModalOnBg(e){ if(e.target===document.getElementById('tierModalBg')) closeTierModal(); }
+
+function closeTierModal(){
+  document.getElementById('tierModalBg').classList.remove('open');
+  cancelPreviewLongPress();
+  
+  // ✨ 新增：预览模式下,关闭模态框后停留15秒再恢复实际火焰状态
+  if(isPreviewingTier){
+    isPreviewingTier = false;
+    showToast('🔥 预览模式已开启，15秒后自动恢复');
+    
+    // 15秒后恢复到实际火焰状态
+    setTimeout(function(){
+      applyFlameVisual();
+      const flameWrap = document.getElementById('flameWrap');
+      if(flameWrap && !state.checkedToday){
+        flameWrap.classList.remove('lit');
+        flameWrap.classList.add('idle-sway');
+      }
+      showToast('已恢复到当前实际火焰状态');
+    }, 15000); // 15秒 = 15000毫秒
+  }
+}
+function closeTierModalOnBg(e){ if(e.target === document.getElementById('tierModalBg')) closeTierModal(); }
 
 /* ---- 初始化 ---- */
 function initFromBridge(){

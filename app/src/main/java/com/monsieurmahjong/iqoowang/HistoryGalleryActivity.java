@@ -422,10 +422,18 @@ public class HistoryGalleryActivity extends AppCompatActivity {
                 if (jumpTargetItem != null) {
                     // 来自日历弹窗的目标日期：定位并自动打开当天消费详情
                     rvGallery.scrollToPosition(finalJumpIndex);
-                    Intent intent = new Intent(HistoryGalleryActivity.this, DayDetailActivity.class);
-                    intent.putExtra("date", jumpTargetItem.dateStr);
-                    intent.putExtra("amount", jumpTargetItem.amount);
-                    startActivity(intent);
+                    // 🌟 增强修复：使用双重延迟确保数据和UI都完全就绪
+                    // 第一层post确保RecyclerView布局完成
+                    rvGallery.post(() -> {
+                        // 第二层postDelayed增加200ms缓冲，确保数据库查询也完成
+                        rvGallery.postDelayed(() -> {
+                            android.util.Log.d("HistoryGallery", "Opening DayDetail for: " + jumpTargetItem.dateStr);
+                            Intent intent = new Intent(HistoryGalleryActivity.this, DayDetailActivity.class);
+                            intent.putExtra("date", jumpTargetItem.dateStr);
+                            intent.putExtra("amount", jumpTargetItem.amount);
+                            startActivity(intent);
+                        }, 200);
+                    });
                 } else if (!scrollStateMap.containsKey(currentLevel) && finalAutoScrollIndex >= 0) {
                     // 首次进入该层级且当前浏览的是真实当前月份，自动定位到当前日
                     rvGallery.scrollToPosition(finalAutoScrollIndex);

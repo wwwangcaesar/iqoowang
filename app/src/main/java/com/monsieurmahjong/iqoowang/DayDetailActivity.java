@@ -49,11 +49,23 @@ public class DayDetailActivity extends AppCompatActivity {
 
         String dateStr = getIntent().getStringExtra("date");
         double totalAmount = getIntent().getDoubleExtra("amount", 0.0);
+        
+        // 🌟 增强调试日志
+        android.util.Log.d("DayDetailActivity", "onCreate - dateStr: " + dateStr + ", amount: " + totalAmount);
 
         TextView tvDate = findViewById(R.id.tv_detail_date);
         tvTotal = findViewById(R.id.tv_detail_total);
         rvTransactions = findViewById(R.id.rv_daily_transactions);
         FloatingActionButton fabAddExpense = findViewById(R.id.fab_add_expense);
+
+        // 🌟 核心修复：确保dateStr不为null且不为空时才继续
+        if (dateStr == null || dateStr.trim().isEmpty()) {
+            // 如果dateStr为空,显示错误信息
+            Toast.makeText(this, "日期参数异常,无法加载数据", Toast.LENGTH_SHORT).show();
+            android.util.Log.e("DayDetailActivity", "dateStr is null or empty!");
+            finish();
+            return;
+        }
 
         tvDate.setText(dateStr + " 消费明细");
         tvTotal.setText(String.format("¥%.2f", totalAmount));
@@ -65,28 +77,26 @@ public class DayDetailActivity extends AppCompatActivity {
         // 右下角悬浮加号：在当前查看的这一天补录一笔消费（用于补录忘记记账的旧日期），
         // 复用 EditExpenseDialog 新增模式，不需要在这里自己写弹窗逻辑
         fabAddExpense.setOnClickListener(v -> {
-            if (dateStr == null) {
-                Toast.makeText(this, "日期信息异常，无法补录", Toast.LENGTH_SHORT).show();
-                return;
-            }
             com.monsieurmahjong.iqoowang.utils.EditExpenseDialog.show(this, db, dateStr, null);
         });
 
-        // 绑定 LiveData，数据库任何增删改都会自动触发此处刷新
-        if (dateStr != null) {
-            db.expenseDao().getDailyExpenses(dateStr).observe(this, expenses -> {
-                if (expenses != null) {
-                    expenseList.clear();
-                    expenseList.addAll(expenses);
-                    detailAdapter.notifyDataSetChanged();
+        // 🌟 核心修复：绑定 LiveData，数据库任何增删改都会自动触发此处刷新
+        // 添加日志以便调试
+        android.util.Log.d("DayDetailActivity", "Observing LiveData for dateStr: " + dateStr);
+        db.expenseDao().getDailyExpenses(dateStr).observe(this, expenses -> {
+            android.util.Log.d("DayDetailActivity", "LiveData callback - expenses: " + (expenses != null ? expenses.size() : "null"));
+            if (expenses != null) {
+                expenseList.clear();
+                expenseList.addAll(expenses);
+                detailAdapter.notifyDataSetChanged();
 
-                    // 重新计算当日总额并更新头部UI
-                    long totalCents = 0;
-                    for (Expense e : expenses) totalCents += e.getAmount();
-                    tvTotal.setText(String.format("¥%.2f", totalCents / 100.0));
-                }
-            });
-        }
+                // 重新计算当日总额并更新头部UI
+                long totalCents = 0;
+                for (Expense e : expenses) totalCents += e.getAmount();
+                tvTotal.setText(String.format("¥%.2f", totalCents / 100.0));
+                android.util.Log.d("DayDetailActivity", "Updated UI - total: " + (totalCents / 100.0) + ", count: " + expenses.size());
+            }
+        });
 
         // 🌟 核心：挂载右滑删除交互
         setupSwipeToDelete();

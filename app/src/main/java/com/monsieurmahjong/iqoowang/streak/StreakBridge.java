@@ -1,5 +1,6 @@
 package com.monsieurmahjong.iqoowang.streak;
 
+import android.app.Activity;
 import android.content.Context;
 import android.webkit.JavascriptInterface;
 
@@ -12,11 +13,16 @@ import org.json.JSONObject;
 public class StreakBridge {
 
     private final Context context;
-//    private final StreakActivity activity;
+    private final Activity activity;
+
+    public StreakBridge(Activity activity) {
+        this.context = activity;
+        this.activity = activity;
+    }
 
     public StreakBridge(Context context) {
         this.context = context;
-//        this.activity = activity;
+        this.activity = (context instanceof Activity) ? (Activity) context : null;
     }
 
     @JavascriptInterface
@@ -49,8 +55,11 @@ public class StreakBridge {
 
     @JavascriptInterface
     public void close() {
-//        if (activity != null) {
-//            activity.finish();
-//        }
+        if (activity != null) {
+            activity.runOnUiThread(() -> {
+                activity.finish();
+                activity.overridePendingTransition(0, android.R.anim.fade_out);
+            });
+        }
     }
 }
