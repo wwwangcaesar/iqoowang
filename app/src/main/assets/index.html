@@ -1082,6 +1082,16 @@
   </div>
 </div>
 
+<!-- 交易复盘详情 -->
+<div class="modal-overlay" id="tradeReviewModal">
+  <div class="modal-sheet" style="max-height:75vh;overflow-y:auto;">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="reviewModalTitle">交易复盘</div>
+    <div id="reviewModalBody" style="text-align:left;font-size:12px;color:var(--text-sub);line-height:1.8;"></div>
+    <button onclick="closeTradeReviewModal()" style="width:100%;padding:10px;background:none;border:1px solid var(--border);border-radius:8px;color:var(--text-sub);font-size:13px;cursor:pointer;margin-top:10px;">关闭</button>
+  </div>
+</div>
+
 <script>
 // ═══════════════════════════════════════════════════════════
 // 检测运行环境
@@ -1685,16 +1695,17 @@ function renderWatchlist(items) {
         return '<span style="color:var(--text-dim);font-size:9px;">等待AI分析</span>';
       })();
       return `
-      <div style="padding:10px;margin-top:8px;background:var(--bg-card2);border-radius:8px;border:1.5px solid ${label.color};">
+      <div onclick="openPendingTradeModal('${it.code}')" style="padding:10px;margin-top:8px;background:var(--bg-card2);border-radius:8px;border:1.5px solid ${label.color};cursor:pointer;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
           <span style="font-weight:600;color:var(--text-prime);font-size:12px;">${it.name} <span style="color:var(--text-dim);font-size:10px;">${it.code}</span></span>
           <span style="color:${label.color};font-size:10px;border:1px solid ${label.color};border-radius:8px;padding:1px 6px;">${label.text}</span>
         </div>
         <div style="font-size:9px;margin-bottom:4px;">${aiStatusTag} · 触发价¥${(it.pendingPrice||0).toFixed(2)}</div>
         <div style="font-size:11px;color:var(--text-prime);line-height:1.6;margin-bottom:8px;">${it.pendingReason || ''}</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-bottom:6px;">点击卡片直接买入/卖出</div>
         <div style="display:flex;gap:8px;">
-          <button onclick="confirmWatchlistSignal('${it.code}')" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--up-red);background:transparent;color:var(--up-red);font-size:11px;">✓ 确认执行</button>
-          <button onclick="dismissWatchlistSignal('${it.code}')" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-sub);font-size:11px;">忽略</button>
+          <button onclick="event.stopPropagation();confirmWatchlistSignal('${it.code}')" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--up-red);background:transparent;color:var(--up-red);font-size:11px;">✓ 确认执行</button>
+          <button onclick="event.stopPropagation();dismissWatchlistSignal('${it.code}')" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--text-sub);font-size:11px;">忽略</button>
         </div>
       </div>`;
     }
@@ -1734,21 +1745,29 @@ function removeWatchlistItem(code) {
 
 function confirmWatchlistSignal(code) {
   if (!IS_ANDROID) return;
-  // 【2026-08-27改造】之前"确认执行"只是把信号标记掉，然后提示用户自己去首页搜索这支股票——
-  // 候选池里躺着的正是"规则引擎认为现在就该动手"的股票，多这一步搜索纯粹是摩擦，还容易错过时机。
-  // 现在改成：先取到这条候选项当时的数据（赶在loadWatchlist()刷新掉STATE.watchlistItems之前），
-  // 确认信号后直接打开对应的买入/卖出弹窗并预填好价格，用户确认一下数量就能成交。
-  const item = (STATE.watchlistItems || []).find(w => w.code === code);
+  // 【2026-08-30改回】上一版把这个按钮变成了直接弹买卖框，但"确认执行"其实应该是
+  // 一个轻量的"我知道了/标记处理过"动作，跟"忽略"对称；真正想买卖时点这条卡片本身
+  // （见openPendingTradeModal），而不是通过这个按钮，两者不应该是同一件事。
   Android.confirmSignal(code);
+  showToast('已确认，点击这条候选股卡片可直接买入/卖出');
   loadWatchlist();
-  if (!item) { showToast('已确认'); return; }
+}
+
+/** 点击候选池卡片本身（不是"确认执行"/"忽略"按钮）触发——直接打开对应的买入/卖出弹窗，
+ *  预填好候选项当时的价格，确认一下数量就能成交；成功后会顺带调用confirmSignal，
+ *  把这条待确认信号在候选池状态机里标记为已处理，不用再单独点"确认执行"。 */
+function openPendingTradeModal(code) {
+  if (!IS_ANDROID) return;
+  const item = (STATE.watchlistItems || []).find(w => w.code === code);
+  if (!item) { showToast('未找到该候选股数据，请下拉刷新'); return; }
 
   const isStopType = item.status === 'PENDING_WARN' || item.status === 'PENDING_STOP';
   if (isStopType) {
     if (STATE.positions[code]) {
       openSellModal(code);
     } else {
-      showToast('已确认，但本地未找到对应持仓');
+      showToast('未找到对应持仓，无法卖出');
+      return;
     }
   } else {
     const stockObj = {
@@ -1762,6 +1781,8 @@ function confirmWatchlistSignal(code) {
     };
     openTradeModal(code, stockObj);
   }
+  // 标记这次交易来自候选池待确认信号，confirmTrade()成交成功后会据此自动调用confirmSignal
+  if (STATE.tradeTarget) STATE.tradeTarget.fromPendingSignal = true;
 }
 
 function dismissWatchlistSignal(code) {
@@ -2453,6 +2474,11 @@ function confirmTrade() {
     addThinkLine(direction === 'BUY' ? 'info' : 'good',
         `[TRD] ${direction === 'BUY' ? '买入' : '卖出'} ${t.name} ${tradeShares}股 @¥${price.toFixed(2)}`);
     showToast(`✅ 已${direction === 'BUY' ? '买入' : '卖出'} ${t.name} ${tradeShares}股`);
+    // 这笔交易如果是从候选池待确认信号的卡片里直接点出来的，顺带把信号标记为已处理，
+    // 避免用户已经买/卖完了，候选池却还一直停在"待确认"状态
+    if (t.fromPendingSignal) {
+      try { Android.confirmSignal(t.code); } catch (e) {}
+    }
 
     try {
       const posJson = Android.getPositions();
@@ -3540,9 +3566,21 @@ function openBuyByDetail() {
   if(!code||code==='000001'){showToast('请先搜索具体股票');return;}
   const sr=STATE.screenResults.find(s=>s.code===code);
   const d=STATE.currentDetail;
-  const stock=sr||{code,name:STATE.currentKlineName||code,
-    price:d?d.price:0,latestClose:d?d.price:0,
-    score:0,signal:'MANUAL',board:code.startsWith('6')?'sh':'sz'};
+  // 【修复】之前这里优先用sr（选股结果里当时那一刻的价格，可能是筛选时甚至更早的收盘价，
+  // 不是实时价），只有sr不存在才退回d.price。结果就是买入价经常跟屏幕上正显示的实时价对不上——
+  // 比如屏幕显示12.53，实际成交却按选股时留下的12.33算。现在反过来：只要有实时行情(d)，
+  // 价格必须用d.price；sr只用来补充score/signal这些跟价格无关的辅助信息。
+  const livePrice = d ? d.price : 0;
+  const fallbackPrice = sr ? (sr.latestClose || sr.price || 0) : 0;
+  const price = livePrice || fallbackPrice;
+  const stock = {
+    code,
+    name: sr ? sr.name : (STATE.currentKlineName || code),
+    price, latestClose: price,
+    score: sr ? sr.score : 0,
+    signal: sr ? sr.signal : 'MANUAL',
+    board: code.startsWith('6') ? 'sh' : 'sz',
+  };
   openTradeModal(code,stock);
 }
 
@@ -3807,8 +3845,9 @@ function refreshAgentStats() {
 function loadPendingReviews() {
   if (!IS_ANDROID) return;
   try {
-    const list = JSON.parse(Android.getPendingTradeReviews());
-    renderPendingReviews(list);
+    const pending = JSON.parse(Android.getPendingTradeReviews() || '[]');
+    const reviewed = JSON.parse(Android.getReviewedTradeLessons() || '[]');
+    renderPendingReviews(pending, reviewed);
   } catch (e) { console.error('[PendingReview] load failed', e); }
 }
 
@@ -3877,17 +3916,24 @@ function closeTradeHistoryModal() {
   document.getElementById('tradeHistoryModal').classList.remove('show');
 }
 
-function renderPendingReviews(list) {
+/** 【2026-08-30改造】之前"生成复盘"点完只弹个toast，这条记录就从列表里彻底消失了，
+ *  完全不知道复盘了什么内容。现在待复盘和已复盘合并展示在同一个列表里：待复盘的保留
+ *  "生成复盘"按钮；已复盘的变成可点击条目，点开弹窗看完整复盘内容和AI学习状态。 */
+function renderPendingReviews(pending, reviewed) {
   const box = document.getElementById('pendingReviewList');
   const countEl = document.getElementById('pendingReviewCount');
   if (!box) return;
-  if (!list || !list.length) {
+  const pendingList = pending || [];
+  const reviewedList = reviewed || [];
+  const total = pendingList.length + reviewedList.length;
+  if (!total) {
     box.innerHTML = '<div>暂无待复盘的交易——某支股票卖到清仓后会出现在这里</div>';
     if (countEl) countEl.textContent = '';
     return;
   }
-  if (countEl) countEl.textContent = `共${list.length}笔`;
-  box.innerHTML = list.map(item => {
+  if (countEl) countEl.textContent = `共${total}笔（待复盘${pendingList.length}笔）`;
+
+  let html = pendingList.map(item => {
     const pnlColor = item.totalPnl >= 0 ? 'var(--up-red)' : 'var(--down-green)';
     const pnlText = (item.totalPnl >= 0 ? '盈利' : '亏损') + '¥' + Math.abs(item.totalPnl).toFixed(2);
     return `
@@ -3899,6 +3945,48 @@ function renderPendingReviews(list) {
       <button onclick="startTradeReview(${item.id})" style="padding:6px 12px;border-radius:6px;border:1px solid var(--accent-cyan);background:transparent;color:var(--accent-cyan);font-size:11px;white-space:nowrap;">生成复盘</button>
     </div>`;
   }).join('');
+
+  html += reviewedList.map(item => {
+    const pnlColor = item.totalPnl >= 0 ? 'var(--up-red)' : 'var(--down-green)';
+    const pnlText = (item.totalPnl >= 0 ? '盈利' : '亏损') + '¥' + Math.abs(item.totalPnl).toFixed(2);
+    return `
+    <div onclick="openTradeReviewModal(${item.id})" style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;">
+      <div style="flex:1;min-width:0;">
+        <div style="color:var(--text-prime);font-weight:600;">${item.name} <span style="color:var(--text-dim);font-size:10px;">${item.code}</span></div>
+        <div style="font-size:10px;color:var(--text-dim);">${item.closedAt||''} · <span style="color:${pnlColor};">${pnlText}</span>${item.category?' · '+item.category:''}</div>
+        <div style="font-size:10px;color:var(--text-sub);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${item.summary||''}</div>
+      </div>
+      <span style="color:var(--accent-cyan);font-size:10px;border:1px solid var(--accent-cyan);border-radius:8px;padding:1px 6px;white-space:nowrap;">✓ 已复盘</span>
+    </div>`;
+  }).join('');
+
+  box.innerHTML = html;
+}
+
+/** 点击已复盘条目，弹窗看完整复盘内容——顺带说明AI是否已经学习（reviewed=1即代表
+ *  下次分析同一支/同类信号时会自动参考这条，参见TradeLessonManager.buildInjectBlock） */
+function openTradeReviewModal(id) {
+  if (!IS_ANDROID) return;
+  try {
+    const d = JSON.parse(Android.getTradeReviewDetail(id) || '{}');
+    if (!d || !d.id) { showToast('未找到复盘记录'); return; }
+    const pnlColor = d.totalPnl >= 0 ? 'var(--up-red)' : 'var(--down-green)';
+    const pnlText = (d.totalPnl >= 0 ? '盈利' : '亏损') + '¥' + Math.abs(d.totalPnl).toFixed(2);
+    document.getElementById('reviewModalTitle').textContent = `${d.name}(${d.code}) 交易复盘`;
+    const bodyText = (d.fullText || d.summary || '暂无复盘内容').replace(/</g, '&lt;').replace(/\n/g, '<br>');
+    document.getElementById('reviewModalBody').innerHTML =
+      `<div style="margin-bottom:10px;"><span style="color:${pnlColor};font-weight:600;">${pnlText}</span>` +
+      (d.category ? ` · 类型：${d.category}` : '') + `</div>` +
+      `<div style="margin-bottom:10px;">${bodyText}</div>` +
+      `<div style="font-size:10px;color:var(--accent-cyan);border-top:1px dashed var(--border);padding-top:8px;">` +
+      (d.reviewed ? '✓ AI已学习：下次分析这支股票或同类型信号时会自动参考这次复盘' : '尚未标记为已学习') +
+      `</div>`;
+    document.getElementById('tradeReviewModal').classList.add('show');
+  } catch (e) { console.error('[TradeReview] 打开详情失败', e); showToast('加载复盘详情失败'); }
+}
+
+function closeTradeReviewModal() {
+  document.getElementById('tradeReviewModal').classList.remove('show');
 }
 
 function startTradeReview(id) {
@@ -3917,7 +4005,8 @@ window.onTradeReviewToken = function(token) {
 
 window.onTradeReviewDone = function(id, resultText) {
   showToast('✅ 复盘生成完成');
-  loadPendingReviews(); // 这条已经复盘完，会从待复盘列表消失
+  loadPendingReviews(); // 这条会从"待复盘"变成"已复盘"，留在同一个列表里，不再凭空消失
+  openTradeReviewModal(id); // 直接弹出来看，不用用户自己再去找
 };
 
 window.onTradeReviewError = function(msg) {

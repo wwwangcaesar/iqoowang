@@ -626,6 +626,32 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         return TradeLessonManager.get().getReviewedJson();
     }
 
+    /** 某一条复盘记录的完整内容（含完整复盘文本），供点击已复盘条目时弹窗展示。
+     *  reviewed字段为1就意味着AI下次分析同一支/同类信号时会自动参考这条
+     *  （见TradeLessonManager.buildInjectBlock），没有另外一个独立的"是否学习过"标记。
+     *  JS调用：Android.getTradeReviewDetail(id)
+     */
+    @JavascriptInterface
+    public String getTradeReviewDetail(long id) {
+        try {
+            TradeLessonManager.LessonEntry e = TradeLessonManager.get().getById(id);
+            if (e == null) return "{}";
+            JSONObject o = new JSONObject();
+            o.put("id", e.id);
+            o.put("code", e.stockCode);
+            o.put("name", e.stockName);
+            o.put("totalPnl", e.totalPnl);
+            o.put("category", e.category != null ? e.category : "");
+            o.put("reviewed", e.reviewed);
+            o.put("summary", e.reviewSummary != null ? e.reviewSummary : "");
+            o.put("fullText", e.reviewText != null ? e.reviewText : "");
+            return o.toString();
+        } catch (Exception e) {
+            Log.e(TAG, "getTradeReviewDetail失败", e);
+            return "{}";
+        }
+    }
+
     /**
      * 用户在"AI大脑"页手动点击某条待复盘记录，触发本地AI生成复盘总结。
      * 不自动执行，需要人主动点击，避免卡顿。
