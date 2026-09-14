@@ -272,38 +272,25 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         return id;
     }
 
-    /**
-     * 按分类查询指定日期的日志。category取值见DecisionLogger.CAT_*
-     * （monitor监控/decision决策/ai_analysis AI分析/operation操作/other其他）
-     */
+    /** 某一天有日志的股票列表：[{code,name}, ...]，供决策日志页面展示"这天监控过哪些股票" */
     @JavascriptInterface
-    public String getDecisionLog(String dayStr, String category) {
+    public String getDecisionLogStocksForDate(String dayStr) {
         try {
-            return DecisionLogger.get().getLogContent(dayStr, category);
+            return DecisionLogger.get().getStocksForDateJson(dayStr);
         } catch (Exception e) {
-            Log.e(TAG, "getDecisionLog(分类)失败", e);
+            Log.e(TAG, "getDecisionLogStocksForDate失败", e);
+            return "[]";
+        }
+    }
+
+    /** 指定日期+股票代码的完整日志内容（监控/决策/AI分析/操作按时间顺序混排在一起） */
+    @JavascriptInterface
+    public String getStockDecisionLog(String dayStr, String code) {
+        try {
+            return DecisionLogger.get().getStockLogContent(dayStr, code);
+        } catch (Exception e) {
+            Log.e(TAG, "getStockDecisionLog失败", e);
             return "";
-        }
-    }
-
-    /** 按分类查询有日志的日期列表（新→旧） */
-    @JavascriptInterface
-    public String getDecisionLogDates(String category) {
-        try {
-            return new JSONArray(java.util.Arrays.asList(DecisionLogger.get().listLogDates(category))).toString();
-        } catch (Exception e) {
-            Log.e(TAG, "getDecisionLogDates(分类)失败", e);
-            return "[]";
-        }
-    }
-
-    /** 5个日志分类的{key,label}列表，供前端渲染分类选择器 */
-    @JavascriptInterface
-    public String getLogCategories() {
-        try {
-            return DecisionLogger.get().getCategoriesJson();
-        } catch (Exception e) {
-            return "[]";
         }
     }
 
@@ -817,6 +804,48 @@ public class StockBridge implements RealtimeMonitorService.Listener {
                 () -> RealtimeMonitorService.sendTestNotification(mContext), delayMs);
     }
 
+    /** 【D新增】某支股票的分时图数据——现价/开高低/昨收+逐分钟的时间-价格-均价-成交量。
+     *  直接读`RealtimeQuoteManager`里已有的缓存（监控tick循环本来就会定期拉候选池/持仓每支
+     *  股票的行情和分时，这里不另发网络请求），没缓存过（刚加入池、还没来得及拉到第一轮tick）
+     *  时返回"{}"，前端自行判断展示"数据加载中"。
+     *  JS调用：Android.getMinuteChartData(code)
+     */
+    @JavascriptInterface
+    public String getMinuteChartData(String code) {
+        try {
+            RealtimeQuoteManager.Quote q = RealtimeQuoteManager.get().getCachedQuote(code);
+            List<RealtimeQuoteManager.MinutePoint> points = RealtimeQuoteManager.get().getCachedMinuteLine(code);
+            if (q == null && points.isEmpty()) return "{}";
+            JSONObject o = new JSONObject();
+            o.put("code", code);
+            if (q != null) {
+                o.put("name", q.name);
+                o.put("prevClose", q.prevClose);
+                o.put("open", q.open);
+                o.put("high", q.high);
+                o.put("low", q.low);
+                o.put("price", q.price);
+                o.put("changeAmt", q.changeAmt);
+                o.put("changePct", q.changePct);
+            }
+            o.put("updatedAt", RealtimeQuoteManager.get().getCachedMinuteLineUpdatedAt(code));
+            JSONArray arr = new JSONArray();
+            for (RealtimeQuoteManager.MinutePoint p : points) {
+                JSONObject po = new JSONObject();
+                po.put("time", p.time);
+                po.put("price", p.price);
+                po.put("avgPrice", p.avgPrice);
+                po.put("volume", p.volume);
+                arr.put(po);
+            }
+            o.put("points", arr);
+            return o.toString();
+        } catch (Exception e) {
+            Log.e(TAG, "getMinuteChartData失败", e);
+            return "{}";
+        }
+    }
+
     /** 当前跟踪中的候选池（观察中/已建底仓/已加仓，不含止损/已移除的） */
     @JavascriptInterface
     public String getActiveWatchlist() {
@@ -1044,18 +1073,6 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         return String.format(java.util.Locale.CHINA, "水线¥%.2f VWAP¥%.2f 量比%.2fx", m[0], m[1], m[2]);
     }
 
-    /** 今天的决策日志内容（无需切到文件管理器，App内直接看） */
-    @JavascriptInterface
-    public String getTodayDecisionLog() {
-        return DecisionLogger.get().getTodayLogContent();
-    }
-
-    /** 指定日期（yyyy-MM-dd）的决策日志内容 */
-    @JavascriptInterface
-    public String getDecisionLog(String dayStr) {
-        return DecisionLogger.get().getLogContent(dayStr);
-    }
-
     /** 有日志的日期列表（新→旧），供前端做日期选择 */
     @JavascriptInterface
     public String getDecisionLogDates() {
@@ -1066,6 +1083,23 @@ public class StockBridge implements RealtimeMonitorService.Listener {
     @JavascriptInterface
     public String getDecisionLogDirPath() {
         return DecisionLogger.get().getLogDirPath();
+    }
+
+    /** 【R10新增】指定日期的收盘前候选池AI排行榜——本轮只做后端接口，具体展示页面不改
+     *  assets/index.html，做法与 R7 角标部分一致——后端数据就绪，前端展示另行确认。
+     *  没有这天的排行榜（还没到时间、模型未就绪、候选池为空等）时返回空字符串，
+     *  前端自行判断。
+     *  JS调用：Android.getCandidateRanking("2026-09-10")
+     */
+    @JavascriptInterface
+    public String getCandidateRanking(String date) {
+        try {
+            String text = mDb.getCandidateRanking(date);
+            return text != null ? text : "";
+        } catch (Exception e) {
+            Log.e(TAG, "getCandidateRanking失败", e);
+            return "";
+        }
     }
 
     // ══════════════════════════════════════════════

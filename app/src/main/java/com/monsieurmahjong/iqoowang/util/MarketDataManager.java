@@ -212,18 +212,23 @@ public class MarketDataManager {
     }
 
     /**
-     * 推算"预期的最近交易日"——粗略处理：周一到周五且已过盘后(15:00后)算当天，
-     * 否则往前回溯到上一个工作日。不考虑法定节假日（节假日那天本来就不会有新数据，
-     * 对时比较会先行判定为"陈旧"，前端提醒文案中要写清楚这只是提醒不是报错，避免误导）。
+     * 推算"预期的最近交易日"——已过盘后(15:00后)算当天，否则往前回溯到上一个真正的交易日。
+     *
+     * 【R1修复】之前只做一次周末单步调整（周六退1天/周日退2天），遇到连续多日的法定节假日
+     * （比如春节10天、国庆7天）跨度超过一个普通周末时，退回去的那天本身可能还在假期里，
+     * 不是真正的交易日。现改为用 TradingCalendar 循环往前找，直到真正落在一个交易日上为止——
+     * 这直接影响 TradingRuleEngine.getPrevDayRef() 里的陈旧数据安全拦截：修复前，假期最后一天或复市
+     * 当天会把明明有效、只是"还没到下个交易日"的缓存数据误判成陈旧，触发安全拦截拒绝产生信号，
+     * 恰好是复市当天最需要系统正常工作的时候。
      */
     public String computeExpectedTradeDate() {
         Calendar cal = Calendar.getInstance();
         int hour = cal.get(Calendar.HOUR_OF_DAY);
         boolean afterClose = hour >= 15;
         if (!afterClose) cal.add(Calendar.DAY_OF_MONTH, -1); // 还没收盘，预期数据还停在前一天
-        int dow = cal.get(Calendar.DAY_OF_WEEK);
-        if (dow == Calendar.SUNDAY) cal.add(Calendar.DAY_OF_MONTH, -2);
-        else if (dow == Calendar.SATURDAY) cal.add(Calendar.DAY_OF_MONTH, -1);
+        while (!TradingCalendar.get().isTradingDay(cal)) {
+            cal.add(Calendar.DAY_OF_MONTH, -1);
+        }
         return new SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(cal.getTime());
     }
 

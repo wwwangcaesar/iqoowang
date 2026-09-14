@@ -29,7 +29,7 @@ public class WatchlistManager {
 
     private static final String TAG = "WatchlistManager";
     private static final String DB_NAME = "watchlist.db";
-    private static final int DB_VERSION = 5;
+    private static final int DB_VERSION = 7;
 
     public static final String STATUS_WATCHING = "WATCHING";
     public static final String STATUS_STARTER = "STARTER";
@@ -49,43 +49,51 @@ public class WatchlistManager {
     private final SimpleDateFormat mDateFmt = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
     private final SimpleDateFormat mTimeFmt = new SimpleDateFormat("MM-dd HH:mm", Locale.getDefault());
 
-    /** 实时计算的水线/VWAP/量比快照——不落库，只是内存缓存，供候选池卡片结构化展示用。
+    /** 实时计算的水线/VWAP/量比/前一交易日最低价快照——不落库，只是内存缓存，供候选池卡片结构化展示用。
      *  每轮监控tick后由 RealtimeMonitorService 写入，重启App后自然清空，下一轮tick会重新填充 */
     private static final java.util.Map<String, double[]> sLiveMetricsCache = new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** RealtimeMonitorService 每次评估后调用，缓存本次水线/VWAP/量比供前端结构化展示 */
-    public void updateLiveMetrics(String code, double waterLine, double vwap, double volRatio) {
-        sLiveMetricsCache.put(code, new double[]{waterLine, vwap, volRatio});
+    /** RealtimeMonitorService 每次评估后调用，缓存本次水线/VWAP/量比/前一交易日最低价供前端结构化展示，
+     *  【用户已明确要求】前一交易日最低价现在就是独立破位止损价，必须在候选池/持仓列表里醒目展示，
+     *  不能只藏在note文字里 */
+    public void updateLiveMetrics(String code, double waterLine, double vwap, double volRatio, double prevLow) {
+        sLiveMetricsCache.put(code, new double[]{waterLine, vwap, volRatio, prevLow});
     }
 
-    /** 读取某支股票最近一次tick缓存的水线/VWAP/量比快照——没有则返回null（比如App刚重启还没tick过）。
+    /** 读取某支股票最近一次tick缓存的水线/VWAP/量比/前一交易日最低价快照——没有则返回null（比如App刚重启还没tick过）。
      *  供StockBridge的手动AI审核队列拼 metrics 字符串用，跟候选池卡片上显示的数字同一口径。 */
     public double[] getLiveMetrics(String code) {
         return sLiveMetricsCache.get(code);
     }
 
     /**
-     * 【2026-08-20新增】"昨日全天真实VWAP"（成交量加权均价）缓存——一天只需要抓一次，
-     * 不用每个tick都重新请求腾讯的历史分时接口。按股票代码存值，另外单独存一份对应的
-     * 交易日日期，读取时两边日期必须匹配才认为缓存有效，这样跨了交易日（比如放到第二天
-     * 还在用）会自动判定为"过期"、返回null，逼调用方(TradingRuleEngine.getPrevDayRef)
-     * 重新异步抓一次，不会把旧的某一天的VWAP错当成"昨日"用。不落库，重启App后自然清空。
+     * 【R12修复，2026-09-03】"昨日全天真实VWAP"（成交量加权均价）缓存——一天只需要抓一次，
+     * 不用每个tick都重新请求腾讯的历史分时接口。读取时要求缓存对应的交易日日期(expectedPrevDate)
+     * 一致才返回，否则返回null，逼调用方(TradingRuleEngine.getPrevDayRef)重新异步抓一次，不会
+     * 把旧的某一天的VWAP错当成"昨日"用。
+     *
+     * 这两个值现在落进 watchlist 表的 prev_day_vwap / prev_day_vwap_date 两列，跟同一张表里的
+     * pattern_*／div_k_*等其它状态字段走同一条持久化路径。【此前的实现】用两个 static 内存
+     * ConcurrentHashMap 存，注释自己也写着"不落库，重启App后自然清空"——但Android后台监控服务
+     * 被系统回收进程、重启是常态，进程一旦重启这两个Map就清零一次，不管当天之前有没有成功抓到过，
+     * 下一次tick又要重新走一遍"异步获取"的第一轮，如果重启频率接近或高于两次tick的间隔，低开候选股
+     * 就会一直卡在"正在异步获取昨日全天真实均价数据"、迟迟评估不了底仓。现在改成落库后，无论进程
+     * 重启多少次，只要还在同一交易日，缓存就不会丢。
      */
-    private static final java.util.Map<String, Double> sPrevDayVwapCache = new java.util.concurrent.ConcurrentHashMap<>();
-    private static final java.util.Map<String, String> sPrevDayVwapDateCache = new java.util.concurrent.ConcurrentHashMap<>();
-
-    /** 读缓存的昨日真实VWAP——只有缓存对应的交易日日期(expectedPrevDate)一致才返回，否则返回null。 */
     public Double getPrevDayVwapIfMatches(String code, String expectedPrevDate) {
         if (expectedPrevDate == null) return null;
-        String cachedDate = sPrevDayVwapDateCache.get(code);
-        if (!expectedPrevDate.equals(cachedDate)) return null;
-        return sPrevDayVwapCache.get(code);
+        WatchlistItem item = getByCode(code);
+        if (item == null || item.prevDayVwap <= 0 || !expectedPrevDate.equals(item.prevDayVwapDate)) return null;
+        return item.prevDayVwap;
     }
 
     /** RealtimeQuoteManager.fetchPrevDayVwap() 异步拿到结果后回填进这里 */
     public void savePrevDayVwap(String code, double vwap, String date) {
-        sPrevDayVwapCache.put(code, vwap);
-        sPrevDayVwapDateCache.put(code, date);
+        ContentValues cv = new ContentValues();
+        cv.put("prev_day_vwap", vwap);
+        cv.put("prev_day_vwap_date", date);
+        cv.put("updated_at", System.currentTimeMillis());
+        mDb.update("watchlist", cv, "code=?", new String[]{code});
     }
 
     public static void init(Context context) {
@@ -146,6 +154,10 @@ public class WatchlistManager {
                     "pattern_low REAL," +
                     "pattern_date TEXT," +
                     "ai_status TEXT DEFAULT 'NONE'," +
+                    "prev_day_vwap REAL," +
+                    "prev_day_vwap_date TEXT," +
+                    "focus_watch_start_time INTEGER," +
+                    "focus_watch_status TEXT DEFAULT 'NONE'," +
                     "updated_at INTEGER)");
         }
 
@@ -187,6 +199,21 @@ public class WatchlistManager {
                 // 前端需要知道这次推送的信号AI分析是“进行中”还是“已完成”，
                 // 取值：NONE(无待处理信号)/PENDING(已推送，AI分析中)/CONFIRMED(AI支持)/DOUBTED(AI存疑)
                 try { db.execSQL("ALTER TABLE watchlist ADD COLUMN ai_status TEXT DEFAULT 'NONE'"); } catch (Exception ignored) {}
+            }
+            if (o < 6) {
+                // prev_day_vwap／prev_day_vwap_date：【R12修复】低开路径"昨日全天真实VWAP"缓存，
+                // 之前只存在static内存Map里，App进程被系统回收重启后必然清零，导致低开候选股反复
+                // 卡在"正在异步获取"、迟迟评估不了底仓。改成跟pattern_*/div_k_*等字段一样落进这张表，
+                // 无论进程重启多少次，只要还在同一交易日，缓存就不会丢。
+                try { db.execSQL("ALTER TABLE watchlist ADD COLUMN prev_day_vwap REAL"); } catch (Exception ignored) {}
+                try { db.execSQL("ALTER TABLE watchlist ADD COLUMN prev_day_vwap_date TEXT"); } catch (Exception ignored) {}
+            }
+            if (o < 7) {
+                // focus_watch_start_time／focus_watch_status：【R3新增】高开/平开路径回踩当日VWAP
+                // 不破后进入“重点监听”状态的开始时间戳与状态（NONE/WATCHING/CONFIRMED），写法比照
+                // 上面R12那次prev_day_vwap升级，落进同一张表，跟随其它状态字段一起持久化。
+                try { db.execSQL("ALTER TABLE watchlist ADD COLUMN focus_watch_start_time INTEGER"); } catch (Exception ignored) {}
+                try { db.execSQL("ALTER TABLE watchlist ADD COLUMN focus_watch_status TEXT DEFAULT 'NONE'"); } catch (Exception ignored) {}
             }
         }
     }
@@ -275,6 +302,8 @@ public class WatchlistManager {
         cv.put("prev_yang_low", state.prevYangLow);
         cv.put("peak_gain_pct", state.peakGainPct);
         cv.put("peak_gain_date", state.peakGainDate);
+        cv.put("focus_watch_start_time", state.focusWatchStartTime);
+        cv.put("focus_watch_status", state.focusWatchStatus);
         cv.put("updated_at", System.currentTimeMillis());
         mDb.update("watchlist", cv, "code=?", new String[]{code});
     }
@@ -290,6 +319,8 @@ public class WatchlistManager {
         s.prevYangLow = item.prevYangLow;
         s.peakGainPct = item.peakGainPct;
         s.peakGainDate = item.peakGainDate;
+        s.focusWatchStartTime = item.focusWatchStartTime;
+        s.focusWatchStatus = item.focusWatchStatus != null ? item.focusWatchStatus : "NONE";
         return s;
     }
 
@@ -442,6 +473,14 @@ public class WatchlistManager {
         public long pendingAt;
         /** NONE/PENDING/CONFIRMED/DOUBTED，见 markPending()/updatePendingAiResult() 注释 */
         public String aiStatus = "NONE";
+        /** 【R12】昨日全天真实VWAP及其对应交易日日期，落库持久化，不受进程重启影响，
+         *  见 getPrevDayVwapIfMatches()/savePrevDayVwap() 注释 */
+        public double prevDayVwap;
+        public String prevDayVwapDate;
+        /** 【R3】高开/平开路径“重点监听”开始时间戳（0＝未在监听）与状态
+         *  （NONE/WATCHING/CONFIRMED），见 TradingRuleEngine.DivergenceState 同名字段注释 */
+        public long focusWatchStartTime;
+        public String focusWatchStatus = "NONE";
     }
 
     private static final String[] ACTIVE_STATUSES = {
@@ -520,12 +559,22 @@ public class WatchlistManager {
         it.patternDate = getStringOrNull(c, "pattern_date");
         String aiStatus = getStringOrNull(c, "ai_status");
         it.aiStatus = aiStatus != null ? aiStatus : "NONE";
+        it.prevDayVwap = getDoubleOrZero(c, "prev_day_vwap");
+        it.prevDayVwapDate = getStringOrNull(c, "prev_day_vwap_date");
+        it.focusWatchStartTime = getLongOrZero(c, "focus_watch_start_time");
+        String focusStatus = getStringOrNull(c, "focus_watch_status");
+        it.focusWatchStatus = focusStatus != null ? focusStatus : "NONE";
         return it;
     }
 
     private static double getDoubleOrZero(Cursor c, String col) {
         int idx = c.getColumnIndex(col);
         return idx >= 0 ? c.getDouble(idx) : 0;
+    }
+
+    private static long getLongOrZero(Cursor c, String col) {
+        int idx = c.getColumnIndex(col);
+        return idx >= 0 ? c.getLong(idx) : 0;
     }
 
     private static String getStringOrNull(Cursor c, String col) {
@@ -575,11 +624,17 @@ public class WatchlistManager {
             o.put("peakGainPct", it.peakGainPct);
             o.put("patternHigh", it.patternHigh);
             o.put("patternDate", it.patternDate);
+            o.put("prevDayVwap", it.prevDayVwap);
+            o.put("prevDayVwapDate", it.prevDayVwapDate);
+            o.put("focusWatchStartTime", it.focusWatchStartTime);
+            o.put("focusWatchStatus", it.focusWatchStatus);
             double[] live = sLiveMetricsCache.get(it.code);
             if (live != null) {
                 o.put("waterLine", live[0]);
                 o.put("vwap", live[1]);
                 o.put("volRatio", live[2]);
+                // 【用户已明确要求】prevLow = 前一交易日最低价 = 独立破位止损参照价，前端必须醒目展示
+                if (live.length > 3) o.put("prevLow", live[3]);
             }
         } catch (Exception ignored) {}
         return o;

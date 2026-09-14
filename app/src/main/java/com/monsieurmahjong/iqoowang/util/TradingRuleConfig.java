@@ -58,6 +58,19 @@ public class TradingRuleConfig {
     /** 候选股观察超过这么多交易日仍未触发底仓买入，视为仙人指路预示的“近期”转强
      *  大概率已经落空，自动移出观察池。建议默认值，需结合实盘/回测校准 */
     public int candidateMaxObserveDays = 10;
+    /** 【2026-09-10新增·R2】低开路径“当日VWAP是否已具备统计意义”的开盘后分钟数分界。
+     *  开盘这么多分钟内底仓只参照昨日全天真实VWAP；之后改为参照 min(昨日VWAP,当日VWAP)。
+     *  与放量门槛用的earlyWindowMinutes是两个独立概念，不复用。 */
+    public int vwapDualRefSwitchMinutes = 30;
+    /** 【2026-09-10新增·R3】高开/平开路径回踩当日VWAP不破后，进入“重点监听”状态，需要
+     *  累计这么多“实际交易分钟”（自动剔除11:30-13:00午休）仍未跌破，才确认底仓。 */
+    public int focusWatchConfirmMinutes = 60;
+    /** 【2026-09-10新增·R3，用户后续确认采用"先底仓后加仓（两次先后动作）"读法后更新】收盘前这么多分钟内，若底仓正是今天靠
+     *  重点监听1小时确认拿到的（focusWatchStatus==CONFIRMED）且仍未跌破当日VWAP，直接触发
+     *  一次加仓（见TradingRuleEngine.evaluateAddHalf()里focusWatchGraduation判断）——这是底仓
+     *  之后的第二个独立动作，不是对底仓本身的另一个确认入口。与止损用的
+     *  patternLowStopNotifyMinutes相互独立，互不影响。 */
+    public int gapUpAddConfirmMinutesBeforeClose = 15;
 
     public static void init(Context context) {
         if (sInstance == null) {
@@ -124,6 +137,9 @@ public class TradingRuleConfig {
         if (o.has("bjExchangeLimitPct")) c.bjExchangeLimitPct = o.getDouble("bjExchangeLimitPct");
         if (o.has("candidateDeepBreakPct")) c.candidateDeepBreakPct = o.getDouble("candidateDeepBreakPct");
         if (o.has("candidateMaxObserveDays")) c.candidateMaxObserveDays = o.getInt("candidateMaxObserveDays");
+        if (o.has("vwapDualRefSwitchMinutes")) c.vwapDualRefSwitchMinutes = o.getInt("vwapDualRefSwitchMinutes");
+        if (o.has("focusWatchConfirmMinutes")) c.focusWatchConfirmMinutes = o.getInt("focusWatchConfirmMinutes");
+        if (o.has("gapUpAddConfirmMinutesBeforeClose")) c.gapUpAddConfirmMinutesBeforeClose = o.getInt("gapUpAddConfirmMinutesBeforeClose");
     }
 
     /** 序列化当前配置为JSON，供前端“参数配置”面板展示当前值 */
@@ -154,6 +170,9 @@ public class TradingRuleConfig {
             o.put("bjExchangeLimitPct", bjExchangeLimitPct);
             o.put("candidateDeepBreakPct", candidateDeepBreakPct);
             o.put("candidateMaxObserveDays", candidateMaxObserveDays);
+            o.put("vwapDualRefSwitchMinutes", vwapDualRefSwitchMinutes);
+            o.put("focusWatchConfirmMinutes", focusWatchConfirmMinutes);
+            o.put("gapUpAddConfirmMinutesBeforeClose", gapUpAddConfirmMinutesBeforeClose);
         } catch (Exception ignored) {}
         return o;
     }

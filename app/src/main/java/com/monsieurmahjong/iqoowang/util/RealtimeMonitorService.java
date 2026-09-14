@@ -41,7 +41,10 @@ public class RealtimeMonitorService extends Service {
 
     private static final String TAG = "RealtimeMonitorService";
     private static final String CHANNEL_ID = "realtime_monitor";
+    private static final String CHANNEL_ID_QUIET = "realtime_monitor_quiet"; // 【R7】T+1锁仓止损/预警的静默降噪通道
+    private static final String CHANNEL_ID_FOCUS_WATCH = "realtime_monitor_focus_watch"; // 【R3】进入重点监听的轻量提示，不是买卖决策，用比普通信号更低的优先级
     private static final int NOTIFICATION_ID = 1001;
+    private static final int RANKING_NOTIFICATION_ID = 1002; // 【R10】排行榜就绪提醒，固定ID与个股信号的code.hashCode()区开
 
     public static final String EXTRA_INTERVAL_MS = "interval_ms";
     public static final long DEFAULT_INTERVAL_MS = 120_000; // 2分钟：之前30/60秒轮询过密，与AI复核真实耗时(90-180秒)错开，也降低行情接口频率降低双熔断风险。前端默认选项同步改为2分钟
@@ -77,6 +80,8 @@ public class RealtimeMonitorService extends Service {
     // 证明监控确实在跑，不能靠“通知栏还在”来判断
     private static final long SNAPSHOT_INTERVAL_MS = 10 * 60_000; // 10分钟一次（2026-08-30从15分钟调整而来）
     private volatile long mLastSnapshotAt = 0;
+    // 【R10】收盘前排行榜一天只触发一次——用日期字符串去重，跨天自然重置，与R1年底提醒同一模式
+    private volatile String mLastRankDate = "";
 
     // 行情双源全部失败时的日志节流：断网期间避免每个tick都刷一条，最多10分钟记一次
     private static final long FETCH_FAIL_LOG_THROTTLE_MS = 10 * 60_000;
@@ -237,6 +242,8 @@ public class RealtimeMonitorService extends Service {
         List<Position> positions = DatabaseManager.get().getAllPositions();
         syncPositionsIntoWatchlist(positions);
 
+        maybeFireCandidateRanking(); // 【R10】每轮tick都检查一下是否到了4:40窗口，内部自己做日期去重，不会重复触发
+
         List<WatchlistManager.WatchlistItem> watchItems = WatchlistManager.get().getActiveWatchlist();
 
         Set<String> codeSet = new HashSet<>();
@@ -262,13 +269,18 @@ public class RealtimeMonitorService extends Service {
             }
 
             // 本轮是否到了写监控快照的时候——不管有没有信号都定期记一笔，证明监控确实在跑。
+            // 【B/C重构】之前这里把每支股票的快照行收集进一个共享列表，最后一次性调旧版
+            // logSnapshot(list)，这个方法现已标deprecated，内部会把所有行归到code=null的匿名
+            // _system文件里，跟"每支股票当天所有监控日志都写进这支股票自己文件"这个核心诉求没对上，
+            // 现改成每行产出时（item就在作用域里）直接调 logMonitorLine(item.code, item.name, line)，
+            // 不再收批。mLastSnapshotAt改成在确定"本轮确实要写快照"的那一刻就更新，
+            // 不再依赖"列表最终有没有内容"这个间接判断。
             boolean dueForSnapshot = System.currentTimeMillis() - mLastSnapshotAt >= SNAPSHOT_INTERVAL_MS;
-            List<String> snapshotLines = dueForSnapshot
-                    ? java.util.Collections.synchronizedList(new ArrayList<>()) : null;
+            if (dueForSnapshot) mLastSnapshotAt = System.currentTimeMillis();
 
             AtomicInteger pending = new AtomicInteger(watchItems.size());
             if (watchItems.isEmpty()) {
-                finishTickBatch(snapshotLines);
+                finishTickBatch();
                 return;
             }
             for (WatchlistManager.WatchlistItem item : watchItems) {
@@ -278,22 +290,22 @@ public class RealtimeMonitorService extends Service {
                     // 就完全从监控日志里消失，哪怕它还有真实仓位暴露在市场风险里。quotes里已经有它的
                     // 行情（codes列表本来就包含了所有持仓代码），不用额外发请求。
                     RealtimeQuoteManager.Quote pendingQuote = quotes.get(item.code);
-                    if (pendingQuote != null && snapshotLines != null) {
+                    if (pendingQuote != null && dueForSnapshot) {
                         Position pendingPos = DatabaseManager.get().getPositionByCode(item.code);
                         boolean pendingHolding = pendingPos != null && pendingPos.getQuantity() > 0;
                         double pendingHoldCost = pendingHolding ? pendingPos.getAvgCost() : 0;
                         String judgment = String.format(java.util.Locale.CHINA,
                                 "待确认·%s（触发价¥%.2f，等待你确认/忽略）",
                                 item.pendingAction != null ? item.pendingAction : "?", item.pendingPrice);
-                        String line = buildSnapshotLine(item, pendingQuote, pendingHolding, pendingHoldCost, judgment);
-                        if (line != null) snapshotLines.add(line);
+                        String line = buildSnapshotLine(item, pendingQuote, pendingHolding, pendingHoldCost, judgment, null);
+                        if (line != null) DecisionLogger.get().logMonitorLine(item.code, item.name, line);
                     }
-                    if (pending.decrementAndGet() == 0) finishTickBatch(snapshotLines);
+                    if (pending.decrementAndGet() == 0) finishTickBatch();
                     continue;
                 }
                 RealtimeQuoteManager.Quote q = quotes.get(item.code);
                 if (q == null) {
-                    if (pending.decrementAndGet() == 0) finishTickBatch(snapshotLines);
+                    if (pending.decrementAndGet() == 0) finishTickBatch();
                     continue;
                 }
                 // 所有状态均需分时数据（VWAP/量比/止损追踪）
@@ -301,31 +313,25 @@ public class RealtimeMonitorService extends Service {
                     @Override
                     public void onResult(String code, List<RealtimeQuoteManager.MinutePoint> points) {
                         String line = evaluateAndAct(item, q, points);
-                        if (snapshotLines != null && line != null) snapshotLines.add(line);
-                        if (pending.decrementAndGet() == 0) finishTickBatch(snapshotLines);
+                        if (dueForSnapshot && line != null) DecisionLogger.get().logMonitorLine(item.code, item.name, line);
+                        if (pending.decrementAndGet() == 0) finishTickBatch();
                     }
                     @Override
                     public void onError(String code, String msg) {
                         Log.w(TAG, "分时数据获取失败 " + code + ": " + msg);
                         String line = evaluateAndAct(item, q, null);
-                        if (snapshotLines != null && line != null) snapshotLines.add(line);
-                        if (pending.decrementAndGet() == 0) finishTickBatch(snapshotLines);
+                        if (dueForSnapshot && line != null) DecisionLogger.get().logMonitorLine(item.code, item.name, line);
+                        if (pending.decrementAndGet() == 0) finishTickBatch();
                     }
                 });
             }
         });
     }
 
-    /** 本轮tick所有股票都评估完了才会走到这里。snapshotLines为null表示本轮还没到写快照的时间，直接跳过。 */
-    private void finishTickBatch(List<String> snapshotLines) {
+    /** 本轮tick所有股票都评估完了才会走到这里，现在只负责重置并发保护旗位，
+     *  实际的快照写入已改为每支股票产出时直接调logMonitorLine，不再需要在这里批量写。 */
+    private void finishTickBatch() {
         mTickInFlight = false;
-        if (snapshotLines == null || snapshotLines.isEmpty()) return;
-        mLastSnapshotAt = System.currentTimeMillis();
-        try {
-            DecisionLogger.get().logSnapshot(new ArrayList<>(snapshotLines));
-        } catch (Exception e) {
-            Log.e(TAG, "写监控快照日志失败", e);
-        }
     }
 
     /** 行情双源全部失败时的节流日志——断网期间避免每个tick都刷屏，最多每10分钟记一次。 */
@@ -361,15 +367,102 @@ public class RealtimeMonitorService extends Service {
                 || WatchlistManager.STATUS_PENDING_STOP.equals(status);
     }
 
+    /** 【R10】每个交易日收盘前20分钟（14:40-14:41窗口）触发一次候选池AI排行榜，一天
+     *  只触发一次（用日期字符串去重，跨天自然重置，与R1年底提醒同一模式）。模型未就绪或
+     *  候选池为空时LocalAIAgent/buildCandidateSnapshotText会直接报错或返回null，这里只静静跳过，
+     *  不影响主流程。 */
+    private void maybeFireCandidateRanking() {
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        int minutesNow = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + cal.get(java.util.Calendar.MINUTE);
+        int closeMinutes = TradingRuleConfig.get().marketCloseHour * 60 + TradingRuleConfig.get().marketCloseMinute;
+        // 【D复查修复】原判断窗口只有14:40-14:41整敆1分钟宽，而tick间隔是2分钟——取决于
+        // 当天监控服务具体是几点几分启动的，很可能一整天都凑不到一次tick恰好落在这1分钟内，导致
+        // 排行榜整天都不会触发，且完全没有任何报错提示，问题很隐蔽。这里改成从14:40起到收盘前
+        // 都算在窗口内，靠下面已有的mLastRankDate日期去重来保证"一天只触发一次"，不再依赖
+        // "刚好卡在某一分钟"这种脆弱条件。
+        if (minutesNow < 14 * 60 + 40 || minutesNow >= closeMinutes) return;
+        String today = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.CHINA).format(new java.util.Date());
+        if (today.equals(mLastRankDate)) return;
+        mLastRankDate = today;
+
+        String snapshot = buildCandidateSnapshotText();
+        if (snapshot == null) {
+            Log.i(TAG, "候选池排行榜：候选池为空，今日跳过");
+            return;
+        }
+        final String rankDate = today;
+        LocalAIAgent.get(getApplicationContext()).rankCandidatesBeforeClose(snapshot, new LocalAIAgent.AICallback() {
+            @Override public void onToken(String token) {}
+            @Override
+            public void onComplete(String fullText) {
+                try {
+                    DatabaseManager.get().saveCandidateRanking(rankDate, fullText);
+                    fireRankingReadyNotification();
+                    DecisionLogger.get().logNote("候选池排行榜已生成，日期" + rankDate);
+                } catch (Exception e) {
+                    Log.e(TAG, "候选池排行榜落库/通知失败", e);
+                }
+            }
+            @Override
+            public void onError(String msg) {
+                Log.w(TAG, "候选池排行榜生成失败: " + msg);
+            }
+        });
+    }
+
+    /** 【R10】把当前具备买入条件或持仓中的候选股拼成AI能直接读懂的文本快照，全部取自
+     *  WatchlistManager已经落库的最新状态（lastNote字段本身就是上一轮evaluate()算好的人话），
+     *  不重新发网络请求、不重新跑一遍规则引擎，与tick节奏解耦。返回null表示候选池为空，
+     *  调用方不应该再去调AI。 */
+    private String buildCandidateSnapshotText() {
+        List<WatchlistManager.WatchlistItem> items = WatchlistManager.get().getActiveWatchlist();
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        for (WatchlistManager.WatchlistItem item : items) {
+            Position pos = DatabaseManager.get().getPositionByCode(item.code);
+            boolean holding = pos != null && pos.getQuantity() > 0;
+            boolean relevant = holding || isPendingStatus(item.status)
+                    || (WatchlistManager.STATUS_WATCHING.equals(item.status)
+                        && item.lastNote != null && !item.lastNote.isEmpty());
+            if (!relevant) continue;
+            sb.append(String.format(java.util.Locale.CHINA, "%d. %s(%s) 状态=%s%s。%s\n",
+                    ++n, item.name, item.code, item.status,
+                    holding ? "(持仓中)" : "",
+                    item.lastNote != null ? item.lastNote : ""));
+        }
+        return n == 0 ? null : sb.toString();
+    }
+
+    /** 【R10】排行榜生成完毕的醒目提示——复用普通高优先级通道，固定通知ID避免跟个股信号的
+     *  code.hashCode()碰撞。点击后打开App——具体展示页面本轮不做，前端另行确认，与R7角标部分一致。 */
+    private void fireRankingReadyNotification() {
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        String title = "📊 今日候选池排行榜已生成";
+        String content = "收盘前20分钟AI横向打分完成，点击App查看";
+        Intent tapIntent = new Intent(this, MainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(this, RANKING_NOTIFICATION_ID, tapIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Notification n = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build();
+        nm.notify(RANKING_NOTIFICATION_ID, n);
+    }
+
     /**
-     * 沪深A股常规交易时段：9:30-11:30、13:00-15:00（午休时段自然排除在外），周一到周五。
-     * 不考虑法定节假日——节假日当天本来也不会有新行情变化，顶多白白拉几次和昨天一样的快照，
-     * 不会误报，但如果后续想更严谨可以接入交易日历。
+     * 沪深A股常规交易时段：9:30-11:30、13:00-15:00（午休时段自然排除在外），周一到周五，
+     * 且不是法定节假日。
+     * 【R1修复】之前只判断周几，不接入节假日日历——节假日当天虽然不会真的误发信号
+     * （反正行情源本来也不会有新数据），但会白白发起网络请求耗电，现在直接用
+     * TradingCalendar跳过，顺带也让"交易时段"这个概念在全项目里口径一致。
      */
     private boolean isWithinTradingHours() {
         java.util.Calendar cal = java.util.Calendar.getInstance();
-        int dow = cal.get(java.util.Calendar.DAY_OF_WEEK);
-        if (dow == java.util.Calendar.SATURDAY || dow == java.util.Calendar.SUNDAY) return false;
+        if (!TradingCalendar.get().isTradingDay(cal)) return false;
         int minutesNow = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + cal.get(java.util.Calendar.MINUTE);
         boolean morning = minutesNow >= 9 * 60 + 30 && minutesNow <= 11 * 60 + 30;
         boolean afternoon = minutesNow >= 13 * 60 && minutesNow <= 15 * 60;
@@ -388,7 +481,9 @@ public class RealtimeMonitorService extends Service {
             WatchlistManager.get().saveTrackState(item.code, result.stateUpdate);
         }
         if (result.waterLine > 0) {
-            WatchlistManager.get().updateLiveMetrics(item.code, result.waterLine, result.vwap, result.volRatio);
+            // 【用户已明确要求】额外传入 prevDay.prevLow（前一交易日最低价），现在它就是独立破位
+            // 止损参照价，必须在候选池/持仓列表里醒目展示，不能只藏在note文字里。
+            WatchlistManager.get().updateLiveMetrics(item.code, result.waterLine, result.vwap, result.volRatio, prevDay.prevLow);
         }
 
         Position pos = DatabaseManager.get().getPositionByCode(item.code);
@@ -401,6 +496,15 @@ public class RealtimeMonitorService extends Service {
                 Log.w(TAG, "【陈旧数据拦截】" + item.name + "(" + item.code + ") " + result.note);
                 DecisionLogger.get().logNote(item.name + "(" + item.code + ") " + result.note);
             }
+            // 【R3新增】首次进入"重点监听"：推送一条轻量提示，不走markPending（不是买卖决策，
+            // 不需要用户确认/忽略），只是告知
+            if (result.focusWatchJustEntered) {
+                try {
+                    fireFocusWatchNotification(item.code, item.name, result.note, quote.price);
+                } catch (Exception e) {
+                    Log.e(TAG, "发送重点监听提示失败", e);
+                }
+            }
             // 观察中的候选股：本轮无买卖信号时，检查是否该自动移出观察池
             if (WatchlistManager.STATUS_WATCHING.equals(item.status) && !holding) {
                 String staleReason = checkStaleCandidate(item, quote, prevDay, result);
@@ -409,16 +513,17 @@ public class RealtimeMonitorService extends Service {
                     DecisionLogger.get().logNote(item.name + "(" + item.code + ") 自动移出观察池：" + staleReason);
                 }
             }
-            return buildSnapshotLine(item, quote, holding, holdCost, result.note);
+            return buildSnapshotLine(item, quote, holding, holdCost, result.note, result.metrics);
         }
 
         applyT1Note(result, pos, holding);
+        applyCostBasisNote(result, pos, holding, holdCost, quote); // 【R6】
 
         // 二级止损中点：未到收盘前推送窗口 → 只更新备注，不推送、不入AI队列
         if (!shouldNotifyNow(result)) {
             WatchlistManager.get().updateNote(item.code, result.note);
             Log.i(TAG, "规则命中但不在推送窗口: " + item.code + " " + result.actionLabel);
-            return buildSnapshotLine(item, quote, holding, holdCost, result.actionLabel + "（未到推送窗口，暂缓）");
+            return buildSnapshotLine(item, quote, holding, holdCost, result.actionLabel + "（未到推送窗口，暂缓）", result.metrics);
         }
 
         String actionKey = TradingRuleEngine.actionToKey(result.action);
@@ -433,20 +538,38 @@ public class RealtimeMonitorService extends Service {
             Log.e(TAG, "写规则推送日志失败", e);
         }
 
-        fireAlert(item.code, item.name, result.actionLabel, result.note, result.triggerPrice);
+        // 【R7，用户已确认"静默通知+角标"方案】止损/预警命中，但持仓100%是今日买入、T+1前
+        // 完全不能卖时，今天实际上什么都做不了，仍用平时高优先级+三连震动纯属打扰，改走静默低
+        // 优先级通道。
+        boolean isSellSignal = result.action == TradingRuleEngine.Action.STOP_LOSS
+                || result.action == TradingRuleEngine.Action.WARN_PRESSURE;
+        boolean fullyT1Locked = isSellSignal && holding
+                && DatabaseManager.get().getSellableQuantity(item.code) <= 0;
+        if (fullyT1Locked) {
+            fireQuietAlert(item.code, item.name, result.actionLabel, result.note, result.triggerPrice);
+        } else {
+            fireAlert(item.code, item.name, result.actionLabel, result.note, result.triggerPrice);
+        }
         if (sListener != null) {
             sListener.onSignalTriggered(item.code, item.name, result.actionLabel, result.note, result.triggerPrice);
         }
 
         enqueueVerification(item, actionKey, result, quote, pos);
-        return buildSnapshotLine(item, quote, holding, holdCost, result.actionLabel + "（已推送，待AI复核）");
+        return buildSnapshotLine(item, quote, holding, holdCost, result.actionLabel + "（已推送，待AI复核）", result.metrics);
     }
 
     /** 拼一支股票的监控快照摘要行——现价、对比参考价（持仓成本）、当前判断，
      *  给周期性快照日志用，就是用户说的"13:20 太极集团 15.23 对比买入价格15.43"那种格式。
-     *  quote为null时返回null（没数据不写这一行）。 */
+     *  quote为null时返回null（没数据不写这一行）。
+     *  【D复查时新增】metrics参数：之前这里只把result.note当做judgment拼进去，而note里
+     *  是否提到VWAP/水线完全取决于触发这条note的具体代码分支——绝大多数分支确实会提，
+     *  但不是强制保证。现让每行监控快照都额外固定拼上 evaluate() 开头统一算好的
+     *  result.metrics结构化字符串（含VWAP/水线/量比，不管走到哪个分支都会被设置，不像
+     *  result.vwap/waterLine那两个结构化double字段在部分fallthrough分支里没被设置），
+     *  不再依赖每个代码分支的note文本恰好提到了VWAP这件事本身，对应用户“分时均价等主要
+     *  信息一定要记录到位”的要求。metrics为空时不加这段（兼容旧调用方不传的情况）。 */
     private String buildSnapshotLine(WatchlistManager.WatchlistItem item, RealtimeQuoteManager.Quote quote,
-                                      boolean holding, double holdCost, String judgment) {
+                                      boolean holding, double holdCost, String judgment, String metrics) {
         if (quote == null) return null;
         StringBuilder sb = new StringBuilder();
         sb.append(item.name).append("(").append(item.code).append(") 现价¥")
@@ -457,6 +580,9 @@ public class RealtimeMonitorService extends Service {
                     holdCost, pnlPct >= 0 ? "浮盈" : "浮亏", Math.abs(pnlPct)));
         }
         sb.append(" ｜ ").append(judgment != null && !judgment.isEmpty() ? judgment : "观望");
+        if (metrics != null && !metrics.isEmpty()) {
+            sb.append(" ｜ 指标：").append(metrics);
+        }
         return sb.toString();
     }
 
@@ -477,6 +603,22 @@ public class RealtimeMonitorService extends Service {
                     "；⚠️持仓%d股中有%d股为今日买入尚不可卖，实际可执行卖出%d股",
                     pos.getQuantity(), lockedQty, sellableQty);
         }
+    }
+
+    /** 【R6，用户已确认方案A】一级预警(WARN_PRESSURE)是纯粹按"相对昨收的峰值涨幅回撤"算的，
+     *  跟持仓人实际的买入成本完全无关——同样一条预警，可能对应你实际浮盈、也可能对应你实际
+     *  已经浮亏，光看这条预警本身分不清楚。这里不改变WARN_PRESSURE本身的触发条件（那是
+     *  操盘手经验原文3.3节的定义，不该被个人成本干扰），只是在文案里追加一行"你的实际
+     *  持仓浮盈亏"，两个口径并排放着，自己判断这次预警是"股票本身走弱"还是"叠加了
+     *  买入价偏高的错觉"。 */
+    private void applyCostBasisNote(TradingRuleEngine.RuleResult result, Position pos,
+                                     boolean holding, double holdCost, RealtimeQuoteManager.Quote quote) {
+        if (!holding || pos == null || holdCost <= 0 || quote == null) return;
+        if (result.action != TradingRuleEngine.Action.WARN_PRESSURE) return;
+        double pnlPct = (quote.price - holdCost) / holdCost * 100;
+        result.note += String.format(java.util.Locale.CHINA,
+                "；你的实际持仓：成本¥%.2f，现价¥%.2f，%s%.2f%%",
+                holdCost, quote.price, pnlPct >= 0 ? "浮盈" : "浮亏", Math.abs(pnlPct));
     }
 
     /**
@@ -519,9 +661,10 @@ public class RealtimeMonitorService extends Service {
      * 【修复】原实现按日历天数计算（两个日期相减/一天毫秒数），但trading_rules.json的
      * candidateMaxObserveDays注释、TradingRuleConfig.java字段注释都明确写的是"交易日"，
      * 按日历天数算会把周末也计入观察期——跨一个周末的候选股会比文档口径提前1~2天
-     * 被判定超时移出观察池。改为按周一到周五估算交易日，不接入法定节假日日历，
-     * 与本类isWithinTradingHours()、MarketDataManager.computeExpectedTradeDate()是同一套
-     * 简化口径（节假日当天本来也不会有行情变化，顶多把移出判断稍微推迟，不会误报）。
+     * 被判定超时移出观察池。
+     * 【R1修复】之前只排除周末，不识别法定节假日，跨春节/国庆这类多日假期时同样会
+     * 提前误判超时。现改用TradingCalendar逐日判断是否为真实交易日，与本类
+     * isWithinTradingHours()、MarketDataManager.computeExpectedTradeDate()口径统一。
      */
     private int computeObserveDays(String addedDate) {
         if (addedDate == null || addedDate.isEmpty()) return 0;
@@ -537,8 +680,7 @@ public class RealtimeMonitorService extends Service {
             if (cursor.after(today)) return 0;
             int tradeDays = 0;
             while (!cursor.after(today)) {
-                int dow = cursor.get(java.util.Calendar.DAY_OF_WEEK);
-                if (dow != java.util.Calendar.SATURDAY && dow != java.util.Calendar.SUNDAY) tradeDays++;
+                if (TradingCalendar.get().isTradingDay(cursor)) tradeDays++;
                 cursor.add(java.util.Calendar.DAY_OF_MONTH, 1);
             }
             return tradeDays;
@@ -691,6 +833,26 @@ public class RealtimeMonitorService extends Service {
             ch.enableVibration(true);
             nm.createNotificationChannel(ch);
         }
+        // 【R7，用户已确认"静默通知+角标"方案】Android 8+的通知优先级主要由Channel的
+        // importance决定，单靠Notification.Builder.setPriority()不够，所以单独开一个低重要度、
+        // 关闭震动的渠道，给T+1完全锁仓、今天实际上不可能操作的止损/预警用。
+        if (nm.getNotificationChannel(CHANNEL_ID_QUIET) == null) {
+            NotificationChannel chQuiet = new NotificationChannel(CHANNEL_ID_QUIET, "实时监控·静默提醒",
+                    NotificationManager.IMPORTANCE_LOW);
+            chQuiet.setDescription("T+1锁仓、今日无法实际操作的止损/预警提示（不震动、不弹出）");
+            chQuiet.enableVibration(false);
+            nm.createNotificationChannel(chQuiet);
+        }
+        // 【R3新增】高开/平开候选股进入"重点监听"的轻量提示——不是买卖决策，不需要用户
+        // 确认/忽略，用比普通买卖信号更低的优先级、更轻的单次震动区分。
+        if (nm.getNotificationChannel(CHANNEL_ID_FOCUS_WATCH) == null) {
+            NotificationChannel chFocus = new NotificationChannel(CHANNEL_ID_FOCUS_WATCH, "实时监控·重点监听",
+                    NotificationManager.IMPORTANCE_LOW);
+            chFocus.setDescription("高开/平开候选股回踩分时均价、进入重点监听计时的提示（非买卖决策）");
+            chFocus.enableVibration(true);
+            chFocus.setVibrationPattern(new long[]{0, 150});
+            nm.createNotificationChannel(chFocus);
+        }
     }
 
     private Notification buildNotification(String title, String content) {
@@ -744,6 +906,60 @@ public class RealtimeMonitorService extends Service {
                 }
             }
         } catch (Exception ignored) {}
+    }
+
+    /** 【R7，用户已确认"静默通知+角标"方案】与 fireAlert 基本一致，只换了两处：投到
+     *  CHANNEL_ID_QUIET（低重要度）而不是普通频道，且不调用震动——这是本次降噪的核心diff。
+     *  标题/文案里直接说明"今日买入，T+1前不可卖"，避免用户看到提示后误以为现在就能卖。
+     *  角标本身依赖前端读候选池PENDING状态自行展示，后端数据已经够用，本次不改前端。 */
+    private void fireQuietAlert(String code, String name, String actionLabel, String ruleReason, double price) {
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        String title = name + "(" + code + ") " + actionLabel + " · 待确认（今日买入，T+1前不可卖）";
+        String content = String.format(java.util.Locale.CHINA, "¥%.2f · %s\n今天暂时无法实际卖出，仅供参考，明日开盘再处理", price, ruleReason);
+
+        Intent tapIntent = new Intent(this, MainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(this, code.hashCode(), tapIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        Notification n = new NotificationCompat.Builder(this, CHANNEL_ID_QUIET)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(content))
+                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .build();
+        nm.notify(code.hashCode(), n);
+        // 故意不震动：与fireAlert最大的区别就在这里——既然今天实际卖不掉，就不用震动打扰。
+    }
+
+    /** 【R3新增】高开/平开候选股首次进入"重点监听"时的轻量提示——不是买卖决策，不走
+     *  markPending/PENDING状态位，不需要用户确认/忽略，只是告知已进入计时观察。用独立的
+     *  低优先级通道+轻震动，跟"🔔待确认"（三连震动）、"✅AI已确认"（单长震动）区分开，
+     *  复用同一个通知ID（code.hashCode()），保持同一支股票的通知在通知栏里是同一条、
+     *  不随后续tick反复刷屏。 */
+    private void fireFocusWatchNotification(String code, String name, String note, double price) {
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        String title = "👀 " + name + "(" + code + ") 进入重点监听";
+        String content = String.format(java.util.Locale.CHINA, "¥%.2f · %s", price, note);
+
+        Intent tapIntent = new Intent(this, MainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(this, code.hashCode(), tapIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        Notification n = new NotificationCompat.Builder(this, CHANNEL_ID_FOCUS_WATCH)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(content))
+                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .setOnlyAlertOnce(true)
+                .build();
+        nm.notify(code.hashCode(), n);
     }
 
     /**

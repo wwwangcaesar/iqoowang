@@ -716,6 +716,65 @@ public class LocalAIAgent {
     // 核心推理（流式）
     // ──────────────────────────────────────────
 
+    /** 【R10新增】排行榜结果包装，目前只用到fullText（结构化文本，直接落库），预留结构供后续细化解析。 */
+    public static class RankResult {
+        public String fullText;
+    }
+
+    /**
+     * 收盘前对当前候选池做横向打分排序。跿erifySignal一样只做“解读”，不自己编数字——
+     * candidateSnapshotText由调用方（RealtimeMonitorService）从WatchlistManager/规则引擎
+     * 已经算好的具体数据拼好传进来，这里只负责在prompt里明确要求AI必须引用这些数字。
+     * 模型未就绪时直接报错，不降级到专家规则——排行榜是“定性洞察”功能，用规则模板硬凑一个
+     * 排名意义不大，不如今天先跳过，比给出一个看似 AI 生成、实则套模板的排名更诚实。
+     */
+    public void rankCandidatesBeforeClose(String candidateSnapshotText, AICallback cb) {
+        if (candidateSnapshotText == null || candidateSnapshotText.trim().isEmpty()) {
+            cb.onError("候选池为空，无需生成排行榜");
+            return;
+        }
+        if (!tryAcquireInferLock()) {
+            cb.onError("AI正在思考中，请稍后");
+            return;
+        }
+        mExecutor.execute(() -> {
+            try {
+                String marketCtx = mCtxBuilder.buildMarketContext();
+                String historyCtx = mCtxBuilder.buildTradeHistoryContext();
+                String prompt = buildRankPrompt(candidateSnapshotText, marketCtx, historyCtx);
+
+                if (mEngine.isReady()) {
+                    mEngine.reset();
+                    runStream(prompt, cb);
+                } else {
+                    mInferring.set(false);
+                    cb.onError("本地AI模型未就绪，今日排行榜暂不生成");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "rankCandidatesBeforeClose", e);
+                mInferring.set(false);
+                mMainHandler.post(() -> cb.onError(e.getMessage()));
+            }
+        });
+    }
+
+    private String buildRankPrompt(String candidateSnapshotText, String marketCtx, String historyCtx) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(getSystemPrompt("GENERAL")).append("\n\n");
+        sb.append("【收盘前候选池排行任务】现在是收盘前20分钟，需要你对当前候选池里的股票做横向对比打分，\n");
+        sb.append("帮用户判断今天最值得买/最需要留意卖出的是哪几支。\n");
+        sb.append(marketCtx);
+        sb.append(historyCtx);
+        sb.append("\n【候选池数据——以下是每支股票当前的具体状态和技术指标，全部来自程序实时计算，不是估算】\n");
+        sb.append(candidateSnapshotText);
+        sb.append("\n【硬性要求】只能依据上面列出的具体数字和状态做判断，不得引用大盘走势、宏观经济等" +
+                "上面没有列出的信息作为某一支股票排名靠前/靠后的理由；每支股票的评分理由必须至少引用" +
+                "一个上面给出的具体数值（比如量比、涨幅、评分、状态），不能写「综合判断」这类空话。\n");
+        sb.append("\n【输出要求】按打分从高到低排列，每支股票三行，不要写其他内容：\n");
+        sb.append("股票：名称(代码)\n评分：0-100整数\n理由：不超50字，必须引用至少一个上面给出的具体数字\n");
+        return sb.toString();
+    }
+
     private void runStream(String prompt, AICallback cb) {
         final StringBuilder full = new StringBuilder();
 

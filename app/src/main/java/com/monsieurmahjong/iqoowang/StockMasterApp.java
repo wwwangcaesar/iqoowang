@@ -36,6 +36,11 @@ public class StockMasterApp extends Application {
         DatabaseManager.init(this);
         Log.i(TAG, "DatabaseManager initialized");
 
+        // 【R1】A股法定节假日日历——MarketDataManager.computeExpectedTradeDate()等处依赖它，
+        // 必须在MarketDataManager之前初始化
+        com.monsieurmahjong.iqoowang.util.TradingCalendar.init(this);
+        Log.i(TAG, "TradingCalendar initialized");
+
         // 初始化行情数据管理器
         com.monsieurmahjong.iqoowang.util.MarketDataManager.init(this);
         Log.i(TAG, "MarketDataManager initialized");

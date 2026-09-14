@@ -123,7 +123,8 @@ public class RealtimeQuoteManager {
     public static class MinutePoint {
         public String time;   // "09:30"
         public double price, avgPrice;
-        public long volume;
+        public long volume;      // 本分钟成交量增量(手)，由相邻两条累计值作差得到
+        public long cumVolume;   // 【D修复时新增】开盘至本分钟累计成交量(手)，画分时图/核对用
     }
 
     public interface MinuteCallback {
@@ -141,6 +142,31 @@ public class RealtimeQuoteManager {
         return (code.startsWith("6") || code.startsWith("5")) ? "sh" : "sz";
     }
 
+    // ════════════════════════════════════
+    // 【D新增】分时图用缓存：候选池/持仓股票本来每轮tick就会拉一次行情和分时（规则引擎评估要用），
+    // 这里顺手缓下最新一份，分时图功能按需查看时直接读缓存，不用另发一轮网络请求。
+    // 缓存过期时间不需要特地处理——下个2分钟tick自然会覆盖掉，比到底多久算过期更实用。
+    // ════════════════════════════════════
+
+    private static final Map<String, Quote> sLatestQuoteCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Map<String, List<MinutePoint>> sMinuteCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final Map<String, Long> sMinuteCacheUpdatedAt = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 拿某支股最新一次缓存的行情，没缓存过返回null（刚加进池、还没来得及拉到第一轮时会这样） */
+    public Quote getCachedQuote(String code) { return sLatestQuoteCache.get(code); }
+
+    /** 拿某支股最新一次缓存的分时数据，没缓存过返回空列表。 */
+    public List<MinutePoint> getCachedMinuteLine(String code) {
+        List<MinutePoint> l = sMinuteCache.get(code);
+        return l != null ? l : new ArrayList<>();
+    }
+
+    /** 这份分时缓存是什么时候拉的，前端用来判断数据多新鲜（没缓存过返回0）。 */
+    public long getCachedMinuteLineUpdatedAt(String code) {
+        Long t = sMinuteCacheUpdatedAt.get(code);
+        return t != null ? t : 0L;
+    }
+
     // ══════════════════════════════════════════
     // 批量实时行情：主源失败的代码自动转备用源重试
     // ══════════════════════════════════════════
@@ -150,15 +176,19 @@ public class RealtimeQuoteManager {
             cb.onResult(new LinkedHashMap<>(), new ArrayList<>());
             return;
         }
+        QuoteCallback cachingCb = (quotes, failedCodes) -> {
+            if (quotes != null && !quotes.isEmpty()) sLatestQuoteCache.putAll(quotes);
+            cb.onResult(quotes, failedCodes);
+        };
         if (tencentAvailable()) {
             fetchTencentBatch(codes, (okMap, failed) -> {
-                if (failed.isEmpty()) { cb.onResult(okMap, failed); return; }
+                if (failed.isEmpty()) { cachingCb.onResult(okMap, failed); return; }
                 Log.i(TAG, "腾讯源" + failed.size() + "支未拿到，转新浪源重试");
-                fetchSinaFallback(codes, failed, okMap, cb);
+                fetchSinaFallback(codes, failed, okMap, cachingCb);
             });
         } else {
             Log.i(TAG, "腾讯源熔断中，直接走新浪源");
-            fetchSinaFallback(codes, codes, new LinkedHashMap<>(), cb);
+            fetchSinaFallback(codes, codes, new LinkedHashMap<>(), cachingCb);
         }
     }
 
@@ -353,6 +383,8 @@ public class RealtimeQuoteManager {
                     if (points.isEmpty()) {
                         MAIN.post(() -> cb.onError(code, "分时数据为空或格式解析失败"));
                     } else {
+                        sMinuteCache.put(code, points); // 【D新增】顺手缓下，分时图功能按需读
+                        sMinuteCacheUpdatedAt.put(code, System.currentTimeMillis());
                         MAIN.post(() -> cb.onResult(code, points));
                     }
                 } catch (Exception e) {
@@ -364,11 +396,14 @@ public class RealtimeQuoteManager {
     }
 
     /**
-     * 腾讯分时接口返回形如：
+     * 【D复查时改正】这里之前的注释写错了：这个接口每条分时数据并不是"时间 价格 均价 成交量"，
+     * 实测格式是"时间 价格 累计成交量 累计成交额"（跟下面parsePrevDayVwap用的day/query接口同一套格式），
+     * 根本没有单独的"均价"字段，均价要自己用累计成交额÷(累计成交量×100)算。用真实样本验证过：
+     * “0930 2.023 37265 7538709.50”，7538709.50÷(37265×100)=2.0233，与价格2.023对得上；之前把第3个字段
+     * 直接当avgPrice用，实际存进去的是一个几万起步的累计成交量数字，跟真实股价完全不在一个
+     * 量级，导致TradingRuleEngine里所有依赖分时VWAP的判断长期在错误基准上运行，现已修正。
      * {"code":0,"msg":"","data":{"sh600000":{"date":"20260710",
-     *   "minute":{"data":["0930 10.00 10.00 1234", "0931 10.02 10.01 987", ...]}}}}
-     * 每条数据: "时间 价格 均价 成交量(手)"，空格分隔。
-     * 此接口字段格式来自公开文档，若腾讯改版导致解析为空，会记录原始响应方便定位。
+     *   "minute":{"data":["0930 10.00 1234 12340.00", "0931 10.02 2221 22254.67", ...]}}}}
      */
     private List<MinutePoint> parseMinuteJson(String body, String code) {
         List<MinutePoint> result = new ArrayList<>();
@@ -388,16 +423,22 @@ public class RealtimeQuoteManager {
             JSONArray arr = minuteObj != null ? minuteObj.optJSONArray("data") : null;
             if (arr == null) { Log.w(TAG, "分时响应无minute.data数组: " + truncate(body)); return result; }
 
+            long prevCumVol = 0;
             for (int i = 0; i < arr.length(); i++) {
                 String line = arr.optString(i, "");
                 String[] parts = line.split("\\s+");
-                if (parts.length < 3) continue;
+                if (parts.length < 4) continue;
                 MinutePoint p = new MinutePoint();
                 String t = parts[0]; // "0930"
                 p.time = t.length() == 4 ? t.substring(0, 2) + ":" + t.substring(2) : t;
                 p.price = d(parts[1]);
-                p.avgPrice = d(parts[2]);
-                p.volume = parts.length > 3 ? l(parts[3]) : 0;
+                double cumVolLots = d(parts[2]);   // 累计成交量，单位"手"(1手=100股)
+                double cumAmount = d(parts[3]);    // 累计成交额，单位"元"
+                p.cumVolume = (long) cumVolLots;
+                p.avgPrice = cumVolLots > 0 ? cumAmount / (cumVolLots * 100.0) : 0;
+                long thisMinuteVol = p.cumVolume - prevCumVol;
+                p.volume = thisMinuteVol > 0 ? thisMinuteVol : 0;
+                prevCumVol = p.cumVolume;
                 result.add(p);
             }
         } catch (Exception e) {

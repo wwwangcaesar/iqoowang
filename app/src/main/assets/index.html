@@ -686,18 +686,18 @@
       </div>
     </div>
 
-    <!-- AI精选核心新闻 -->
+    <!-- 分时图（原核心资讯卡片位置，改为当前股票分时行情） -->
     <div class="card">
       <div class="card-header">
-        <div class="card-title">核心资讯</div>
-        <div id="newsRefreshBtn" style="font-size:10px;color:var(--accent-cyan);cursor:pointer;"
-             onclick="refreshStockNews()">AI筛选 ↻</div>
+        <div class="card-title">分时图</div>
+        <div id="fenshiUpdatedAt" style="font-size:9px;color:var(--text-dim);"></div>
       </div>
-      <div id="stockNewsList" style="padding:8px 14px 10px;">
-        <div class="empty-state" style="padding:20px 0;">
-          <div class="empty-icon" style="font-size:28px;">📰</div>
-          <div class="empty-text">搜索股票后，AI将筛选最核心的资讯</div>
+      <div class="kline-wrap">
+        <div style="position:relative;">
+          <canvas id="fenshiCanvas" height="180"></canvas>
+          <div class="kline-tooltip" id="fenshiTooltip"></div>
         </div>
+        <canvas id="fenshiVolCanvas" height="50" style="display:block;width:100%;"></canvas>
       </div>
     </div>
 
@@ -860,7 +860,7 @@
       </div>
       <div style="padding:0 12px;display:flex;border-bottom:1px solid var(--border);" id="reviewTabBar">
         <div class="review-tab" id="tabBtn_aiReview" onclick="showReviewTab('aiReview')">🤖 AI分析审核</div>
-        <div class="review-tab" id="tabBtn_log" onclick="showReviewTab('log')">📝 决策日志</div>
+        <div class="review-tab" id="tabBtn_log" onclick="openLogsPage()">📝 决策日志</div>
         <div class="review-tab" id="tabBtn_config" onclick="showReviewTab('config')">⚙️ 参数配置</div>
       </div>
       <div id="aiReviewPanel" style="display:none;padding:10px 12px 12px;">
@@ -871,14 +871,7 @@
         </div>
         <div id="aiReviewList"></div>
       </div>
-      <div id="decisionLogPanel" style="display:none;padding:10px 12px 12px;">
-        <div id="logCategoryTabs" style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;"></div>
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-          <select id="decisionLogDateSelect" onchange="loadDecisionLog(this.value)" style="background:var(--bg-card2);color:var(--text-prime);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;flex:1;margin-right:8px;"></select>
-          <span id="decisionLogPath" style="font-size:9px;color:var(--text-dim);"></span>
-        </div>
-        <pre id="decisionLogContent" style="background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:10px;color:var(--text-sub);line-height:1.6;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;font-family:var(--font-mono);">还没有日志</pre>
-      </div>
+      <!-- 决策日志现在是独立的全屏页面（见 page-logs），点tab直接跳转，这里不再放内容 -->
       <div id="configPanel" style="display:none;padding:10px 12px 12px;">
         <div style="font-size:9px;color:var(--text-dim);margin-bottom:6px;">
           调整规则引擎用的判断阈值，保存后立即生效（不用重启App），也会记住下次启动。改动前建议先了解每项含义，盲目调整可能导致信号变得过于灵敏或迟钝。
@@ -1024,6 +1017,34 @@
       <div id="evolveLog" style="padding:10px 14px;font-size:11px;color:var(--text-sub);line-height:2;">
         <div>还没教过话术，在上面输入框教AI第一条操盘经验吧</div>
       </div>
+    </div>
+  </div>
+
+  <!-- ══ 决策日志——独立全屏页面 ══ -->
+  <div class="page" id="page-logs">
+    <div style="padding:10px 12px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);">
+      <span onclick="closeLogsPage()" style="font-size:20px;cursor:pointer;color:var(--text-sub);line-height:1;">‹</span>
+      <div style="font-size:15px;font-weight:700;color:var(--text-prime);flex:1;">决策日志</div>
+      <select id="logsDateSelect" onchange="loadStocksForLogDate(this.value)" style="background:var(--bg-card2);color:var(--text-prime);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11px;"></select>
+    </div>
+    <div style="padding:6px 12px 0;font-size:9px;color:var(--text-dim);" id="logsDirPath"></div>
+    <div style="padding:6px 12px 8px;">
+      <span onclick="toggleAiCapSummary()" style="font-size:10px;color:var(--accent-cyan);cursor:pointer;">🤖 查看AI当前能力说明</span>
+      <div id="logsAiCapBox" style="display:none;margin-top:6px;background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:8px;font-size:10px;color:var(--text-sub);line-height:1.6;white-space:pre-wrap;word-break:break-all;"></div>
+    </div>
+
+    <!-- 股票列表视图：这一天监控/决策过哪些股票 -->
+    <div id="logsStockListView">
+      <div id="logsStockList" style="padding:0 12px 12px;"></div>
+    </div>
+
+    <!-- 单支股票完整日志时间线（默认隐藏，点某支股票后展示） -->
+    <div id="logsStockContentView" style="display:none;">
+      <div style="padding:8px 12px;display:flex;align-items:center;gap:8px;">
+        <span onclick="backToLogStockList()" style="font-size:12px;color:var(--accent-cyan);cursor:pointer;white-space:nowrap;">‹ 返回列表</span>
+        <span id="logsStockTitle" style="font-size:12px;color:var(--text-prime);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+      </div>
+      <pre id="logsStockContent" style="margin:0 12px 12px;background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:10px;color:var(--text-sub);line-height:1.7;white-space:pre-wrap;word-break:break-all;font-family:var(--font-mono);"></pre>
     </div>
   </div>
 
@@ -1425,72 +1446,93 @@ window.onAiReviewError = function(msg) {
 };
 
 // ══ AI分析审核/决策日志/参数配置 —— tab切换（同时只显示其中一个，不用再向下滑找面板） ══
-let _activeReviewTab = null; // null | 'aiReview' | 'log' | 'config'
+let _activeReviewTab = null; // null | 'aiReview' | 'config'（决策日志已改为独立页面，不在这套tab里了）
 
 function showReviewTab(tab, forceOpen) {
   _activeReviewTab = (!forceOpen && _activeReviewTab === tab) ? null : tab; // 再点一次当前tab收起面板
-  const panelIdOf = { aiReview: 'aiReviewPanel', log: 'decisionLogPanel', config: 'configPanel' };
-  ['aiReview', 'log', 'config'].forEach(t => {
+  const panelIdOf = { aiReview: 'aiReviewPanel', config: 'configPanel' };
+  ['aiReview', 'config'].forEach(t => {
     document.getElementById('tabBtn_' + t).classList.toggle('active', t === _activeReviewTab);
     document.getElementById(panelIdOf[t]).style.display = (t === _activeReviewTab) ? 'block' : 'none';
   });
-  if (_activeReviewTab === 'log') initDecisionLogTab();
   if (_activeReviewTab === 'config') loadTradingConfig();
 }
 
-// ══ 分类日志：监控/决策/AI分析/操作/其他 ══
-let _activeLogCategory = 'decision';
-
-function initDecisionLogTab() {
-  if (!IS_ANDROID) return;
+// ══ 决策日志——独立全屏页面：日期 → 这天有日志的股票列表 → 点开某支股票看完整时间线 ══
+// 【2026-09-03重构】后端已经从"5个类别文件"改成"按日期文件夹+每股票一个文件"，
+// 前端配合改成三级浏览：选日期 → 这天监控过哪些股票 → 点进某一支看它当天完整的
+// 监控/决策/AI分析/操作时间线（已经在同一个文件里按时间顺序混排好了）。
+function openLogsPage() {
+  if (!IS_ANDROID) { showToast('决策日志需要在App中运行'); return; }
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-logs').classList.add('active');
+  document.getElementById('logsStockContentView').style.display = 'none';
+  document.getElementById('logsStockListView').style.display = 'block';
   try {
-    const cats = JSON.parse(Android.getLogCategories() || '[]');
-    const tabsBox = document.getElementById('logCategoryTabs');
-    if (tabsBox && cats.length) {
-      tabsBox.innerHTML = cats.map(c => `<span onclick="switchLogCategory('${c.key}')" id="logCatTab_${c.key}"
-          style="padding:4px 10px;border-radius:14px;font-size:10px;cursor:pointer;
-                 border:1px solid ${c.key === _activeLogCategory ? 'var(--accent-cyan)' : 'var(--border)'};
-                 color:${c.key === _activeLogCategory ? 'var(--accent-cyan)' : 'var(--text-sub)'};">${c.label}</span>`).join('');
-    }
-  } catch (e) { console.error('[DecisionLog] 分类加载失败', e); }
-  loadLogDatesForCategory();
-}
-
-function switchLogCategory(cat) {
-  _activeLogCategory = cat;
-  document.querySelectorAll('[id^="logCatTab_"]').forEach(el => {
-    const active = el.id === 'logCatTab_' + cat;
-    el.style.borderColor = active ? 'var(--accent-cyan)' : 'var(--border)';
-    el.style.color = active ? 'var(--accent-cyan)' : 'var(--text-sub)';
-  });
-  loadLogDatesForCategory();
-}
-
-function loadLogDatesForCategory() {
-  if (!IS_ANDROID) return;
-  try {
-    const dates = JSON.parse(Android.getDecisionLogDates(_activeLogCategory) || '[]');
-    const sel = document.getElementById('decisionLogDateSelect');
+    document.getElementById('logsDirPath').textContent = Android.getDecisionLogDirPath();
+    const dates = JSON.parse(Android.getDecisionLogDates() || '[]');
     const today = new Date().toISOString().slice(0, 10);
     const allDates = dates.includes(today) ? dates : [today, ...dates];
+    const sel = document.getElementById('logsDateSelect');
     sel.innerHTML = allDates.map(d => `<option value="${d}">${d}${d === today ? '（今天）' : ''}</option>`).join('');
-    document.getElementById('decisionLogPath').textContent = Android.getDecisionLogDirPath();
-    loadDecisionLog(today);
-  } catch (e) { console.error('[DecisionLog] 初始化失败', e); }
+    loadStocksForLogDate(today);
+  } catch (e) { console.error('[Logs] 打开失败', e); }
 }
 
-function loadDecisionLog(dayStr) {
+function closeLogsPage() {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-screen').classList.add('active');
+  document.getElementById('nav-screen').classList.add('active');
+}
+
+function loadStocksForLogDate(dayStr) {
   if (!IS_ANDROID) return;
-  let content = Android.getDecisionLog(dayStr, _activeLogCategory) || '';
-  // AI分析日志顶部额外展示一份实时生成的"AI当前能力说明"（不写进日志文件本身，
-  // 避免几十天后文件里存的是当时早已过时的一份"能力快照"）
-  if (_activeLogCategory === 'ai_analysis') {
-    try {
-      const summary = Android.getAiCapabilitiesSummary() || '';
-      content = summary + content;
-    } catch (e) { console.error('[DecisionLog] AI能力说明获取失败', e); }
+  document.getElementById('logsStockContentView').style.display = 'none';
+  document.getElementById('logsStockListView').style.display = 'block';
+  try {
+    const stocks = JSON.parse(Android.getDecisionLogStocksForDate(dayStr) || '[]');
+    const box = document.getElementById('logsStockList');
+    if (!stocks.length) {
+      box.innerHTML = '<div style="padding:24px 0;text-align:center;color:var(--text-dim);font-size:11px;">这一天还没有任何股票的监控/决策记录</div>';
+      return;
+    }
+    box.innerHTML = stocks.map(s => `
+      <div onclick="showStockLog('${dayStr}','${s.code}','${(s.name||s.code).replace(/'/g,"\\'")}')"
+        style="padding:10px 12px;margin-top:8px;background:var(--bg-card2);border:1px solid var(--border);border-radius:8px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;">
+        <div>
+          <span style="font-size:13px;font-weight:600;color:var(--text-prime);">${s.name}</span>
+          <span style="font-size:10px;color:var(--text-dim);margin-left:6px;font-family:var(--font-mono);">${s.code}</span>
+        </div>
+        <span style="color:var(--accent-gold);font-size:12px;">›</span>
+      </div>`).join('');
+  } catch (e) { console.error('[Logs] 加载股票列表失败', e); }
+}
+
+function showStockLog(dayStr, code, name) {
+  if (!IS_ANDROID) return;
+  try {
+    const content = Android.getStockDecisionLog(dayStr, code) || '';
+    document.getElementById('logsStockTitle').textContent = `${name}(${code}) · ${dayStr}`;
+    document.getElementById('logsStockContent').textContent = content || '这支股票这一天还没有日志内容';
+    document.getElementById('logsStockListView').style.display = 'none';
+    document.getElementById('logsStockContentView').style.display = 'block';
+  } catch (e) { console.error('[Logs] 加载股票日志失败', e); showToast('加载失败'); }
+}
+
+function backToLogStockList() {
+  document.getElementById('logsStockContentView').style.display = 'none';
+  document.getElementById('logsStockListView').style.display = 'block';
+}
+
+function toggleAiCapSummary() {
+  const box = document.getElementById('logsAiCapBox');
+  if (!box) return;
+  if (box.style.display === 'none') {
+    try { box.textContent = Android.getAiCapabilitiesSummary() || '暂无'; } catch (e) { box.textContent = '获取失败'; }
+    box.style.display = 'block';
+  } else {
+    box.style.display = 'none';
   }
-  document.getElementById('decisionLogContent').textContent = content || '这一天这个分类还没有记录';
 }
 
 /** 交易规则参数配置字段清单，和TradingRuleConfig.java字段一一对应。
@@ -1718,6 +1760,13 @@ function renderWatchlist(items) {
         </div>`
       : '';
 
+    const stopLossRow = it.prevLow
+      ? `<div style="margin-top:4px;padding:3px 7px;background:rgba(0,180,120,0.14);border-radius:5px;display:inline-block;">
+          <span style="color:var(--down-green);font-size:10px;font-weight:700;">🛑 止损价 ¥${it.prevLow.toFixed(2)}</span>
+          <span style="color:var(--text-dim);font-size:9px;">（前一交易日最低价）</span>
+        </div>`
+      : '';
+
     const observeDays = computeTradeDaysSince(it.addedDate);
     const observeTag = it.status === 'WATCHING' && observeDays > 0
       ? `<span style="font-size:9px;color:var(--text-dim);margin-left:6px;">观察${observeDays}天</span>` : '';
@@ -1733,6 +1782,7 @@ function renderWatchlist(items) {
       </div>
       <div style="font-size:10px;color:var(--text-sub);margin-top:4px;line-height:1.5;">${it.lastNote || ('day1入池 · 评分' + it.score + ' · ' + (it.signal||''))}</div>
       ${metricsRow}
+      ${stopLossRow}
     </div>`;
   }).join('');
 }
@@ -2914,6 +2964,124 @@ function drawVolumeFromData(norm, W) {
 }
 
 // 兼容旧调用
+// ── 分时图（D新增）──
+// 白线=逐分钟成交价，黄线=分时均价（成交额累计/成交量累计算出的真实VWAP，不是简单算术平均，
+// 大单成交对它的影响远大于小单），中间粗横线=昨收，与通达信等专业软件的分时图约定一致。
+function minutesSinceOpen(timeStr) {
+  const parts = (timeStr||'09:30').split(':').map(Number);
+  const mins = parts[0]*60 + (parts[1]||0);
+  if (mins <= 11*60+30) return Math.max(0, mins - (9*60+30));
+  return (11*60+30-(9*60+30)) + Math.max(0, mins - 13*60);
+}
+
+function loadFenshiChart(code) {
+  try {
+    const json = Android.getMinuteChartData(code);
+    const data = JSON.parse(json || '{}');
+    if (!data.code || data.code !== STATE.currentKlineCode) return;
+    STATE.currentFenshiData = data;
+    drawFenshiChart(data);
+  } catch (e) { console.error('loadFenshiChart', e); }
+}
+
+function drawFenshiChart(data) {
+  const canvas = document.getElementById('fenshiCanvas');
+  if (!canvas || !data.points || !data.points.length) return;
+  const prevClose = data.prevClose || data.points[0].price;
+  if (!prevClose) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.parentElement.offsetWidth;
+  const H = 200;
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  canvas.width = W*dpr; canvas.height = H*dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const pad = { t:14, b:8, l:6, r:58 };
+  const cw = W - pad.l - pad.r;
+  const ch = H - pad.t - pad.b;
+  const totalMinutes = 240;
+  const toX = t => pad.l + (minutesSinceOpen(t)/totalMinutes) * cw;
+
+  const prices = data.points.map(p=>p.price).filter(v=>v>0).concat([prevClose]);
+  const maxDev = Math.max(...prices.map(p=>Math.abs(p-prevClose)), prevClose*0.01);
+  const minP = prevClose - maxDev*1.08, maxP = prevClose + maxDev*1.08;
+  const priceRange = maxP - minP || 1;
+  const toY = v => pad.t + (1-(v-minP)/priceRange)*ch;
+
+  ctx.clearRect(0,0,W,H);
+
+  for (let i=0;i<=4;i++) {
+    const val = maxP - priceRange*(i/4);
+    const y = pad.t + (ch/4)*i;
+    ctx.setLineDash(i===2?[]:[2,4]);
+    ctx.lineWidth = i===2?1:0.5;
+    ctx.strokeStyle = 'rgba(26,45,74,0.6)';
+    ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(W-pad.r,y); ctx.stroke();
+    const pct = (val-prevClose)/prevClose*100;
+    ctx.font='9px monospace'; ctx.textAlign='right';
+    ctx.fillStyle = i===2 ? 'rgba(122,148,184,0.9)' : (pct>=0?'rgba(255,61,87,0.75)':'rgba(0,200,83,0.75)');
+    ctx.fillText(val.toFixed(2), W-26, y+3);
+    ctx.textAlign='left';
+    ctx.fillText((pct>=0?'+':'')+pct.toFixed(1)+'%', W-24, y+3);
+  }
+  ctx.setLineDash([]);
+
+  [['price','#e8ecf5'],['avgPrice','#f0b429']].forEach(([key,color])=>{
+    ctx.strokeStyle = color; ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    let started=false;
+    data.points.forEach(p=>{
+      if (!p[key] || p[key]<=0) return;
+      const x=toX(p.time), y=toY(p[key]);
+      if(!started){ctx.moveTo(x,y);started=true;} else ctx.lineTo(x,y);
+    });
+    ctx.stroke();
+  });
+
+  [['现价','#e8ecf5'],['均价','#f0b429']].forEach(([l,c],i)=>{
+    ctx.fillStyle=c; ctx.fillRect(pad.l+i*44,H-5,10,2);
+    ctx.fillStyle='rgba(122,148,184,0.7)'; ctx.font='9px monospace'; ctx.textAlign='left';
+    ctx.fillText(l,pad.l+i*44+12,H-1);
+  });
+
+  drawFenshiVolume(data, prevClose, W, toX);
+
+  const upd = document.getElementById('fenshiUpdatedAt');
+  if (upd) {
+    if (data.updatedAt) {
+      const d = new Date(data.updatedAt);
+      upd.textContent = '更新于 ' + String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+    } else {
+      upd.textContent = '';
+    }
+  }
+}
+
+function drawFenshiVolume(data, prevClose, W, toX) {
+  const canvas = document.getElementById('fenshiVolCanvas');
+  if (!canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const H = 50;
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  canvas.width = W*dpr; canvas.height = H*dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const pad = { t:4, b:2, l:6, r:58 };
+  const ch = H - pad.t - pad.b;
+  const maxV = Math.max(...data.points.map(p=>p.volume||0), 1);
+  const barW = Math.max(1, (W-pad.l-pad.r)/240);
+  data.points.forEach((p,i)=>{
+    const prevP = i>0 ? data.points[i-1].price : prevClose;
+    const isUp = p.price >= prevP;
+    const x = toX(p.time);
+    const barH = ((p.volume||0)/maxV)*ch;
+    ctx.fillStyle = isUp ? 'rgba(255,61,87,0.55)' : 'rgba(0,200,83,0.55)';
+    ctx.fillRect(x, pad.t+ch-barH, barW, barH);
+  });
+}
+
 function drawKline() {
   const data = getCurrentKlineData();
   klineViewStart = Math.max(0, data.length - klineViewCount);
@@ -3181,6 +3349,10 @@ function renderPositions() {
           <div class="pos-item"><div class="pos-item-label">现价</div><div class="pos-item-val ${isUp?'c-up':'c-down'}">¥${curP.toFixed(2)}</div></div>
         </div>
         ${pos.lockedQty > 0 ? `<div style="font-size:9px;color:var(--accent-gold);margin-top:3px;">🔒 其中${pos.lockedQty}股为今日买入，T+1前不可卖（可卖${pos.sellableQty}股）</div>` : ''}
+        ${wl && wl.prevLow ? `<div style="margin-top:4px;padding:4px 7px;background:rgba(0,180,120,0.14);border-radius:5px;">
+            <span style="color:var(--down-green);font-size:11px;font-weight:700;">🛑 止损价 ¥${wl.prevLow.toFixed(2)}</span>
+            <span style="color:var(--text-dim);font-size:9px;">（前一交易日最低价，跌破触发止损）</span>
+          </div>` : ''}
         ${monitorRow}
         <div class="pos-progress"><div class="pos-progress-fill" style="width:${progressPct}%;background:${isUp?'var(--up-red)':'var(--down-green)'}"></div></div>
         <div style="text-align:right;font-size:9px;color:var(--text-dim);margin-top:3px;">点击卖出</div>
@@ -3434,6 +3606,14 @@ function getSearchPool() {
   STATE.screenResults.forEach(r => {
     if (!pool.find(s => s.code === r.code)) pool.push(r);
   });
+  // 【D新增】候选池和持仓也要能搜到——之前只能搜到内置模拟股和上次选股结果，
+  // 分时图要求候选池/持仓都能搜到并切换过去看，不能只限于选股结果。
+  (STATE.watchlistItems || []).forEach(w => {
+    if (!pool.find(s => s.code === w.code)) pool.push(w);
+  });
+  Object.entries(STATE.positions || {}).forEach(([code, p]) => {
+    if (!pool.find(s => s.code === code)) pool.push({ code, name: p.name || code });
+  });
   return pool;
 }
 
@@ -3501,6 +3681,7 @@ function loadStockDetail(code, name) {
   if(IS_ANDROID) {
     Android.fetchQuote(code);
     Android.fetchKline(code, currentPeriod, 120);
+    loadFenshiChart(code); // 【D新增】分时图数据是同步桥接方法，直接取结果渲染，不用等回调
   } else {
     const mp=(Math.random()*30+5);
     const mpc=mp*(1+(Math.random()-0.5)*0.03);
@@ -3512,8 +3693,6 @@ function loadStockDetail(code, name) {
     drawKline();
   }
 
-  // 触发AI筛选该股核心新闻
-  refreshStockNews(code, name);
   document.getElementById('page-home').scrollTop=0;
 }
 
@@ -3635,9 +3814,19 @@ function openTradeModal(code, stockObj) {
     STATE.screenResults.find(s=>s.code===code)||
     STOCK_POOL.find(s=>s.code===code);
   if(!stock){
-    const d=STATE.currentDetail;
-    stock={code,name:STATE.currentKlineName||code,
-      price:d?d.price:0,latestClose:d?d.price:0,
+    // 【修复】之前这里最后退到STATE.currentKlineName——但那是"首页详情面板当前正在看哪支股票"
+    // 的全局变量，跟这里要买的code完全无关（比如选股结果被新一轮筛选替换掉之后，点一张旧结果
+    // 卡片就会落到这里）。之前出现过待复盘列表里同一个名字挂在两个完全不同代码上的问题，
+    // 根源就在这——把毫不相关股票的名字安到了这支代码上。现在改成：先看这个code是不是已经有
+    // 持仓/候选池记录（这些都是跟code强绑定的可靠来源），都没有就老实显示代码本身，不再用任何
+    // 跟code无关的名字兜底；价格同理，只有currentDetail确实是同一支股票时才采用，避免价格也串了。
+    const posMatch = STATE.positions[code];
+    const wlMatch = (STATE.watchlistItems || []).find(w => w.code === code);
+    const d = STATE.currentDetail;
+    const dMatches = d && d.code === code;
+    const fallbackName = posMatch ? posMatch.name : (wlMatch ? wlMatch.name : code);
+    stock={code,name:fallbackName,
+      price:dMatches?d.price:0,latestClose:dMatches?d.price:0,
       score:0,signal:'MANUAL',board:code.startsWith('6')?'sh':'sz'};
   }
   STATE.tradeTarget=stock;

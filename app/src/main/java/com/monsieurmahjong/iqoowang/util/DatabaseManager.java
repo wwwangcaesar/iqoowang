@@ -52,6 +52,7 @@ public class DatabaseManager {
     private static DatabaseManager sInstance;
 
     private DaoSession mDaoSession;
+    private final Context mContext; // 【R10新增】之前这里没存context，只在构造函数里用一下就丢了，现在需要用它来开SharedPreferences
     private final SimpleDateFormat mDateFmt = new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault());
 
     // ──────────────────────────────────────────
@@ -74,6 +75,7 @@ public class DatabaseManager {
     }
 
     private DatabaseManager(Context context) {
+        mContext = context;
         DaoMaster.DevOpenHelper helper = new DaoMaster.DevOpenHelper(context, DB_NAME) {
             @Override
             public void onUpgrade(Database db, int oldVersion, int newVersion) {
@@ -607,6 +609,30 @@ public class DatabaseManager {
     }
 
     public DaoSession getSession() { return mDaoSession; }
+
+    // ────────────────────────────────
+    // 【R10】收盘前候选池排行榜持久化
+    // ────────────────────────────────
+
+    private static final String RANKING_PREFS = "candidate_ranking_prefs";
+
+    /** 收盘前候选池排行榜——故意不走GreenDAO实体体系，而是用独立的SharedPreferences：
+     *  新增一个GreenDAO实体需要跡annotation processor重新生成对应的XxxDao代码，这一步只有
+     *  实际跑一次Gradle编译才会发生，而目前协作环境里没人能实际编译验证——如果直接加
+     *  @Entity类却没跟着跑一次生成，会直接编译不过。需求本身又很简单（一天最多一条、
+     *  按日期查），用SharedPreferences完全够用，不需要为了这个引入新表的编译风险。
+     *  key=日期字符串，value=AI生成的排行榜结构化文本。 */
+    public void saveCandidateRanking(String date, String rankingText) {
+        if (mContext == null || date == null) return;
+        mContext.getSharedPreferences(RANKING_PREFS, Context.MODE_PRIVATE)
+                .edit().putString(date, rankingText).apply();
+    }
+
+    /** 取指定日期的排行榜文本，没有就返回null。供StockBridge展示用。 */
+    public String getCandidateRanking(String date) {
+        if (mContext == null || date == null) return null;
+        return mContext.getSharedPreferences(RANKING_PREFS, Context.MODE_PRIVATE).getString(date, null);
+    }
 
     /**
      * 【危险操作】清空全部交易/持仓/每日资产历史，恢复到"从未交易过"的初始状态

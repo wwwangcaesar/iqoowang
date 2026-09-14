@@ -2,6 +2,7 @@ package com.monsieurmahjong.iqoowang;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
@@ -25,6 +26,7 @@ import androidx.core.content.ContextCompat;
 
 import com.monsieurmahjong.iqoowang.util.DatabaseManager;
 import com.monsieurmahjong.iqoowang.util.StockBridge;
+import com.monsieurmahjong.iqoowang.util.TradingCalendar;
 
 import java.io.File;
 
@@ -71,6 +73,30 @@ public class MainActivity extends Activity {
 
         // 加载前端
         mWebView.loadUrl("file:///android_asset/index.html");
+
+        // 【R1】年底提醒：更新明年的交易日历
+        checkTradingCalendarYearEnd();
+    }
+
+    /**
+     * 【R1】年底提醒——每年12月，如果 assets/trading_calendar.json 还没有覆盖到明年的
+     * 节假日安排，每次冷启动App都弹一次提醒，直到手动更新为止。交易所一般当月中下旬
+     * 就会发布次年安排（比如2026年安排是2025-12-22发布的），到时把新一年的假期区间
+     * 加进 trading_calendar.json 即可。
+     */
+    private void checkTradingCalendarYearEnd() {
+        try {
+            if (!TradingCalendar.get().needsYearEndReminder()) return;
+            int nextYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR) + 1;
+            new AlertDialog.Builder(this)
+                    .setTitle("提醒：更新交易日历")
+                    .setMessage("当前节假日日历只覆盖到" + TradingCalendar.get().getMaxCoveredYear()
+                            + "年，交易所一般本月会公布" + nextYear
+                            + "年休市安排。请查证后更新 assets/trading_calendar.json，"
+                            + "避免明年年初的交易日判断出错。")
+                    .setPositiveButton("知道了", null)
+                    .show();
+        } catch (Exception ignored) {}
     }
 
     @Override
