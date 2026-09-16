@@ -256,6 +256,7 @@ D读完`LocalAIAgent.java`/`WisdomManager.java`全文，确认现有"话术学�
 ## 变更记录（D）
 
 - **2026-09-14　D**：【认领范围修正】按用户要求重新按协作规矩划分分工。核实B进度（B文档状态仍为"未写任何代码"，代码侧`TradingRuleConfig`无分时配置项、`AIContextBuilder`无`buildIntradayPatternContext`，确认B尚未开始任何一步）后，把D的认领从"全部4步"收缩为**只认领步骤3（止损真假破位精细化）**，步骤4/5/6明确让出给B，并在文档开头给出了认领表和交接提示（含换手率数据拿不到这个已知结论，避免B重复踩坑）。选步骤3的理由：它需要跨tick维护"待确认破位"状态，与D在R3做过的`focus_watch_start_time`是同一种模式（DB加列+状态字段+跨日安全重置），D熟悉这套写法的边界；且它直接消费D刚写的`checkBreakoutVolume`，语义最清楚。本条写入时方案（第2.1-详节）已完成，代码尚未开始。
+- **2026-09-16　D**：步骤4（水下买入通知路径）完成，用户直接指定由D接手。新增/改动：`IntradayPatternAnalyzer.VReversal`新增`midConfirm`字段（反转后是否已站稳分时均价线）；`WatchlistManager` `DB_VERSION`8→9，新增`underwater_reversal_notified_key`去重列；`TradingRuleEngine`新增`checkUnderwaterReversal()`独立检测分支（不碰`evaluateStarter*`）；`LocalAIAgent`新增`analyzeIntradayReversal()`——只解读不给结论，跟`verifySignal`的二元确认性质不同；`RealtimeMonitorService`新增`handleUnderwaterReversal()`实现"先推客观数字，AI分析异步追加"的时序，复用`CHANNEL_ID_FOCUS_WATCH`但用独立的`uw_`+code通知ID避免跟重点监听通知互相覆盖。写代码过程中自己先写错了`DecisionLogger.logNote()`的参数个数（误传两参，实际只有三参/单参两个重载），重新读文件时发现已被并行工作的另一个AI会话同步改正为正确的三参调用（同一文件里还看到了对方新加的待确认状态止损价/分时图缓存刷新修复，日期2026-09-16，非D所作），未再重复改动。至此R2+R3之外、D自己认领的分时经验规则部分（步骤1/2/3/4）全部完成。
 - **2026-09-14　D（较早）**：创建本文档。通读`LocalAIAgent.java`/`WisdomManager.java`全文确认"话术学习"机制规则；明确用户批注比B的倾向性建议更具体，按用户批注执行。随后完成步骤1（`IntradayPatternAnalyzer`）和步骤2（`WisdomManager.ensureIntradayPatternWisdomSeeded()`，注意不能用`hasAny()`判断否则老安装拿不到新知识，改用summary前缀查重）。通读`LocalAIAgent.java`/`WisdomManager.java`全文确认"话术学习"机制具体规则；明确用户第5节3处批注（问题1/4/5）比B自己的倾向性建议更具体，本方案按用户批注而非B的倾向执行。尚未开始写代码，下一步先去确认第5节的数据源问题，再开始Layer1。
 
 ## 变更记录（B）
