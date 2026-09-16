@@ -30,6 +30,8 @@
     <!-- 摇一摇/NFC 记账时自动定位用：按高德官方文档要求，Android 12+ 上不能单独只请求 FINE，
          要和 COARSE 一起请求，否则部分系统版本会忽略请求 -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- 摇一摇记账默认开启后，用来在设备重启时重新拉起前台监听服务（配合 BootCompletedReceiver） -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <!-- 摇一摇记账用：前台Service必需的基础权限 + Android 14 specialUse 类型专属权限 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -155,7 +157,15 @@
             </intent-filter>
 
         </activity>
-
+        <!-- 开机自启摇一摇监听：只监听系统受保护广播，exported=true 不会被第三方App伪造触发 -->
+        <receiver
+            android:name=".service.BootCompletedReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
         <service
             android:name=".service.ShakeDetectService"
             android:enabled="true"

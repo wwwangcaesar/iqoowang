@@ -5,7 +5,9 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -17,6 +19,7 @@ import android.util.Log;
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
+import androidx.core.content.ContextCompat;
 
 import com.monsieurmahjong.iqoowang.QuickLogActivity;
 import com.monsieurmahjong.iqoowang.R;
@@ -243,5 +246,19 @@ public class ShakeDetectService extends Service implements SensorEventListener {
     /** 供 SettingsFragment 判断当前是否具备开启条件（无障碍服务是否已启用） */
     public static boolean canEnable(android.content.Context context) {
         return AccessibilityStatusUtils.isScreenshotServiceEnabled(context);
+    }
+    /**
+     * 供 MyApplication 冷启动 / 开机自启广播复用：只要开关没被用户手动关掉（未写过 KEY_ENABLED 时
+     * 默认视为开启）且无障碍服务已经授权，就拉起前台监听，不需要用户每次都手动进设置页点一下。
+     * 两个条件任一不满足都直接跳过，不会产生一个「开着但没用」的前台Service。
+     */
+    public static void startIfEnabled(Context context) {
+        Context appContext = context.getApplicationContext();
+        SharedPreferences prefs = appContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        boolean enabled = prefs.getBoolean(KEY_ENABLED, true);
+        boolean accessibilityOn = AccessibilityStatusUtils.isScreenshotServiceEnabled(appContext);
+        if (enabled && accessibilityOn) {
+            ContextCompat.startForegroundService(appContext, new Intent(appContext, ShakeDetectService.class));
+        }
     }
 }
