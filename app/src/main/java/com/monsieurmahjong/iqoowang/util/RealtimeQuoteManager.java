@@ -461,74 +461,89 @@ public class RealtimeQuoteManager {
      * 精确值用的是腾讯"5日线"接口，取最后一条分时记录的累计成交额÷(累计成交量×100)；
      * 已用真实股票数据(sz000001, 2026-08-19)人工验证过换算结果落在当天实际价格区间内。
      */
-    public void fetchPrevDayVwap(String code, PrevDayVwapCallback cb) {
-        fetchPrevDayVwapAttempt(code, cb, 0);
+    public void fetchPrevDayVwap(String code, String expectedDate, PrevDayVwapCallback cb) {
+        fetchPrevDayVwapAttempt(code, expectedDate, cb, 0);
     }
 
     private static final int PREV_VWAP_MAX_RETRY = 2; // 首次+最多2次重试，共最多3次尝试
 
-    private void fetchPrevDayVwapAttempt(String code, PrevDayVwapCallback cb, int attempt) {
+    private void fetchPrevDayVwapAttempt(String code, String expectedDate, PrevDayVwapCallback cb, int attempt) {
         String url = String.format(Locale.US, URL_TENCENT_DAY_QUERY, market(code), code);
         Request req = new Request.Builder().url(url).build();
         HTTP.newCall(req).enqueue(new Callback() {
             @Override public void onFailure(Call call, IOException e) {
-                retryOrFallbackVwap(code, cb, attempt, "请求失败: " + e.getMessage());
+                retryOrFallbackVwap(code, expectedDate, cb, attempt, "请求失败: " + e.getMessage());
             }
             @Override public void onResponse(Call call, Response resp) {
                 try (Response r = resp) {
                     if (!r.isSuccessful()) {
-                        retryOrFallbackVwap(code, cb, attempt, "HTTP " + r.code());
+                        retryOrFallbackVwap(code, expectedDate, cb, attempt, "HTTP " + r.code());
                         return;
                     }
                     byte[] bytes = r.body().bytes();
                     String body = new String(bytes, Charset.forName("UTF-8"));
-                    Object[] parsed = parsePrevDayVwap(body, code);
+                    Object[] parsed = parsePrevDayVwap(body, code, expectedDate);
                     double vwap = (Double) parsed[0];
                     String date = (String) parsed[1];
                     if (vwap > 0 && date != null) {
                         MAIN.post(() -> cb.onResult(code, vwap, date));
                     } else {
-                        retryOrFallbackVwap(code, cb, attempt, "响应中未找到有效的已收盘交易日分时数据");
+                        retryOrFallbackVwap(code, expectedDate, cb, attempt, "响应中未找到日期匹配" + expectedDate + "的已收盘交易日分时数据");
                     }
                 } catch (Exception e) {
-                    retryOrFallbackVwap(code, cb, attempt, "解析异常: " + e.getMessage());
+                    retryOrFallbackVwap(code, expectedDate, cb, attempt, "解析异常: " + e.getMessage());
                 }
             }
         });
     }
 
     /** 精确获取失败时先重试，重试用尽后改用日K缓存估算，不再无限期卡在原地重试。 */
-    private void retryOrFallbackVwap(String code, PrevDayVwapCallback cb, int attempt, String reason) {
+    private void retryOrFallbackVwap(String code, String expectedDate, PrevDayVwapCallback cb, int attempt, String reason) {
         if (attempt < PREV_VWAP_MAX_RETRY) {
             Log.w(TAG, "昨日真实VWAP获取失败(" + code + " 第" + (attempt + 1) + "次): " + reason + "，800ms后重试");
-            MAIN.postDelayed(() -> fetchPrevDayVwapAttempt(code, cb, attempt + 1), 800L * (attempt + 1));
+            MAIN.postDelayed(() -> fetchPrevDayVwapAttempt(code, expectedDate, cb, attempt + 1), 800L * (attempt + 1));
             return;
         }
         Log.w(TAG, "昨日真实VWAP重试" + PREV_VWAP_MAX_RETRY + "次后仍失败(" + code + "): " + reason + "，改用日K缓存估算兜底");
-        fallbackVwapFromDailyKline(code, cb, reason);
+        fallbackVwapFromDailyKline(code, expectedDate, cb, reason);
     }
 
     /** 精确的分钟级VWAP多次重试仍失败时的兜底：用已有日K缓存算一个近似值——
      *  (开+收*2+高+低)/5，比单纯用收盘价更贴近全天成交重心。虽不如真实成交量加权精确，
      *  但能保证低开路径不会因为这一个接口的问题被无限期卡住，日K缓存现在也已经是腾讯+新浪
      *  双源，比这个单一无重试的分时接口本身更可靠。 */
-    private void fallbackVwapFromDailyKline(String code, PrevDayVwapCallback cb, String preciseFailReason) {
+    private void fallbackVwapFromDailyKline(String code, String expectedDate, PrevDayVwapCallback cb, String preciseFailReason) {
         try {
-            List<MarketDataManager.KlineBar> bars = MarketDataManager.get().getCachedKline(code, 3);
-            if (bars.isEmpty()) {
-                Log.w(TAG, "日K缓存也没有" + code + "的数据，本轮彻底放弃昨日VWAP");
+            List<MarketDataManager.KlineBar> bars = MarketDataManager.get().getCachedKline(code, 5);
+            // 【2026-09-16修复】原先直接取“缓存最后一条”当兜底数据来源，但这条兜底本来就是在精确
+            // 接口失败后走的，缓存这时完全可能也混进了“今天”这条不完整的记录（比如交易时段内又
+            // 重新点过“更新数据”）——如果不做校验，兜底出来的近似值可能对应的也是今天自己而不是
+            // 真正的前一交易日。改成优先按expectedDate（调用方已经校验过陈旧性的“昨日”）去缓存里
+            // 精确匹配；找不到就退而求其次取最近一条日期不等于今天的记录，但绝不会用“今天”这条。
+            String todayDateStr = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(new java.util.Date());
+            MarketDataManager.KlineBar match = null;
+            for (MarketDataManager.KlineBar b : bars) {
+                if (expectedDate != null && expectedDate.equals(b.date)) { match = b; break; }
+            }
+            if (match == null) {
+                for (int i = bars.size() - 1; i >= 0; i--) {
+                    if (!todayDateStr.equals(bars.get(i).date)) { match = bars.get(i); break; }
+                }
+            }
+            if (match == null) {
+                Log.w(TAG, "日K缓存也没有" + code + "可用的前一交易日数据，本轮彻底放弃昨日VWAP");
                 MAIN.post(() -> cb.onResult(code, 0, null));
                 return;
             }
-            MarketDataManager.KlineBar last = bars.get(bars.size() - 1);
-            double approx = (last.open + last.close * 2 + last.high + last.low) / 5.0;
+            double approx = (match.open + match.close * 2 + match.high + match.low) / 5.0;
             if (approx <= 0) {
                 MAIN.post(() -> cb.onResult(code, 0, null));
                 return;
             }
-            Log.i(TAG, "已用日K估算" + code + "昨日VWAP≈" + String.format(Locale.CHINA, "%.4f", approx)
+            String useDate = match.date;
+            Log.i(TAG, "已用日K估算" + code + "昨日(" + useDate + ")VWAP≈" + String.format(Locale.CHINA, "%.4f", approx)
                     + "（精确值失败原因：" + preciseFailReason + "）");
-            MAIN.post(() -> cb.onResult(code, approx, last.date));
+            MAIN.post(() -> cb.onResult(code, approx, useDate));
         } catch (Exception e) {
             Log.w(TAG, "日K估算兜底也失败(" + code + ")", e);
             MAIN.post(() -> cb.onResult(code, 0, null));
@@ -542,7 +557,7 @@ public class RealtimeQuoteManager {
      * 返回 Object[]{Double vwap, String date}；vwap<=0或异常时 {0.0, null}。
      * date格式统一成"yyyy-MM-dd"，跟MarketDataManager.KlineBar.date同一口径，方便比对。
      */
-    private Object[] parsePrevDayVwap(String body, String code) {
+    private Object[] parsePrevDayVwap(String body, String code, String expectedDate) {
         try {
             JSONObject root = new JSONObject(body);
             JSONObject data = root.optJSONObject("data");
@@ -563,6 +578,15 @@ public class RealtimeQuoteManager {
                 if (dayObj == null) continue;
                 String rawDate = dayObj.optString("date", "");
                 if (rawDate.length() != 8 || rawDate.equals(today)) continue;
+                String formattedDate = rawDate.substring(0, 4) + "-" + rawDate.substring(4, 6) + "-" + rawDate.substring(6, 8);
+                // 【修复：昨日VWAP用了过期日期】这个接口自己认定的“最近一个非今天交易日”
+                // 不一定可靠——它有自己独立的数据返回窗口，实测出现过它仍停留在好几个交易日
+                // 之前、迟迟不往前推进的情况，而这里之前逢到第一个“非今天”且有数据的日子就直接
+                // 当“昨日”用了，没有跟调用方已经用K线缓存校验过陈旧性的真实“昨日”核对过。
+                // 现在必须严格等于调用方传入的expectedDate才能用，对不上就继续往前找（理论上
+                // 不会再找到，因为更早的只会更旧），找不到就整体判失败，交给上层重试/日K兜底，
+                // 绝不能把错误日期的VWAP偷偷当成“昨日”塞回去。
+                if (expectedDate != null && !expectedDate.equals(formattedDate)) continue;
                 JSONArray minuteArr = dayObj.optJSONArray("data");
                 if (minuteArr == null || minuteArr.length() == 0) continue;
                 String lastLine = minuteArr.optString(minuteArr.length() - 1, "");
@@ -573,10 +597,9 @@ public class RealtimeQuoteManager {
                 if (cumVolLots <= 0) continue;
                 double vwap = cumAmount / (cumVolLots * 100.0);
                 if (vwap <= 0) continue;
-                String formattedDate = rawDate.substring(0, 4) + "-" + rawDate.substring(4, 6) + "-" + rawDate.substring(6, 8);
                 return new Object[]{vwap, formattedDate};
             }
-            Log.w(TAG, "day/query未找到有效的已收盘交易日 " + code);
+            Log.w(TAG, "day/query未找到日期=" + expectedDate + "的有效已收盘交易日数据 " + code);
         } catch (Exception e) {
             Log.w(TAG, "day/query解析异常 " + code, e);
         }

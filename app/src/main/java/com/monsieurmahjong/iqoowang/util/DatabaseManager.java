@@ -634,6 +634,18 @@ public class DatabaseManager {
         return mContext.getSharedPreferences(RANKING_PREFS, Context.MODE_PRIVATE).getString(date, null);
     }
 
+    /** 【留痕修复】有排行榜记录的日期列表（新→旧），供前端"候选池排行榜"页面做日期选择——
+     *  之前只有单日查询接口，通知点开后除了当天完全没有别的入口能再看到历史记录，
+     *  跟决策日志的getDecisionLogDates()对齐同一个"新→旧"排序口径。 */
+    public List<String> getCandidateRankingDates() {
+        List<String> dates = new java.util.ArrayList<>();
+        if (mContext == null) return dates;
+        java.util.Map<String, ?> all = mContext.getSharedPreferences(RANKING_PREFS, Context.MODE_PRIVATE).getAll();
+        dates.addAll(all.keySet());
+        java.util.Collections.sort(dates, java.util.Collections.reverseOrder());
+        return dates;
+    }
+
     /**
      * 【危险操作】清空全部交易/持仓/每日资产历史，恢复到"从未交易过"的初始状态
      * （现金会自动回到初始资金，因为getCashBalance是实时从交易流水推算的，没了流水自然就回到初始值）。

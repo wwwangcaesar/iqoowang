@@ -71,6 +71,11 @@ public class TradingRuleConfig {
      *  之后的第二个独立动作，不是对底仓本身的另一个确认入口。与止损用的
      *  patternLowStopNotifyMinutes相互独立，互不影响。 */
     public int gapUpAddConfirmMinutesBeforeClose = 15;
+    /** 【2026-09-14新增·分时经验规则步骤3】缩量跌破关键价位后的确认窗口（分钟）。真破位应该是
+     *  放量砸下来的；如果跌破那一刻是缩量完成的，很可能是挖坑洗盘，给这么多分钟看价格会不会
+     *  被拉回参照价之上，而不是立刻触发止损。跟止损用的patternLowStopNotifyMinutes（收盘前确认窗口）
+     *  是两个完全不同性质的窗口，不要混用。用户已确认默认3分钟。 */
+    public int intradayBreakConfirmMinutes = 3;
 
     public static void init(Context context) {
         if (sInstance == null) {
@@ -140,6 +145,7 @@ public class TradingRuleConfig {
         if (o.has("vwapDualRefSwitchMinutes")) c.vwapDualRefSwitchMinutes = o.getInt("vwapDualRefSwitchMinutes");
         if (o.has("focusWatchConfirmMinutes")) c.focusWatchConfirmMinutes = o.getInt("focusWatchConfirmMinutes");
         if (o.has("gapUpAddConfirmMinutesBeforeClose")) c.gapUpAddConfirmMinutesBeforeClose = o.getInt("gapUpAddConfirmMinutesBeforeClose");
+        if (o.has("intradayBreakConfirmMinutes")) c.intradayBreakConfirmMinutes = o.getInt("intradayBreakConfirmMinutes");
     }
 
     /** 序列化当前配置为JSON，供前端“参数配置”面板展示当前值 */
@@ -173,6 +179,7 @@ public class TradingRuleConfig {
             o.put("vwapDualRefSwitchMinutes", vwapDualRefSwitchMinutes);
             o.put("focusWatchConfirmMinutes", focusWatchConfirmMinutes);
             o.put("gapUpAddConfirmMinutesBeforeClose", gapUpAddConfirmMinutesBeforeClose);
+            o.put("intradayBreakConfirmMinutes", intradayBreakConfirmMinutes);
         } catch (Exception ignored) {}
         return o;
     }

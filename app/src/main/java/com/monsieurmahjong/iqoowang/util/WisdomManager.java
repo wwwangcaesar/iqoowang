@@ -35,6 +35,8 @@ public class WisdomManager {
     private static final int MAX_INJECT_ENTRIES = 15;
     /** 注入prompt的字符预算上限，双重保险 */
     private static final int MAX_INJECT_CHARS = 1200;
+    /** 【D新增】分时形态经验种子话术的 summary 固定前缀，用于判断这一批是否已经种过 */
+    private static final String INTRADAY_SEED_PREFIX = "【分时形态】";
 
     private static WisdomManager sInstance;
     private final SQLiteDatabase mDb;
@@ -56,6 +58,7 @@ public class WisdomManager {
     private WisdomManager(Context context) {
         mDb = new DbHelper(context).getWritableDatabase();
         ensureDefaultWisdom();
+        ensureIntradayPatternWisdomSeeded();
         Log.i(TAG, "WisdomManager initialized");
     }
 
@@ -84,6 +87,39 @@ public class WisdomManager {
         addEntry(
                 "右侧交易的核心是等分歧转一致，不是猜底。任何买入信号都要问：放量验证了吗？站上VWAP持续了吗？",
                 "通用：右侧等验证不猜底", "");
+    }
+
+    /**
+     * 【2026-09-14新增·D】把 B-分时图经验规则研究与实施方案.md 里可靠性高、能转成客观规则的
+     * 三条分时形态经验，作为"话术"种进知识库，之后按判断类型自动注入 Prompt（复用现有
+     * buildInjectBlock 机制，不改注入逻辑本身）。
+     *
+     * 注意这里**不能**用 hasAny() 做判断——那样的话，已经用过App、话术库非空的老安装永远
+     * 拿不到这批新知识。改为检测是否已经种过这一批（按 summary 固定前缀查），只在没种过时补种一次。
+     */
+    private void ensureIntradayPatternWisdomSeeded() {
+        if (hasSummaryPrefix(INTRADAY_SEED_PREFIX)) return;
+        Log.i(TAG, "补种分时形态经验话术");
+        addEntry(
+                "分时图上的尖角V型反转要分三级确认，不要看到一个尖角就动手：极值点放量达到前5-10分钟均量1.5倍以上、" +
+                        "且连续3-5根量能柱都维持放量，才算弱确认；价格站稳分时均价线不再回落是中确认；放量突破当日高点才是强确认。" +
+                        "只放量一根就缩回去的，多半是超跌反抽，不是反转。",
+                INTRADAY_SEED_PREFIX + "尖角反转三级确认", "");
+        addEntry(
+                "判断跌破关键价位是真破位还是假破位，关键看跌破那一刻的瞬时量能：达到前5-10分钟均量1.5-2倍以上才是真破位；" +
+                        "如果是缩量跌破的，很可能是挖坑洗盘，应该给几分钟观察，看价格会不会被拉回来，而不是立刻认定破位。",
+                INTRADAY_SEED_PREFIX + "真假破位看瞬时量能", "STOP_LOSS");
+        addEntry(
+                "持仓股涨停时放出巨量要警惕：成交量达到近期日均量3倍以上，往往意味着高位派发出货，不是好事；" +
+                        "2-3倍更可能是洗盘。同样是放量，位置不同含义完全相反，低位放量是吸筹，高位放量是出货。",
+                INTRADAY_SEED_PREFIX + "涨停巨量看位置定性质", "WARN_PRESSURE");
+    }
+
+    /** 查是否已经存在以某个前缀开头的话术摘要，用于判断某一批种子话术是否已经种过 */
+    private boolean hasSummaryPrefix(String prefix) {
+        Cursor c = mDb.rawQuery("SELECT COUNT(*) FROM wisdom_entries WHERE summary LIKE ?",
+                new String[]{prefix + "%"});
+        try { return c.moveToFirst() && c.getInt(0) > 0; } finally { c.close(); }
     }
 
     private static class DbHelper extends SQLiteOpenHelper {

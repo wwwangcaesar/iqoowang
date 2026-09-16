@@ -53,6 +53,10 @@ public class TradingRuleEngine {
         /** 【R3】本轮是否刚从“未监听”转为“重点监听”（即NONE→WATCHING这一次转变），
          *  RealtimeMonitorService据此额外推送一条轻量通知，不占用PENDING确认状态位 */
         public boolean focusWatchJustEntered = false;
+        /** 【分时经验规则步骤4新增】本轮是否新检测到一个"水下反转"（尚未推送过过），null表示
+         *  未检测到/已推送过。非空时RealtimeMonitorService据此写决策日志+推送通知+起AI分析，
+         *  不影响本次result自己的action（可能同时有其他action，两者互不影响）。 */
+        public IntradayPatternAnalyzer.VReversal underwaterReversal;
     }
 
     public static class DivergenceState {
@@ -65,6 +69,19 @@ public class TradingRuleEngine {
          *  与状态 NONE/WATCHING/CONFIRMED，见 evaluateStarterGapUpOrFlat() 注释 */
         public long focusWatchStartTime;
         public String focusWatchStatus = "NONE";
+        /** 【2026-09-14新增·分时经验规则步骤3】缩量跌破关键价位后的"待确认破位"开始
+         *  时间戳（0＝不在待确认状态）。真破位应该是放量砸下来的；缩量跌破很可能是挖坑洗盘，
+         *  给 intradayBreakConfirmMinutes 分钟看价格会不会被拉回参照价之上，而不是立刻触发止损。
+         *  见 evaluateStopLoss() 里的处理。 */
+        public long pendingBreakStartTime;
+        /** 进入待确认状态时的参照价。要存它是因为参照价可能中途变化（形态日变更、
+         *  R4的max(形态日最低,前一交易日最低)变了），变了就是另一回事，不能拿旧参照价的
+         *  计时结果套到新参照价上。 */
+        public double pendingBreakRef;
+        /** 【分时经验规则步骤4新增】最近一次已推送过"水下反转"通知的反转点标识（日期_时间，
+         *  比如"2026-09-15_10:15"），用于去重。不用反转点在分时数据里的下标去重，因为下标
+         *  每个tick都会变（分时点列表一直在变长）。 */
+        public String underwaterReversalNotifiedKey;
     }
 
     /**
@@ -120,7 +137,22 @@ public class TradingRuleEngine {
         try {
             List<MarketDataManager.KlineBar> bars = MarketDataManager.get().getCachedKline(code, 5);
             if (bars.isEmpty()) return ref;
-            MarketDataManager.KlineBar last = bars.get(bars.size() - 1);
+            // 【2026-09-16修复：止损价把"今天"当成了"前一交易日"】日K缓存的下载/更新如果是交易
+            // 时段内跑的（比如用户中途重新点了"更新数据"），腾讯/新浪的日K接口会把还没走完的"今天"
+            // 也作为最后一条返回，插进kline_cache——之前这里无条件把"缓存最后一条"当成"前一交易日"，
+            // 如果那一条恰好就是今天，prevDate/prevClose/prevLow全部会变成"今天自己"，止损文案里会
+            // 出现"前一交易日(今天日期)最低价"这种自相矛盾的显示，止损参照价本身也会随今天盘中低点
+            // 不断走低而越收越紧（本该是固定参照，不该跟着盘中波动）。改成从最后一条开始往前找，
+            // 跳过日期等于今天的那一条，取真正意义上第一条"已完整走完的"交易日。
+            String todayDateStr = new SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(new Date());
+            MarketDataManager.KlineBar last = null;
+            for (int i = bars.size() - 1; i >= 0; i--) {
+                MarketDataManager.KlineBar b = bars.get(i);
+                if (todayDateStr.equals(b.date)) continue;
+                last = b;
+                break;
+            }
+            if (last == null) return ref; // 缓存里只有"今天"这一条（比如刚下载完就立刻评估），没有真正的前一交易日数据，不硬凑
             ref.prevClose = last.close;
             ref.prevLow = last.low;
             ref.prevHigh = last.high;
@@ -139,7 +171,11 @@ public class TradingRuleEngine {
                 ref.prevAvgPrice = cachedAvg;
             } else {
                 ref.prevAvgPrice = 0;
-                RealtimeQuoteManager.get().fetchPrevDayVwap(code, (c, vwap, date) -> {
+                // 【2026-09-16修复：昨日VWAP用了过期日期】把上面已经校验过陈旧性的ref.prevDate作为
+                // "期望日期"传下去，RealtimeQuoteManager必须严格核对day/query接口返回的日期跟这个
+                // 期望日期一致才能用，不能再由它自己认定"最近一个非今天的交易日"——那个接口有独立的
+                // 返回窗口，实测出现过卡在好几天前不刷新、又没有任何机制感知到自己是陈旧数据的情况。
+                RealtimeQuoteManager.get().fetchPrevDayVwap(code, ref.prevDate, (c, vwap, date) -> {
                     if (vwap > 0 && date != null) {
                         WatchlistManager.get().savePrevDayVwap(c, vwap, date);
                         Log.i(TAG, "已获取" + c + "昨日(" + date + ")真实VWAP=" + String.format(Locale.CHINA, "%.4f", vwap));
@@ -147,9 +183,10 @@ public class TradingRuleEngine {
                             DecisionLogger.get().logPrevDayVwapFetch(c, true, vwap, date, null);
                         } catch (Exception ignored) {}
                     } else {
-                        Log.w(TAG, "获取" + c + "昨日真实VWAP失败，本轮低开路径底仓判断将跳过");
+                        Log.w(TAG, "获取" + c + "昨日(期望日期" + ref.prevDate + ")真实VWAP失败，本轮低开路径底仓判断将跳过");
                         try {
-                            DecisionLogger.get().logPrevDayVwapFetch(c, false, 0, null, "接口请求或解析失败");
+                            DecisionLogger.get().logPrevDayVwapFetch(c, false, 0, null,
+                                    "接口未返回日期=" + ref.prevDate + "的有效数据（已启用日期校验，拒绝使用陈旧数据）");
                         } catch (Exception ignored) {}
                     }
                 });
@@ -202,13 +239,21 @@ public class TradingRuleEngine {
 
         // ── 持仓：止损优先 ──
         if (isHolding(status)) {
-            RuleResult stop = evaluateStopLoss(quote, prevDay, vol, state, pattern, hour, minute);
+            RuleResult stop = evaluateStopLoss(quote, prevDay, minutePoints, vol, state, pattern, hour, minute);
             if (stop.action != Action.NONE) {
                 stop.metrics = result.metrics + " | " + stop.metrics;
                 stop.stateUpdate = state;
                 stop.waterLine = waterLine; stop.vwap = vwap; stop.volRatio = vol.dayRatio;
                 annotateLimitAndHoldingPeriod(stop, limitInfo);
                 return stop;
+            }
+            // 【B认领步骤（6）】止损未触发时，额外检查涨停放巨量出货
+            RuleResult surge = checkLimitUpVolumeSurge(code, quote, limitInfo);
+            if (surge.action != Action.NONE) {
+                surge.metrics = result.metrics;
+                surge.stateUpdate = state;
+                surge.waterLine = waterLine; surge.vwap = vwap; surge.volRatio = vol.dayRatio;
+                return surge;
             }
         }
 
@@ -269,9 +314,14 @@ public class TradingRuleEngine {
 
         // ── 观察中：水下+站上VWAP → 底仓 ──
         if (WatchlistManager.STATUS_WATCHING.equals(status)) {
+            // 【分时经验规则步骤4新增】水下反转独立检测，完全不影响下面evaluateStarter的判断，
+            // 只是额外检查一下，检测到了就在result里带出去，RealtimeMonitorService据此推送信息
+            checkUnderwaterReversal(quote, waterLine, minutePoints, state, result);
+
             RuleResult starter = evaluateStarter(quote, prevDay, minutePoints, vol, vwap, waterLine, result.metrics, hour, minute, state);
             starter.stateUpdate = state; // 持久化观察期已累计的峰值涨幅/重点监听计时状态，避免转入底仓后状态从零重算
             starter.waterLine = waterLine; starter.vwap = vwap; starter.volRatio = vol.dayRatio;
+            starter.underwaterReversal = result.underwaterReversal; // 把上面的检测结果带到最终返回的result上
             annotateLimitAndHoldingPeriod(starter, limitInfo);
             return starter;
         }
@@ -294,6 +344,27 @@ public class TradingRuleEngine {
      * "水下"这一条路径，一支高开/平开、一直在水线上方运行的强势股，不管它表现多好，
      * 永远没有路径能触发底仓，这是之前版本的一个真实缺口，不是市场行情本身导致的。
      */
+    /** 【分时经验规则步骤4新增】水下V型反转检测——完全独立于底仓/加仓判断，纯信息展示，
+     *  不产生Action，不会让水下的股票绕过现有规则拿到BUY_STARTER。检测到中确认及以上、且尚未
+     *  推送过这个反转点时，把VReversal对象挂到result.underwaterReversal上，由
+     *  RealtimeMonitorService负责推送通知+写决策日志+起AI分析，这里只负责检测和去重判断。
+     *  去重用反转点自己的time字段（同一根K线时间不变）+日期拼的key，不用分时点列表里的
+     *  下标（下标每个tick都会变）。 */
+    private void checkUnderwaterReversal(RealtimeQuoteManager.Quote quote, double waterLine,
+                                          List<RealtimeQuoteManager.MinutePoint> minutePoints,
+                                          DivergenceState state, RuleResult result) {
+        if (waterLine <= 0 || quote.price >= waterLine) return; // 不在水下，不检测
+        IntradayPatternAnalyzer.VReversal r = IntradayPatternAnalyzer.get().detectVReversal(minutePoints);
+        if (!r.detected || !"BOTTOM".equals(r.direction) || !r.midConfirm) return;
+        if (minutePoints == null || r.extremeIndex < 0 || r.extremeIndex >= minutePoints.size()) return;
+
+        String key = todayStr() + "_" + minutePoints.get(r.extremeIndex).time;
+        if (key.equals(state.underwaterReversalNotifiedKey)) return; // 这个反转已经推送过了，不重复推
+
+        state.underwaterReversalNotifiedKey = key;
+        result.underwaterReversal = r;
+    }
+
     private RuleResult evaluateStarter(RealtimeQuoteManager.Quote quote, PrevDayRef prevDay,
                                         List<RealtimeQuoteManager.MinutePoint> minutePoints,
                                         VolumeCheck vol, double vwap, double waterLine, String metrics,
@@ -666,6 +737,7 @@ public class TradingRuleEngine {
     // ══════════════════════════════════════════
 
     private RuleResult evaluateStopLoss(RealtimeQuoteManager.Quote quote, PrevDayRef prevDay,
+                                         List<RealtimeQuoteManager.MinutePoint> minutePoints,
                                          VolumeCheck vol, DivergenceState state,
                                          PatternRef pattern, int hour, int minute) {
         RuleResult result = new RuleResult();
@@ -691,11 +763,83 @@ public class TradingRuleEngine {
         double stopRefPrice = prevDay.prevLow;
         String stopRefLabel = String.format(Locale.CHINA, "前一交易日(%s)最低价", prevDay.prevDate != null ? prevDay.prevDate : "?");
 
+        // 【2026-09-14新增·分时经验规则步骤3】"待确认破位"状态的清除判断。注意必须放在下面
+        // 那个独立破位if**之外**：价格一旦收回参照价之上，就进不了那个if了，如果把清除逻辑写在
+        // 里面，这个状态会一直挂着；等当天晚些时候又来一次缩量破位，算出来的已等时长早就超过3分钟，
+        // 会被误判成"确认窗口已满"直接触发止损。三种情况都要清：跨日遗留、参照价变了（形态日
+        // 变更等，属于另一回事）、价格已收回参照价之上（即假破位已得到验证）。
+        if (state.pendingBreakStartTime > 0) {
+            boolean staleDay = !isSameDay(state.pendingBreakStartTime, System.currentTimeMillis());
+            boolean refChanged = Math.abs(state.pendingBreakRef - stopRefPrice) > 0.001;
+            boolean recovered = stopRefPrice > 0 && quote.price >= stopRefPrice;
+            if (staleDay || refChanged || recovered) {
+                if (recovered && !staleDay && !refChanged) {
+                    try {
+                        DecisionLogger.get().logBuyLogicTrace("", quote.code, String.format(Locale.CHINA,
+                                "假破位已验证：此前缩量跌破%s¥%.2f，现价¥%.2f已收回参照价之上，取消待确认，不触发止损",
+                                stopRefLabel, state.pendingBreakRef, quote.price));
+                    } catch (Exception ignored) {}
+                }
+                state.pendingBreakStartTime = 0;
+                state.pendingBreakRef = 0;
+            }
+        }
+
         // 独立破位：前一交易日最低价
         if (stopRefPrice > 0 && quote.price < stopRefPrice) {
             if (vol.shrinkBreak && !vol.confirmed) {
                 return buildWarnPressure(quote, prevDay, state,
                         String.format(Locale.CHINA, "缩量跌破%s¥%.2f，降级为抛压观察", stopRefLabel, stopRefPrice));
+            }
+
+            // 【2026-09-14新增·分时经验规则步骤3，用户已确认3分钟确认窗口】真假破位精细化。
+            // 上面那道 vol.shrinkBreak 用的是**全天**口径的量比，会被全天其它时段的量能稀释掉——
+            // 一支股全天成交活跃、但就跌破那一下是缩量砸下来的，它完全看不出来。这里补一道
+            // **瞬时**量能检查（跌破那一分钟相对前5-10分钟均量的倍数）。两者是互补关系，不是替换：
+            // 全天缩量继续走上面已有的降级观察；全天量比正常但这一下是缩量砸的，很可能是挖坑洗盘，
+            // 给 intradayBreakConfirmMinutes 分钟的确认窗口看价格会不会被拉回来，而不是立刻卖出。
+            // 作用范围只限这一支（独立破位），下面分歧K线中点/最低点不加这个缓冲——最低点在
+            // 《操盘手经验终版》里的定位是"最后防线"，给它加缓冲与该语义相悖，且不在用户确认的范围内。
+            IntradayPatternAnalyzer.BreakoutCheck bc = IntradayPatternAnalyzer.get()
+                    .checkBreakoutVolume(minutePoints, stopRefPrice, "DOWN", mCfg.intradayBreakConfirmMinutes);
+            if (bc.crossed && !bc.isRealBreak) {
+                long nowMs = System.currentTimeMillis();
+                if (state.pendingBreakStartTime == 0) {
+                    state.pendingBreakStartTime = nowMs;
+                    state.pendingBreakRef = stopRefPrice;
+                    RuleResult pending = new RuleResult();
+                    pending.stateUpdate = state;
+                    pending.note = String.format(Locale.CHINA,
+                            "已跌破%s¥%.2f（现价¥%.2f），但跌破那一刻是缩量完成的（瞬时量能比%.2fx，需≥1.50x才算真破位），"
+                                    + "可能是挖坑洗盘，先给%d分钟确认窗口观察是否被拉回，暂不触发止损",
+                            stopRefLabel, stopRefPrice, quote.price, bc.instantVolRatio, mCfg.intradayBreakConfirmMinutes);
+                    try {
+                        DecisionLogger.get().logBuyLogicTrace("", quote.code, String.format(Locale.CHINA,
+                                "缩量跌破进入待确认：参照=%s(¥%.2f) 现价¥%.2f 瞬时量能比%.2fx(阈值1.50x) 确认窗口%d分钟",
+                                stopRefLabel, stopRefPrice, quote.price, bc.instantVolRatio, mCfg.intradayBreakConfirmMinutes));
+                    } catch (Exception ignored) {}
+                    return pending;
+                }
+                long elapsedMs = nowMs - state.pendingBreakStartTime;
+                long windowMs = mCfg.intradayBreakConfirmMinutes * 60_000L;
+                if (elapsedMs < windowMs) {
+                    RuleResult pending = new RuleResult();
+                    pending.stateUpdate = state;
+                    pending.note = String.format(Locale.CHINA,
+                            "缩量跌破%s¥%.2f确认窗口中：已等%d秒（需%d分钟），现价¥%.2f仍未收回，继续观察",
+                            stopRefLabel, stopRefPrice, elapsedMs / 1000, mCfg.intradayBreakConfirmMinutes, quote.price);
+                    return pending;
+                }
+                // 窗口已满且现价仍在参照价之下（外层if已保证）——确认为真破位，往下走正常止损流程
+                try {
+                    DecisionLogger.get().logBuyLogicTrace("", quote.code, String.format(Locale.CHINA,
+                            "待确认破位窗口已满%d分钟且未收回，确认为真破位：参照=%s(¥%.2f) 现价¥%.2f",
+                            mCfg.intradayBreakConfirmMinutes, stopRefLabel, stopRefPrice, quote.price));
+                } catch (Exception ignored) {}
+            } else if (state.pendingBreakStartTime > 0) {
+                // 本轮是放量破位（或没找到穿越点），之前的待确认状态不再适用，清掉直接走正常止损
+                state.pendingBreakStartTime = 0;
+                state.pendingBreakRef = 0;
             }
             // 【2026-08-20改造】盘中瞬间跌破不算数，要等到收盘前patternLowStopNotifyMinutes分钟
             // 仍未收复才真正确认离场——过滤掉日内插针/主力洗盘造成的误判。这个窗口跟"二级：
@@ -787,6 +931,43 @@ public class TradingRuleEngine {
         r.notifyImmediate = true;
         r.stateUpdate = state;
         return r;
+    }
+
+    /**
+     * 【分时经验规则步骤6，B认领】涨停放巨量出货检测——对应B研究1.3节"低位巨量主力进，
+     * 高位巨量主力跑"。只对已持仓、现价正处于涨停的股票检查：今日累计成交量相对近
+     * 10日均量的倍数落在"出货"区间(≥3倍)时，触发WARN_PRESSURE（用户已确认不是
+     * STOP_LOSS——涨停股本身有停牌/无法及时卖出等特殊风险，直接自动清仓风险偏高，先降级为
+     * 预警更稳妥）。换手率数据源不可用（流通股本无公开访问入口，见D方案第5节核实结果），
+     * 已按方案降级为只用成交量倍数判断，不编造换手率——IntradayPatternAnalyzer.
+     * checkVolumeSurgeAtLimit本身也已经是这个简化版签名，不接收流通股本参数。
+     */
+    private RuleResult checkLimitUpVolumeSurge(String code, RealtimeQuoteManager.Quote quote, LimitInfo limitInfo) {
+        RuleResult result = new RuleResult();
+        if (limitInfo == null || !limitInfo.atUp || quote == null) return result;
+        try {
+            List<MarketDataManager.KlineBar> bars = MarketDataManager.get().getCachedKline(code, 10);
+            String today = todayStr();
+            List<Long> recentVols = new java.util.ArrayList<>();
+            for (MarketDataManager.KlineBar b : bars) {
+                if (!today.equals(b.date)) recentVols.add(b.volume);
+            }
+            IntradayPatternAnalyzer.VolumeSurgeCheck vs =
+                    IntradayPatternAnalyzer.get().checkVolumeSurgeAtLimit(quote.volume, recentVols);
+            if (!vs.hasBaseline || !"DISTRIBUTION".equals(vs.zone)) return result;
+            result.action = Action.WARN_PRESSURE;
+            result.actionLabel = "建议抛压";
+            result.stopLevel = StopLevel.LEVEL1_WARN;
+            result.triggerPrice = quote.price;
+            result.notifyImmediate = true;
+            result.note = String.format(Locale.CHINA,
+                    "【涨停放巨量出货】现价已涨停¥%.2f，今日成交量达近%d日均量%.1f倍（出货阈值3倍，"
+                            + "换手率数据源暂不可用，仅按成交量倍数判断），疑似高位放量出货，建议密切关注",
+                    quote.price, recentVols.size(), vs.multipleVsHistoryAvg);
+            return result;
+        } catch (Exception e) {
+            return result;
+        }
     }
 
     // ══════════════════════════════════════════
@@ -1083,6 +1264,9 @@ public class TradingRuleEngine {
         c.peakGainDate = s.peakGainDate;
         c.focusWatchStartTime = s.focusWatchStartTime;
         c.focusWatchStatus = s.focusWatchStatus != null ? s.focusWatchStatus : "NONE";
+        c.pendingBreakStartTime = s.pendingBreakStartTime;
+        c.pendingBreakRef = s.pendingBreakRef;
+        c.underwaterReversalNotifiedKey = s.underwaterReversalNotifiedKey;
         return c;
     }
 

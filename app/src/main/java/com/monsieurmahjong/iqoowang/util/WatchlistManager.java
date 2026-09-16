@@ -29,7 +29,7 @@ public class WatchlistManager {
 
     private static final String TAG = "WatchlistManager";
     private static final String DB_NAME = "watchlist.db";
-    private static final int DB_VERSION = 7;
+    private static final int DB_VERSION = 9;
 
     public static final String STATUS_WATCHING = "WATCHING";
     public static final String STATUS_STARTER = "STARTER";
@@ -158,6 +158,9 @@ public class WatchlistManager {
                     "prev_day_vwap_date TEXT," +
                     "focus_watch_start_time INTEGER," +
                     "focus_watch_status TEXT DEFAULT 'NONE'," +
+                    "pending_break_start_time INTEGER," +
+                    "pending_break_ref REAL," +
+                    "underwater_reversal_notified_key TEXT," +
                     "updated_at INTEGER)");
         }
 
@@ -214,6 +217,20 @@ public class WatchlistManager {
                 // 上面R12那次prev_day_vwap升级，落进同一张表，跟随其它状态字段一起持久化。
                 try { db.execSQL("ALTER TABLE watchlist ADD COLUMN focus_watch_start_time INTEGER"); } catch (Exception ignored) {}
                 try { db.execSQL("ALTER TABLE watchlist ADD COLUMN focus_watch_status TEXT DEFAULT 'NONE'"); } catch (Exception ignored) {}
+            }
+            if (o < 8) {
+                // pending_break_start_time／pending_break_ref：【分时经验规则步骤3新增】缩量跌破
+                // 关键价位后的"待确认破位"开始时间戳与当时的参照价。真破位应该是放量砸下来的，
+                // 缩量跌破很可能是挖坑洗盘，给几分钟看会不会被拉回来。参照价也要存，是因为参照价
+                // 可能中途变化（形态日变更等），变了就不能拿旧计时结果套到新参照价上。
+                try { db.execSQL("ALTER TABLE watchlist ADD COLUMN pending_break_start_time INTEGER"); } catch (Exception ignored) {}
+                try { db.execSQL("ALTER TABLE watchlist ADD COLUMN pending_break_ref REAL"); } catch (Exception ignored) {}
+            }
+            if (o < 9) {
+                // underwater_reversal_notified_key：【分时经验规则步骤4新增】存最近一次已推送过"水下反转"
+                // 通知的反转点标识（日期+反转点时间），用于去重——同一个反转只推一次，不能每个tick
+                // 都弹。不用反转点在分时数据里的下标去重，因为下标每个tick都会变。
+                try { db.execSQL("ALTER TABLE watchlist ADD COLUMN underwater_reversal_notified_key TEXT"); } catch (Exception ignored) {}
             }
         }
     }
@@ -304,6 +321,9 @@ public class WatchlistManager {
         cv.put("peak_gain_date", state.peakGainDate);
         cv.put("focus_watch_start_time", state.focusWatchStartTime);
         cv.put("focus_watch_status", state.focusWatchStatus);
+        cv.put("pending_break_start_time", state.pendingBreakStartTime);
+        cv.put("pending_break_ref", state.pendingBreakRef);
+        cv.put("underwater_reversal_notified_key", state.underwaterReversalNotifiedKey);
         cv.put("updated_at", System.currentTimeMillis());
         mDb.update("watchlist", cv, "code=?", new String[]{code});
     }
@@ -321,6 +341,9 @@ public class WatchlistManager {
         s.peakGainDate = item.peakGainDate;
         s.focusWatchStartTime = item.focusWatchStartTime;
         s.focusWatchStatus = item.focusWatchStatus != null ? item.focusWatchStatus : "NONE";
+        s.pendingBreakStartTime = item.pendingBreakStartTime;
+        s.pendingBreakRef = item.pendingBreakRef;
+        s.underwaterReversalNotifiedKey = item.underwaterReversalNotifiedKey;
         return s;
     }
 
@@ -481,6 +504,13 @@ public class WatchlistManager {
          *  （NONE/WATCHING/CONFIRMED），见 TradingRuleEngine.DivergenceState 同名字段注释 */
         public long focusWatchStartTime;
         public String focusWatchStatus = "NONE";
+        /** 【分时经验规则步骤3】缩量跌破后的"待确认破位"开始时间戳（0＝不在待确认）
+         *  与当时的参照价，见 TradingRuleEngine.DivergenceState 同名字段注释 */
+        public long pendingBreakStartTime;
+        public double pendingBreakRef;
+        /** 【分时经验规则步骤4】最近一次已推送过"水下反转"通知的反转点标识（日期_时间），
+         *  用于去重，见 TradingRuleEngine.DivergenceState 同名字段注释 */
+        public String underwaterReversalNotifiedKey;
     }
 
     private static final String[] ACTIVE_STATUSES = {
@@ -564,6 +594,9 @@ public class WatchlistManager {
         it.focusWatchStartTime = getLongOrZero(c, "focus_watch_start_time");
         String focusStatus = getStringOrNull(c, "focus_watch_status");
         it.focusWatchStatus = focusStatus != null ? focusStatus : "NONE";
+        it.pendingBreakStartTime = getLongOrZero(c, "pending_break_start_time");
+        it.pendingBreakRef = getDoubleOrZero(c, "pending_break_ref");
+        it.underwaterReversalNotifiedKey = getStringOrNull(c, "underwater_reversal_notified_key");
         return it;
     }
 
@@ -628,6 +661,8 @@ public class WatchlistManager {
             o.put("prevDayVwapDate", it.prevDayVwapDate);
             o.put("focusWatchStartTime", it.focusWatchStartTime);
             o.put("focusWatchStatus", it.focusWatchStatus);
+            o.put("pendingBreakStartTime", it.pendingBreakStartTime);
+            o.put("pendingBreakRef", it.pendingBreakRef);
             double[] live = sLiveMetricsCache.get(it.code);
             if (live != null) {
                 o.put("waterLine", live[0]);

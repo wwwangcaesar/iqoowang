@@ -1085,8 +1085,16 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         return DecisionLogger.get().getLogDirPath();
     }
 
-    /** 【R10新增】指定日期的收盘前候选池AI排行榜——本轮只做后端接口，具体展示页面不改
-     *  assets/index.html，做法与 R7 角标部分一致——后端数据就绪，前端展示另行确认。
+    /** 【留痕修复】有排行榜记录的日期列表（新→旧），供候选池排行榜页面的日期下拉框用，
+     *  口径对齐getDecisionLogDates()。 */
+    @JavascriptInterface
+    public String getCandidateRankingDates() {
+        return new JSONArray(mDb.getCandidateRankingDates()).toString();
+    }
+
+    /** 【R10】指定日期的收盘前候选池AI排行榜。
+     *  【留痕修复】前端页面已补上（候选池排行榜独立全屏页，入口在实时监控卡片的tab里，
+     *  通知点击也会直接跳转过去），不再是"后端接口，前端另行确认"的半成品状态。
      *  没有这天的排行榜（还没到时间、模型未就绪、候选池为空等）时返回空字符串，
      *  前端自行判断。
      *  JS调用：Android.getCandidateRanking("2026-09-10")

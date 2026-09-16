@@ -300,6 +300,38 @@ public class RealtimeMonitorService extends Service {
                         String line = buildSnapshotLine(item, pendingQuote, pendingHolding, pendingHoldCost, judgment, null);
                         if (line != null) DecisionLogger.get().logMonitorLine(item.code, item.name, line);
                     }
+                    // 【2026-09-16修复：持仓页待确认信号期间止损价消失、分时图不刷新】待确认状态下
+                    // 虽然不重新跑规则引擎，但止损价（prevDay.prevLow）和分时图缓存不应该跟着被冻结——
+                    // 持仓页看到的止损价来自WatchlistManager的实时指标缓存，而那份缓存之前只在
+                    // evaluateAndAct()里更新，待确认状态整段时间都不会调用它，缓存就停在进入待确认
+                    // 状态前最后一次的值，甚至可能从未写入过（比如信号在刚入池评估的第一轮就触发了
+                    // 止损/预警类分支，而这类分支之前并不总会设置result.waterLine，见下面
+                    // evaluateAndAct()里的另一处修复）。getPrevDayRef()只读本地K线缓存，不发网络
+                    // 请求，代价很低，这里顺手每轮都刷新一次；waterLine/vwap/volRatio这三项待确认期间
+                    // 不重新计算，保留上一次已知值，只把prevLow换成最新的，不无谓地把它们清零。
+                    if (pendingQuote != null) {
+                        try {
+                            TradingRuleEngine.PrevDayRef pendingPrevDay = mEngine.getPrevDayRef(item.code);
+                            if (pendingPrevDay.hasData) {
+                                double[] prevMetrics = WatchlistManager.get().getLiveMetrics(item.code);
+                                double keepWaterLine = prevMetrics != null && prevMetrics.length > 0 ? prevMetrics[0] : 0;
+                                double keepVwap = prevMetrics != null && prevMetrics.length > 1 ? prevMetrics[1] : 0;
+                                double keepVolRatio = prevMetrics != null && prevMetrics.length > 2 ? prevMetrics[2] : 0;
+                                WatchlistManager.get().updateLiveMetrics(item.code, keepWaterLine, keepVwap, keepVolRatio, pendingPrevDay.prevLow);
+                            }
+                        } catch (Exception e) {
+                            Log.w(TAG, "待确认状态刷新止损价失败: " + item.code, e);
+                        }
+                        // 分时图缓存同理，不能因为待确认状态就一直停在进入待确认前的旧快照——
+                        // fetchMinuteLine只是拉数据存缓存，不会碰规则引擎/PENDING状态本身，可以
+                        // 安全地在待确认分支里也跑，不影响“待确认状态不重新判定信号”这条原则。
+                        RealtimeQuoteManager.get().fetchMinuteLine(item.code, new RealtimeQuoteManager.MinuteCallback() {
+                            @Override public void onResult(String code, List<RealtimeQuoteManager.MinutePoint> points) {}
+                            @Override public void onError(String code, String msg) {
+                                Log.w(TAG, "待确认状态分时数据获取失败 " + code + ": " + msg);
+                            }
+                        });
+                    }
                     if (pending.decrementAndGet() == 0) finishTickBatch();
                     continue;
                 }
@@ -318,7 +350,15 @@ public class RealtimeMonitorService extends Service {
                     }
                     @Override
                     public void onError(String code, String msg) {
+                        // 【2026-09-16修复：分时图无数据排查不到原因】之前这里只写Log.w，只在连着数据线的
+                        // Logcat里能看到，用户在自己手机上装的正式版完全看不到——分时图一直空白，却连“到底
+                        // 是请求失败还是解析失败”这种最基本的线索都拿不到。现在额外写一条到决策日志（应用内
+                        // “决策日志”页面能直接看到），把失败原因(msg)原样带出去。
                         Log.w(TAG, "分时数据获取失败 " + code + ": " + msg);
+                        try {
+                            DecisionLogger.get().logNote(item.code, item.name,
+                                    "【分时数据获取失败】" + msg + "（分时图和依赖分时数据的判断本轮均无法使用，下一轮tick自动重试）");
+                        } catch (Exception ignored) {}
                         String line = evaluateAndAct(item, q, null);
                         if (dueForSnapshot && line != null) DecisionLogger.get().logMonitorLine(item.code, item.name, line);
                         if (pending.decrementAndGet() == 0) finishTickBatch();
@@ -397,7 +437,7 @@ public class RealtimeMonitorService extends Service {
             public void onComplete(String fullText) {
                 try {
                     DatabaseManager.get().saveCandidateRanking(rankDate, fullText);
-                    fireRankingReadyNotification();
+                    fireRankingReadyNotification(rankDate);
                     DecisionLogger.get().logNote("候选池排行榜已生成，日期" + rankDate);
                 } catch (Exception e) {
                     Log.e(TAG, "候选池排行榜落库/通知失败", e);
@@ -433,13 +473,18 @@ public class RealtimeMonitorService extends Service {
         return n == 0 ? null : sb.toString();
     }
 
-    /** 【R10】排行榜生成完毕的醒目提示——复用普通高优先级通道，固定通知ID避免跟个股信号的
-     *  code.hashCode()碰撞。点击后打开App——具体展示页面本轮不做，前端另行确认，与R7角标部分一致。 */
-    private void fireRankingReadyNotification() {
+    /** 【R10，留痕修复】排行榜生成完毕的醒目提示——复用普通高优先级通道，固定通知ID避免跟
+     *  个股信号的code.hashCode()碰撞。点击后直接跳转到候选池排行榜页面并定位到这一天
+     *  （之前点击只是打开App、停留在原来的页面，找不到任何入口能再看一次，这里带上
+     *  MainActivity.EXTRA_OPEN_PAGE/EXTRA_RANKING_DATE两个extra，由MainActivity负责
+     *  在onNewIntent/冷启动路径里转发给WebView）。 */
+    private void fireRankingReadyNotification(String rankDate) {
         NotificationManager nm = getSystemService(NotificationManager.class);
         String title = "📊 今日候选池排行榜已生成";
-        String content = "收盘前20分钟AI横向打分完成，点击App查看";
+        String content = "收盘前20分钟AI横向打分完成，点击查看";
         Intent tapIntent = new Intent(this, MainActivity.class);
+        tapIntent.putExtra(MainActivity.EXTRA_OPEN_PAGE, "candidate_ranking");
+        tapIntent.putExtra(MainActivity.EXTRA_RANKING_DATE, rankDate);
         PendingIntent pi = PendingIntent.getActivity(this, RANKING_NOTIFICATION_ID, tapIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification n = new NotificationCompat.Builder(this, CHANNEL_ID)
@@ -480,7 +525,13 @@ public class RealtimeMonitorService extends Service {
         if (result.stateUpdate != null) {
             WatchlistManager.get().saveTrackState(item.code, result.stateUpdate);
         }
-        if (result.waterLine > 0) {
+        // 【2026-09-16修复：持仓页止损价有时不显示】原先只在result.waterLine>0时才缓存这几个结构化
+        // 指标（含prevLow止损价），但buildSnapshotLine方法自己的注释就写着“result.vwap/waterLine这两个
+        // 结构化double字段在部分fallthrough分支里没被设置”——也就是说有些分支（比如
+        // WARN_PRESSURE等止损相关分支）走到这里时waterLine可能确实是0，止损价就跟着一起被漏更新，
+        // 即使prevDay.prevLow本身明明是有效数据。止损价是否可用只应该取决于prevDay本身有没有拿到
+        // 数据，不该被“这一轮具体走到了哪个判断分支”连带影响。
+        if (prevDay.hasData) {
             // 【用户已明确要求】额外传入 prevDay.prevLow（前一交易日最低价），现在它就是独立破位
             // 止损参照价，必须在候选池/持仓列表里醒目展示，不能只藏在note文字里。
             WatchlistManager.get().updateLiveMetrics(item.code, result.waterLine, result.vwap, result.volRatio, prevDay.prevLow);
@@ -503,6 +554,15 @@ public class RealtimeMonitorService extends Service {
                     fireFocusWatchNotification(item.code, item.name, result.note, quote.price);
                 } catch (Exception e) {
                     Log.e(TAG, "发送重点监听提示失败", e);
+                }
+            }
+            // 【分时经验规则步骤4新增】水下反转检测到：先写决策日志+推送轻量通知（客观数字，立即
+            // 可用），AI"完整分析"异步跑，不阻塞。不影响本轮tick的其他处理。
+            if (result.underwaterReversal != null) {
+                try {
+                    handleUnderwaterReversal(item, quote, prevDay, result.underwaterReversal);
+                } catch (Exception e) {
+                    Log.e(TAG, "处理水下反转信号失败", e);
                 }
             }
             // 观察中的候选股：本轮无买卖信号时，检查是否该自动移出观察池
@@ -960,6 +1020,94 @@ public class RealtimeMonitorService extends Service {
                 .setOnlyAlertOnce(true)
                 .build();
         nm.notify(code.hashCode(), n);
+    }
+
+    /** 【分时经验规则步骤4新增】水下V型反转：先写决策日志+推送轻量通知（客观数字，立即可用），
+     *  AI"完整分析"异步跑，跑完后追加进同一支股票的决策日志（不新开一条，保持"点开一支
+     *  股票看完整时间线"的体验），不阻塞初始推送。对应用户原话"将所有关键信息都列出来，比如
+     *  昨日最低价，水线价格，现在的分时均价价格，并将本地ai针对当前分时图的分析内容完整展示"，
+     *  contextText就是那几个关键数字，通知、日志、AI prompt三处共用同一份，保证口径一致。 */
+    private void handleUnderwaterReversal(WatchlistManager.WatchlistItem item, RealtimeQuoteManager.Quote quote,
+                                           TradingRuleEngine.PrevDayRef prevDay,
+                                           IntradayPatternAnalyzer.VReversal r) {
+        String contextText = String.format(java.util.Locale.CHINA,
+                "昨日最低价¥%.2f，水线（昨收）¥%.2f，反转点价格¥%.2f，反转点量能比%.2fx（相对前5-10分钟均量），"
+                        + "现价¥%.2f，反转后已维持%d分钟未破位。",
+                prevDay.prevLow, prevDay.prevClose, r.extremePrice, r.volRatio, quote.price, r.sustainMinutes);
+
+        // 【修复】原本传的是两个参数（拼好的"name(code)"字符串 + 内容），但DecisionLogger.
+        // logNote只有(code, name, text)三参数和(text)单参数两个重载，没有两参数版本，会直接
+        // 编译失败。改为正确的三参数调用。
+        DecisionLogger.get().logNote(item.code, item.name, "【水下反转检测】" + contextText);
+        fireUnderwaterReversalNotification(item.code, item.name, contextText, quote.price);
+
+        LocalAIAgent.get(getApplicationContext()).analyzeIntradayReversal(item.code, item.name, contextText,
+                new LocalAIAgent.AICallback() {
+                    @Override public void onToken(String token) {}
+                    @Override
+                    public void onComplete(String fullText) {
+                        try {
+                            DecisionLogger.get().logNote(item.code, item.name, "【水下反转·AI完整分析】" + fullText);
+                            updateUnderwaterReversalNotification(item.code, item.name, quote.price, fullText);
+                        } catch (Exception e) {
+                            Log.e(TAG, "追加水下反转AI分析日志失败", e);
+                        }
+                    }
+                    @Override
+                    public void onError(String msg) {
+                        Log.w(TAG, "水下反转AI分析失败: " + msg);
+                    }
+                });
+    }
+
+    private int underwaterNotifId(String code) {
+        return ("uw_" + code).hashCode();
+    }
+
+    /** 复用CHANNEL_ID_FOCUS_WATCH（同样是信息展示、非交易动作性质），但通知ID跟
+     *  fireFocusWatchNotification区分开（用"uw_"+code算hash），避免一支股票同时处于
+     *  "重点监听"又"水下反转"时两条通知互相覆盖。 */
+    private void fireUnderwaterReversalNotification(String code, String name, String contextText, double price) {
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        String title = "🔍 " + name + "(" + code + ") 水下检测到反转形态";
+        String content = String.format(java.util.Locale.CHINA, "¥%.2f · %s（AI分析中，稍后更新）", price, contextText);
+
+        Intent tapIntent = new Intent(this, MainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(this, underwaterNotifId(code), tapIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        Notification n = new NotificationCompat.Builder(this, CHANNEL_ID_FOCUS_WATCH)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(content))
+                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build();
+        nm.notify(underwaterNotifId(code), n);
+    }
+
+    /** AI完整分析跑完后更新同一条通知，不新增一条刷屏。 */
+    private void updateUnderwaterReversalNotification(String code, String name, double price, String aiFullText) {
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        String title = "🔍 " + name + "(" + code + ") 水下反转·AI分析已就绪";
+        String content = String.format(java.util.Locale.CHINA, "¥%.2f · %s", price, aiFullText);
+
+        Intent tapIntent = new Intent(this, MainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(this, underwaterNotifId(code), tapIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        Notification n = new NotificationCompat.Builder(this, CHANNEL_ID_FOCUS_WATCH)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(content))
+                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build();
+        nm.notify(underwaterNotifId(code), n);
     }
 
     /**

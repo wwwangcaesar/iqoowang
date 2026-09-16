@@ -142,4 +142,33 @@ public class AIContextBuilder {
             return "";
         }
     }
+
+    /**
+     * 【B认领步骤（5，分时图经验规则通道B】当前这一刻的分时形态客观数字——尖角反转是否检测到、
+     * 反转量能比、维持分钟数、是否已强确认。数据直接来自RealtimeQuoteManager的分时缓存
+     * （常规监控tick已经拉过，这里只读缓存不额外发请求）+IntradayPatternAnalyzer的纯计算，
+     * 不是AI自己编的。跟WisdomManager话术注入（"AI要记住的规则"）是两回事，这里是
+     * "AI这一刻看到的具体现象"，对应D-分时图经验规则实现方案.md第4节通道B设计。
+     */
+    public String buildIntradayPatternContext(String code) {
+        try {
+            List<com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.MinutePoint> points =
+                    com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.get().getCachedMinuteLine(code);
+            if (points == null || points.size() < 6) return "";
+            com.monsieurmahjong.iqoowang.util.IntradayPatternAnalyzer.VReversal vr =
+                    com.monsieurmahjong.iqoowang.util.IntradayPatternAnalyzer.get().detectVReversal(points);
+            if (!vr.detected) return "";
+            String extremeTime = (vr.extremeIndex >= 0 && vr.extremeIndex < points.size())
+                    ? points.get(vr.extremeIndex).time : "?";
+            return String.format(Locale.CHINA,
+                    "识别到%s（%s附近¥%.2f），反转点量能为前5-10分钟均量的%.1f倍，"
+                            + "反转后已维持%d分钟未被打破%s。",
+                    "BOTTOM".equals(vr.direction) ? "触底反转（买入方向）" : "冲高回落（卖出/预警方向）",
+                    extremeTime, vr.extremePrice, vr.volRatio, vr.sustainMinutes,
+                    vr.strongConfirm ? "，且已放量突破当日高点(强确认)" : "");
+        } catch (Exception e) {
+            Log.w(TAG, "buildIntradayPatternContext failed", e);
+            return "";
+        }
+    }
 }

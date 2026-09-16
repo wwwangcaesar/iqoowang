@@ -862,6 +862,7 @@
         <div class="review-tab" id="tabBtn_aiReview" onclick="showReviewTab('aiReview')">🤖 AI分析审核</div>
         <div class="review-tab" id="tabBtn_log" onclick="openLogsPage()">📝 决策日志</div>
         <div class="review-tab" id="tabBtn_config" onclick="showReviewTab('config')">⚙️ 参数配置</div>
+        <div class="review-tab" id="tabBtn_ranking" onclick="openRankingPage()">📊 收盘排行</div>
       </div>
       <div id="aiReviewPanel" style="display:none;padding:10px 12px 12px;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;">
@@ -1046,6 +1047,17 @@
       </div>
       <pre id="logsStockContent" style="margin:0 12px 12px;background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:10px;color:var(--text-sub);line-height:1.7;white-space:pre-wrap;word-break:break-all;font-family:var(--font-mono);"></pre>
     </div>
+  </div>
+
+  <!-- ══ 候选池排行榜——独立全屏页面 ══ -->
+  <div class="page" id="page-ranking">
+    <div style="padding:10px 12px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border);">
+      <span onclick="closeRankingPage()" style="font-size:20px;cursor:pointer;color:var(--text-sub);line-height:1;">‹</span>
+      <div style="font-size:15px;font-weight:700;color:var(--text-prime);flex:1;">候选池排行榜</div>
+      <select id="rankingDateSelect" onchange="loadRankingForDate(this.value)" style="background:var(--bg-card2);color:var(--text-prime);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:11px;"></select>
+    </div>
+    <div style="padding:6px 12px 0;font-size:9px;color:var(--text-dim);">每个交易日收盘前20分钟，AI对候选池股票做一次横向打分排序</div>
+    <pre id="rankingContent" style="margin:10px 12px;background:var(--bg-deep);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11px;color:var(--text-sub);line-height:1.7;white-space:pre-wrap;word-break:break-all;font-family:var(--font-mono);"></pre>
   </div>
 
 </div>
@@ -1535,6 +1547,48 @@ function toggleAiCapSummary() {
   }
 }
 
+// ══ 候选池排行榜——独立全屏页面：日期 → 当天排行榜文本 ══
+// 【留痕修复】之前后端已经在存（DatabaseManager.saveCandidateRanking），但前端从没读过，
+// 通知点开等于白开；现在补上页面+入口+通知直达三处。
+function openRankingPage(preferredDate) {
+  if (!IS_ANDROID) { showToast('候选池排行榜需要在App中运行'); return; }
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-ranking').classList.add('active');
+  try {
+    const dates = JSON.parse(Android.getCandidateRankingDates() || '[]');
+    const sel = document.getElementById('rankingDateSelect');
+    if (!dates.length) {
+      sel.innerHTML = '';
+      document.getElementById('rankingContent').textContent = '还没有生成过候选池排行榜——每个交易日收盘前20分钟自动生成一次（需要候选池非空、本地AI就绪）';
+      return;
+    }
+    sel.innerHTML = dates.map(d => `<option value="${d}">${d}</option>`).join('');
+    const target = (preferredDate && dates.includes(preferredDate)) ? preferredDate : dates[0];
+    sel.value = target;
+    loadRankingForDate(target);
+  } catch (e) { console.error('[Ranking] 打开失败', e); }
+}
+
+function closeRankingPage() {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-screen').classList.add('active');
+  document.getElementById('nav-screen').classList.add('active');
+}
+
+function loadRankingForDate(dateStr) {
+  if (!IS_ANDROID || !dateStr) return;
+  try {
+    const text = Android.getCandidateRanking(dateStr) || '';
+    document.getElementById('rankingContent').textContent = text || '这一天没有生成排行榜';
+  } catch (e) { console.error('[Ranking] 加载失败', e); showToast('加载失败'); }
+}
+
+/** 供候选池排行榜通知点击时直接跳转（MainActivity收到intent后调用）。date是通知对应的
+ *  具体日期，不假设一定是最新一天——避免通知在通知栏放了一两天才点开时跳错日期。 */
+window.showCandidateRankingPage = function(date) {
+  openRankingPage(date);
+};
+
 /** 交易规则参数配置字段清单，和TradingRuleConfig.java字段一一对应。
  *  percent类型在界面上按百分比展示（乘100），保存时再除回100，避免用户输入"0.3"这种不直观的写法。 */
 const TRADING_CONFIG_FIELDS = [
@@ -1744,6 +1798,10 @@ function renderWatchlist(items) {
         </div>
         <div style="font-size:9px;margin-bottom:4px;">${aiStatusTag} · 触发价¥${(it.pendingPrice||0).toFixed(2)}</div>
         <div style="font-size:11px;color:var(--text-prime);line-height:1.6;margin-bottom:8px;">${it.pendingReason || ''}</div>
+        ${it.prevLow ? `<div style="margin-top:-2px;margin-bottom:8px;padding:3px 7px;background:rgba(0,180,120,0.14);border-radius:5px;display:inline-block;">
+            <span style="color:var(--down-green);font-size:10px;font-weight:700;">🛑 止损价 ¥${it.prevLow.toFixed(2)}</span>
+            <span style="color:var(--text-dim);font-size:9px;">（前一交易日最低价）</span>
+          </div>` : ''}
         <div style="font-size:9px;color:var(--text-dim);margin-bottom:6px;">点击卡片直接买入/卖出</div>
         <div style="display:flex;gap:8px;">
           <button onclick="event.stopPropagation();confirmWatchlistSignal('${it.code}')" style="flex:1;padding:6px;border-radius:6px;border:1px solid var(--up-red);background:transparent;color:var(--up-red);font-size:11px;">✓ 确认执行</button>
@@ -2978,7 +3036,11 @@ function loadFenshiChart(code) {
   try {
     const json = Android.getMinuteChartData(code);
     const data = JSON.parse(json || '{}');
-    if (!data.code || data.code !== STATE.currentKlineCode) return;
+    // 【修复】原先“没有code字段”和“code跟当前查看的股票对不上”共用同一个return，导致真的
+    // 什么数据都没拿到时，也会被这条判断直接吞掉、连“暂无数据”的提示都画不出来。现在
+    // 只在明确是“另一支股票的数据”时才丢弃，数据本身为空也要走到drawFenshiChart，让它画出
+    // “暂无分时数据”提示而不是维持一片空白/上一次的旧内容。
+    if (data.code && data.code !== STATE.currentKlineCode) return;
     STATE.currentFenshiData = data;
     drawFenshiChart(data);
   } catch (e) { console.error('loadFenshiChart', e); }
@@ -2986,7 +3048,24 @@ function loadFenshiChart(code) {
 
 function drawFenshiChart(data) {
   const canvas = document.getElementById('fenshiCanvas');
-  if (!canvas || !data.points || !data.points.length) return;
+  if (!canvas) return;
+  if (!data.points || !data.points.length) {
+    // 【修复：分时图无数据时完全空白，看不出是没数据还是没画】之前这里直接return，画布
+    // 保持上一次渲染的内容（或者从来没画过就是一片空白），用户完全分不清是“数据没拿到”
+    // 还是“拿到了但画图本身坏了”。现在明确清空画布并画一行提示文字，状态可见。
+    const ctx = canvas.getContext('2d');
+    const W = canvas.parentElement.offsetWidth, H = 200;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.style.width = W+'px'; canvas.style.height = H+'px';
+    canvas.width = W*dpr; canvas.height = H*dpr;
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle = 'rgba(122,148,184,0.6)';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('暂无分时数据（可能未在交易时段，或行情获取失败）', W/2, H/2);
+    return;
+  }
   const prevClose = data.prevClose || data.points[0].price;
   if (!prevClose) return;
 
@@ -3517,6 +3596,9 @@ function switchTab(tab) {
       if (tab === 'home') {
         refreshAccountSummary();
         drawKline(); drawPnlChart();
+        // 【D新增】切回主页时重拉一次分时图——监控tick每2分钟会把候选池/持仓的分时数据
+        // 刷新到缓存里，这里只管重新读一遍缓存重画，不额外发网络请求。
+        if (IS_ANDROID && STATE.currentKlineCode) loadFenshiChart(STATE.currentKlineCode);
         loadRecentTrades();
       }
       if (tab === 'position') {

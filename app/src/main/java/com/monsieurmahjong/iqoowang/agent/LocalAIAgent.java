@@ -411,6 +411,13 @@ public class LocalAIAgent {
 
         sb.append("规则引擎依据：").append(ruleNote).append("\n");
         if (metrics != null && !metrics.isEmpty()) sb.append("量化指标：").append(metrics).append("\n");
+        // 【B认领步骤（5，分时图经验规则通道B】当前分时形态客观数字，跟WisdomManager话术注入（固定
+        // 知识）是两回事，这里是这一刻的具体现象，取失败不影响整体流程（AIContextBuilder内部
+        // 已有try/catch，这里再包一层纯为保险）。
+        try {
+            String intradayCtx = mCtxBuilder.buildIntradayPatternContext(code);
+            if (intradayCtx != null && !intradayCtx.isEmpty()) sb.append("分时形态：").append(intradayCtx).append("\n");
+        } catch (Exception ignored) {}
         if (quote != null) {
             sb.append(String.format(Locale.CHINA,
                     "实时行情(%s)：现价¥%.2f 今开¥%.2f 最高¥%.2f 最低¥%.2f 涨跌幅%.2f%%\n",
@@ -772,6 +779,52 @@ public class LocalAIAgent {
                 "一个上面给出的具体数值（比如量比、涨幅、评分、状态），不能写「综合判断」这类空话。\n");
         sb.append("\n【输出要求】按打分从高到低排列，每支股票三行，不要写其他内容：\n");
         sb.append("股票：名称(代码)\n评分：0-100整数\n理由：不超50字，必须引用至少一个上面给出的具体数字\n");
+        return sb.toString();
+    }
+
+    /**
+     * 【分时经验规则步骤4新增】水下反转形态解读——只做"这个反转形态说明了什么"的解读，不给"买"或
+     *  "不买"的结论，用户自己看着解读结果判断要不要水下买入（对应用户原话"S通过这些分析
+     *  自主判断是否水下买入"）。跿erifySignal不同：verifySignal产出的是"支持/存疑"二元
+     *  结论，这里不产出任何结论，模型未就绪时直接报错，不降级到专家规则——跟
+     *  rankCandidatesBeforeClose一个道理，这是"定性洞察"功能，规则模板硬凑一段解读意义不大。
+     */
+    public void analyzeIntradayReversal(String code, String name, String contextText, AICallback cb) {
+        if (!tryAcquireInferLock()) {
+            cb.onError("AI正在思考中，请稍后");
+            return;
+        }
+        mExecutor.execute(() -> {
+            try {
+                String histNote = mCtxBuilder.buildStockHistoryNote(code);
+                String prompt = buildUnderwaterReversalPrompt(name, code, contextText, histNote);
+                if (mEngine.isReady()) {
+                    mEngine.reset();
+                    runStream(prompt, cb);
+                } else {
+                    mInferring.set(false);
+                    cb.onError("本地AI模型未就绪，暂时无法生成形态解读");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "analyzeIntradayReversal", e);
+                mInferring.set(false);
+                mMainHandler.post(() -> cb.onError(e.getMessage()));
+            }
+        });
+    }
+
+    private String buildUnderwaterReversalPrompt(String name, String code, String contextText, String histNote) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(getSystemPrompt("GENERAL")).append("\n\n");
+        sb.append("【水下反转形态解读任务】").append(name).append("(").append(code).append(")现价仍低于昨收（处于\"水下\"），");
+        sb.append("但分时图上检测到一次尖角V型反转，已经站稳分时均价线不再回落。这不是一个满足现有底仓规则的正式买入信号，");
+        sb.append("只是提醒用户注意到这个形态，由用户自己判断要不要在水下提前介入。\n\n");
+        sb.append(contextText);
+        if (histNote != null && !histNote.isEmpty()) sb.append("历史交易：").append(histNote).append("\n");
+        sb.append("\n【重要】你的任务只是帮用户理解这个反转形态说明了什么、可信度如何，绝对不要给出\"建议买入\"或\"建议观望\"" +
+                "这类结论性判断——是否要在水下提前介入，由用户自己看完你的解读后决定，不是你来决定。\n");
+        sb.append("\n【输出要求】不超过150字，说清楚：这次反转的量能是否扎实（对照下面给出的量能比数字）、" +
+                "目前站稳分时均价线维持了多久、跟同类反转形态相比可信度如何、还有什么风险点用户需要注意。不要输出\"判断：确认/不确认\"这类格式。\n");
         return sb.toString();
     }
 

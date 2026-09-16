@@ -3,6 +3,7 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.os.Build;
@@ -47,6 +48,11 @@ public class MainActivity extends Activity {
 
     private static final String TAG = "MainActivity";
     private static final int REQ_PERMISSIONS = 100;
+
+    /** 【留痕修复】候选池排行榜通知点击后携带这两个intent extra，让WebView能直接跳到
+     *  对应日期的排行榜页面，而不是打开App却什么都看不到、也找不到入口再看一次。 */
+    public static final String EXTRA_OPEN_PAGE = "open_page";
+    public static final String EXTRA_RANKING_DATE = "ranking_date";
 
     private WebView mWebView;
     private StockBridge mBridge;
@@ -97,6 +103,29 @@ public class MainActivity extends Activity {
                     .setPositiveButton("知道了", null)
                     .show();
         } catch (Exception ignored) {}
+    }
+
+    /** singleTop启动模式下，App已在前台/后台运行时点通知不会重新走onCreate，
+     *  而是直接回调这里——之前完全没处理，导致候选池排行榜通知点开后App只是被
+     *  切到前台，还停留在点通知前的那个页面，看起来就像"什么都没发生"。 */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handlePendingNavigation(intent);
+    }
+
+    /** 冷启动（onCreate→onPageFinished）和热启动（onNewIntent，WebView早已加载完毕）
+     *  两条路径共用这一个方法——按intent里的extra决定要不要跳转到某个具体页面。
+     *  目前只有候选池排行榜通知会带这个extra，以后其它通知需要"点开直达"也可以复用。 */
+    private void handlePendingNavigation(Intent intent) {
+        if (intent == null || mWebView == null) return;
+        if ("candidate_ranking".equals(intent.getStringExtra(EXTRA_OPEN_PAGE))) {
+            String date = intent.getStringExtra(EXTRA_RANKING_DATE);
+            String dateEsc = date != null ? date.replace("\\", "\\\\").replace("'", "\\'") : "";
+            mWebView.evaluateJavascript(
+                    "window.showCandidateRankingPage && window.showCandidateRankingPage('" + dateEsc + "')", null);
+        }
     }
 
     @Override
@@ -172,6 +201,8 @@ public class MainActivity extends Activity {
                 Log.d(TAG, "onPageFinished: " + url);
                 // 加载完成后：注入持仓数据、资产历史、AI状态
                 injectInitialData();
+                // 冷启动路径：如果是从候选池排行榜通知点进来的，直接跳转到对应页面
+                handlePendingNavigation(getIntent());
                 // 预热AI
                 view.evaluateJavascript("Android.warmupAI()", null);
                 // 启动行情刷新
