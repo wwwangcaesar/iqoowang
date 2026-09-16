@@ -5,6 +5,7 @@ import android.app.Application;
 import com.amap.api.location.AMapLocationClient;
 import com.amap.api.maps.MapsInitializer;
 import com.amap.api.services.core.ServiceSettings;
+import com.monsieurmahjong.iqoowang.service.ShakeDetectService;
 
 public class MyApplication extends Application {
     private static final String TAG = "MyApplication";
@@ -23,5 +24,9 @@ public class MyApplication extends Application {
         MapsInitializer.updatePrivacyAgree(this, true);
         ServiceSettings.updatePrivacyShow(this, true, true);
         ServiceSettings.updatePrivacyAgree(this, true);
+
+        // 摇一摇记账默认开启：只要用户没手动关过开关、且无障碍服务已授权，App 冷启动时就自动
+        // 拉起前台监听，不用每次都去设置页手动点一下（配合 BootCompletedReceiver 覆盖开机重启场景）
+        ShakeDetectService.startIfEnabled(this);
     }
 }

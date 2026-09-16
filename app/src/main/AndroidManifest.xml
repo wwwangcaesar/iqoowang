@@ -30,6 +30,8 @@
     <!-- 摇一摇记账用：前台Service必需的基础权限 + Android 14 specialUse 类型专属权限 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- 摇一摇记账默认开启后，用来在设备重启时重新拉起前台监听服务（配合 BootCompletedReceiver） -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 摇晃触发时如果手机在锁屏/后台，需要这个权限才能弹全屏通知直接唤起记账页；
          没有这个权限也不会崩，只是触发时退化成普通通知，需要用户自己点一下 -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
@@ -154,6 +156,15 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="shake_gesture_quick_expense_logging" />
         </service>
+        <!-- 开机自启摇一摇监听：只监听系统受保护广播，exported=true 不会被第三方App伪造触发 -->
+        <receiver
+            android:name=".service.BootCompletedReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
         <service
             android:name=".server.ScreenshotService"
             android:exported="true"

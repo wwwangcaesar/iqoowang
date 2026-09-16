@@ -233,7 +233,9 @@ public class SettingsFragment extends Fragment {
 
         SharedPreferences shakePrefs = requireContext()
                 .getSharedPreferences(ShakeDetectService.PREFS, Context.MODE_PRIVATE);
-        boolean enabled = shakePrefs.getBoolean(ShakeDetectService.KEY_ENABLED, false);
+        // 默认开启：没有显式关过开关时（key 不存在）视为已开启，与 MyApplication/BootCompletedReceiver 里
+        // ShakeDetectService.startIfEnabled() 的默认值保持一致
+        boolean enabled = shakePrefs.getBoolean(ShakeDetectService.KEY_ENABLED, true);
         boolean accessibilityOn = AccessibilityStatusUtils.isScreenshotServiceEnabled(requireContext());
         if (enabled && !accessibilityOn) {
             enabled = false;
