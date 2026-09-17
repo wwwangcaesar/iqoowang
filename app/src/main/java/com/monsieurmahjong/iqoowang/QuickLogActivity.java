@@ -79,6 +79,12 @@ public class QuickLogActivity extends AppCompatActivity {
 
     /** 摇一摇触发的专用 action，由 ShakeDetectService 发出，走和 NFC 同样的隐身截图链路 */
     public static final String ACTION_SHAKE_LOG = "com.monsieurmahjong.iqoowang.action.SHAKE_LOG";
+    /**
+     * 【202609 截图时序修复】摇一摇路径下，ScreenshotService 在拉起本Activity之前就已经截图+
+     * 存好了（这样截到的才是用户当前真正在看的App，不是本App任务栈里的内容），通过这个extra
+     * 把图片URI原样带过来，本Activity不用再自己发一次截图请求，也不用重新查相册"最新一张"。
+     */
+    public static final String EXTRA_CAPTURED_IMAGE_URI = "com.monsieurmahjong.iqoowang.extra.CAPTURED_IMAGE_URI";
 
     private EditText etAmount;
     private GridLayout gridCategories;
@@ -98,6 +104,9 @@ public class QuickLogActivity extends AppCompatActivity {
     /** 已保存账单的 id，-1 表示还没保存。定位如果比保存动作还慢，这个字段让定位回调知道
      * 要回头补哪一行。同样需要 volatile 保证跨线程可见性。 */
     private volatile long savedExpenseId = -1;
+    /** showRealUI() 拿到的图片URI：摇一摇/NFC触发时是 ScreenshotService 截好的那张精确URI，
+     * 手动打开时是null。startScreenshotOcrWorkflow() 优先用这个，没有才退化去查相册最新一张。 */
+    private String capturedImageUriString;
 
     private BroadcastReceiver screenshotReceiver = new BroadcastReceiver() {
         @Override
@@ -149,16 +158,29 @@ public class QuickLogActivity extends AppCompatActivity {
     private boolean isNfc=true;
     private void handleNfcIntent(Intent intent) {
         String action = intent != null ? intent.getAction() : null;
-        // NFC 碰卡和摇一摇触发走同一条链路：先保持全透明不 setContentView，发广播让无障碍服务截图，
-        // 收到截图完成广播后才真正显示 UI 并跑 OCR。两者唯一的区别是 isNfc/entrySource，
-        // 最终体现在入库的 recordSource 上，方便以后区分这笔账是怎么记上的。
-        boolean triggeredByScreenshot = NfcAdapter.ACTION_NDEF_DISCOVERED.equals(action)
-                || ACTION_SHAKE_LOG.equals(action);
+        boolean isShake = ACTION_SHAKE_LOG.equals(action);
+        // 【202609 截图时序修复】摇一摇现在由 ScreenshotService 在拉起本Activity之前就已经截图+
+        // 存好图，通过 EXTRA_CAPTURED_IMAGE_URI 把URI带过来了——本Activity不用再自己发一次截图
+        // 请求（那样等于在自己已经顶到最前面之后才截图，截到的会是自家App的内容，详见
+        // ShakeDetectService/ScreenshotService 类注释）。有这个extra就直接显示真实UI。
+        String preCapturedUri = isShake ? intent.getStringExtra(EXTRA_CAPTURED_IMAGE_URI) : null;
+
+        if (isShake && preCapturedUri != null) {
+            entrySource = "摇一摇";
+            isNfc = false;
+            Log.d(TAG, "📳 摇一摇触发！图片已经由 ScreenshotService 提前截好，直接显示真实UI: " + preCapturedUri);
+            showRealUI(preCapturedUri);
+            return;
+        }
+
+        // NFC 碰卡走的还是老链路：先保持全透明不 setContentView，发广播让无障碍服务截图，
+        // 收到截图完成广播后才真正显示 UI 并跑 OCR，靠 transparent 主题透出底下App这一刻的画面。
+        boolean triggeredByScreenshot = NfcAdapter.ACTION_NDEF_DISCOVERED.equals(action) || isShake;
 
         if (triggeredByScreenshot) {
             isNfc = NfcAdapter.ACTION_NDEF_DISCOVERED.equals(action);
             entrySource = isNfc ? "NFC触摸" : "摇一摇";
-            Log.d(TAG, (isNfc ? "⚡ NFC 碰卡触发！" : "📳 摇一摇触发！")
+            Log.d(TAG, (isNfc ? "⚡ NFC 碰卡触发！" : "📳 摇一摇触发（没带预截图URI，走老兜底链路）！")
                     + "当前 Activity 处于【全透明隐身状态】，正在向后台无障碍发截图命令...");
             sendBroadcast(new Intent(ScreenshotService.ACTION_REQUEST_SCREENSHOT));
         } else {
@@ -171,6 +193,10 @@ public class QuickLogActivity extends AppCompatActivity {
 
 
     private void showRealUI(String imagePath) {
+        // 摇一摇/NFC传进来的精确图片URI（手动打开是null），供 startScreenshotOcrWorkflow() 直接用，
+        // 不用再重新查一次相册"最新一张"——这个字段是这两处之间跨越权限异步申请边界的传递方式
+        capturedImageUriString = imagePath;
+
         // 全屏及透明导航栏/状态栏的配置（必须在 setContentView 之前）
         getWindow().setFlags(
                 WindowManager.LayoutParams.FLAG_FULLSCREEN,
@@ -595,13 +621,22 @@ public class QuickLogActivity extends AppCompatActivity {
         );
     }
     private void startScreenshotOcrWorkflow() {
-        Uri latestImageUri = getLatestImageUri(this);
-        if (latestImageUri == null) {
+        Uri targetUri;
+        if (capturedImageUriString != null) {
+            // 摇一摇/NFC都已经把精确URI传下来了，直接用，不用再查一次相册"最新一张"
+            targetUri = Uri.parse(capturedImageUriString);
+            Log.d(TAG, "使用已知精确图片URI，跳过相册查询: " + targetUri);
+        } else {
+            // 手动打开等没有精确URI的场景，退化为查询相册最新一张（原有行为）
+            targetUri = getLatestImageUri(this);
+            Log.d(TAG, "没有精确URI，退化为查询相册最新一张: " + targetUri);
+        }
+        if (targetUri == null) {
             return;
         }
 
         try {
-            InputImage image = InputImage.fromFilePath(this, latestImageUri);
+            InputImage image = InputImage.fromFilePath(this, targetUri);
 
             // 【核心修改】使用中文识别器的专用配置构造器
             ChineseTextRecognizerOptions options = new ChineseTextRecognizerOptions.Builder().build();

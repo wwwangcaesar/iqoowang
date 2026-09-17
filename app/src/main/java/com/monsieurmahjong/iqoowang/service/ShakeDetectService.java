@@ -1,6 +1,5 @@
 package com.monsieurmahjong.iqoowang.service;
 
-import android.app.AlarmManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -19,23 +18,33 @@ import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
-import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 
-import com.monsieurmahjong.iqoowang.QuickLogActivity;
 import com.monsieurmahjong.iqoowang.R;
+import com.monsieurmahjong.iqoowang.server.ScreenshotService;
 import com.monsieurmahjong.iqoowang.utils.AccessibilityStatusUtils;
 
 import java.util.ArrayDeque;
 
 /**
  * 摇一摇记账的后台监听：持续监听加速度传感器，检测到"用力摇晃"这个动作特有的
- * 高频往复模式后，唤起 QuickLogActivity 走截图记账流程（等价于又一种 NFC 触发方式，
- * 详见 QuickLogActivity.handleNfcIntent() 对 ACTION_SHAKE_LOG 的处理）。
+ * 高频往复模式后，请求 ScreenshotService 立刻截图并接管后续的拉起流程
+ * （见 ScreenshotService.ACTION_CAPTURE_FOR_TRAMPOLINE）。
+ *
+ * 【202609 截图时序修复】这个类本身不再直接拉起 QuickLogActivity，也不再弹任何通知——
+ * 早期版本是"检测到摇晃 → 直接拉起QuickLogActivity → 它自己再截图"，问题是第二步一旦
+ * 把自家App的界面顶到最前面（QuickLogActivity 是 singleTask，跟 MainActivity 共享默认
+ * taskAffinity，只要MainActivity已经有后台任务存在——几乎总是这样——系统会把那个任务连
+ * 同MainActivity一起带回前台，QuickLogActivity只是透明地盖在它上面)，第三步截到的就是
+ * MainActivity，不是用户真正想记的银行卡/支付软件那一屏。现在改成"先让ScreenshotService
+ * 趁用户当前App还在最前面的这一刻截图 → 图存好之后由它自己通过AlarmManager豁免窗口把
+ * QuickLogActivity连同图片URI一起拉起来"，QuickLogActivity从此不需要再自己截一次图。
  *
  * 【为什么是前台Service】普通后台 Service 在新版 Android 上活不了多久就被系统弄死，
  * 摇一摇要做到"随时随地"就必须是前台 Service，代价是会有一条常驻通知——
  * 这是跟用户明确确认过的取舍（前台Service+常驻通知 vs 只在App开着时监听，选了前者）。
+ * 这条常驻状态通知和"摇晃那一刻要不要弹提示"是两回事：本类现在完全不弹后者，
+ * 摇晃触发走 AlarmManager 豁免窗口，全程无通知。
  *
  * 【防误触】不靠系统状态位收窄监听窗口（NFC开关和这个功能已经确认无关），
  * 完全靠算法本身：短时间窗口内要求足够多次高幅度往复摆动，单次磕碰/掏手机
@@ -54,9 +63,7 @@ public class ShakeDetectService extends Service implements SensorEventListener {
     public static final String KEY_ENABLED = "shake_log_enabled";
 
     private static final String CHANNEL_STATUS = "shake_status_channel";
-    private static final String CHANNEL_TRIGGER = "shake_trigger_channel";
     private static final int NOTIF_ID_STATUS = 3001;
-    private static final int NOTIF_ID_TRIGGER = 3002;
 
     // ── 摇动判定参数（经验初始值，需要在实际设备上实测微调）──
     /** 有效摆动的加速度幅值阈值（m/s²）；线性加速度已经去掉重力，静止/走路时的读数远低于这个 */
@@ -78,7 +85,7 @@ public class ShakeDetectService extends Service implements SensorEventListener {
     @Override
     public void onCreate() {
         super.onCreate();
-        createNotificationChannels();
+        createNotificationChannel();
         startForeground(NOTIF_ID_STATUS, buildStatusNotification());
         registerSensor();
         Log.i(TAG, "摇一摇监听已启动");
@@ -155,112 +162,29 @@ public class ShakeDetectService extends Service implements SensorEventListener {
         // 不需要处理
     }
 
+    /**
+     * 只广播一个"请求截图"意图，不在这里做任何拉起Activity的事——这一刻用户当前App
+     * （银行卡/支付软件）还在最前面，正是应该截图的时机；等 ScreenshotService 截完图、
+     * 存好之后，由它自己负责拉起 QuickLogActivity（见该类的 ACTION_CAPTURE_FOR_TRAMPOLINE
+     * 处理逻辑），不能反过来先拉起我们自己的界面再截图。
+     */
     private void onValidShakeDetected() {
-        Log.i(TAG, "检测到有效摇晃，触发记账页");
-        fireTrampolineLaunch();
+        Log.i(TAG, "检测到有效摇晃，请求无障碍服务截图当前屏幕");
+        sendBroadcast(new Intent(ScreenshotService.ACTION_CAPTURE_FOR_TRAMPOLINE));
     }
 
-    /**
-     * 【202609修复】上一版这里直接调用 setAlarmClock()，线上崩了：
-     * java.lang.SecurityException: Caller ... needs to hold android.permission.SCHEDULE_EXACT_ALARM
-     * or android.permission.USE_EXACT_ALARM to set exact alarms.
-     * 之前注释里写"setAlarmClock()在Android 12+上豁免SCHEDULE_EXACT_ALARM权限检查"是错的——
-     * 查了官方文档（Schedule exact alarms are denied by default），setExact() /
-     * setExactAndAllowWhileIdle() / setAlarmClock() 三个API都受这个权限约束，没有例外。
-     * 现在按权限是否已授予分两条路：授予了走AlarmManager豁免窗口（无感、不弹通知）；
-     * 没授予就退化回弹通知兜底，保证摇一摇"不会没反应"，只是体验退回到需要点一下。
-     * 【202609二次修复】Manifest 里补上 USE_EXACT_ALARM（普通权限，装上自动给，不可被用户在
-     * 设置页撤销）之后，上面这个 canScheduleExactAlarms() 判断在实际运行中应该始终为 true，
-     * fireViaNotificationFallback() 这条退化分支理论上不会再走到——保留它只是防御性写法，
-     * 不再依赖某个不存在的"引导用户去设置页授权"入口（旧版注释提到的
-     * SettingsFragment.requestExactAlarmPermissionIfNeeded() 从未真正实现过，个人签名安装
-     * 场景下也用不上，已经不需要了）。
-     */
-    private void fireTrampolineLaunch() {
-        AlarmManager alarmManager = getSystemService(AlarmManager.class);
-        boolean canUseExactAlarm = alarmManager != null
-                && (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarmManager.canScheduleExactAlarms());
-
-        if (canUseExactAlarm) {
-            fireViaAlarmClock(alarmManager);
-        } else {
-            Log.w(TAG, "没有精确闹钟权限，退化为通知兜底方案");
-            fireViaNotificationFallback();
-        }
-    }
-
-    /**
-     * 用 AlarmManager.setAlarmClock() 触发一个"立刻到点"的系统闹钟，闹钟到点后系统投递
-     * PendingIntent 给 ShakeTrampolineReceiver 的这次广播处理过程，天然落在 Android 官方
-     * 认可的后台拉起Activity豁免窗口内——跟真正的闹钟App在锁屏时能直接弹出响铃界面是
-     * 同一套机制，不受"前台Service在拉Activity这件事上仍算后台"这条限制约束，也不需要
-     * 用户当前屏幕状态配合、不需要点任何通知。
-     */
-    private void fireViaAlarmClock(AlarmManager alarmManager) {
-        Intent trampolineIntent = new Intent(this, ShakeTrampolineReceiver.class);
-        PendingIntent operationPendingIntent = PendingIntent.getBroadcast(this, 0, trampolineIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
-        // AlarmClockInfo 的第二个参数(showIntent)只在用户点状态栏小闹钟图标时才用得到，
-        // 跟触发记账页本身无关，给个能安全跳回App的Intent即可，拿不到就传null（合法）
-        Intent showIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
-        PendingIntent showPendingIntent = showIntent != null
-                ? PendingIntent.getActivity(this, 0, showIntent, PendingIntent.FLAG_IMMUTABLE)
-                : null;
-
-        AlarmManager.AlarmClockInfo alarmClockInfo =
-                new AlarmManager.AlarmClockInfo(System.currentTimeMillis(), showPendingIntent);
-        alarmManager.setAlarmClock(alarmClockInfo, operationPendingIntent);
-    }
-
-    /**
-     * 精确闹钟权限还没到手时的兜底：退回到弹通知、用户点一下才进去，至少保证"摇了有反应"，
-     * 不做全屏意图那么复杂（那需要额外的 USE_FULL_SCREEN_INTENT 权限），这条路径本身
-     * 只是过渡状态，没必要做到跟主路径一样"无感"。
-     */
-    private void fireViaNotificationFallback() {
-        Intent target = new Intent(this, QuickLogActivity.class);
-        target.setAction(QuickLogActivity.ACTION_SHAKE_LOG);
-        target.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        PendingIntent contentIntent = PendingIntent.getActivity(this, 0, target,
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_TRIGGER)
-                .setSmallIcon(R.mipmap.ic_launcher)
-                .setContentTitle("摇一摇记账")
-                .setContentText("检测到摇晃，点击打开记账页")
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setCategory(NotificationCompat.CATEGORY_ALARM)
-                .setAutoCancel(true)
-                .setContentIntent(contentIntent);
-
-        try {
-            NotificationManagerCompat.from(this).notify(NOTIF_ID_TRIGGER, builder.build());
-        } catch (SecurityException e) {
-            Log.w(TAG, "没有通知权限，这次摇晃触发没有更多兜底了", e);
-        }
-    }
-
-    private void createNotificationChannels() {
+    private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
         if (nm == null) return;
 
-        // 常驻状态通知：低优先级、无声音，只是告诉用户"现在摇一摇是生效的"
-        // （原来这里还有一条"触发通知"channel，摇晃那一刻用来弹全屏意图/普通通知；
-        // 现在改回带权限判断：有精确闹钟权限就不弹，没权限才走下面这条 CHANNEL_TRIGGER 兜底）
+        // 常驻状态通知：低优先级、无声音，只是告诉用户"现在摇一摇是生效的"，这是前台Service
+        // 按Android要求必须有的通知，跟"摇晃那一刻要不要弹提示"无关——后者现在完全不弹了
         NotificationChannel statusChannel = new NotificationChannel(
                 CHANNEL_STATUS, "摇一摇记账状态", NotificationManager.IMPORTANCE_LOW);
         statusChannel.setDescription("摇一摇记账功能开启期间的常驻状态提示");
         statusChannel.setShowBadge(false);
         nm.createNotificationChannel(statusChannel);
-
-        // 触发通知：仅在精确闹钟权限还没被授予时的兜底路径会用到（见 fireViaNotificationFallback），
-        // 正常情况下（已授权）摇一摇走 AlarmManager 直接拉起，不会弹这条
-        NotificationChannel triggerChannel = new NotificationChannel(
-                CHANNEL_TRIGGER, "摇一摇触发提醒（备用）", NotificationManager.IMPORTANCE_HIGH);
-        triggerChannel.setDescription("精确闹钟权限未授予时的备用提醒，用于唤起记账页面");
-        nm.createNotificationChannel(triggerChannel);
     }
 
     private Notification buildStatusNotification() {
@@ -283,6 +207,7 @@ public class ShakeDetectService extends Service implements SensorEventListener {
     public static boolean canEnable(android.content.Context context) {
         return AccessibilityStatusUtils.isScreenshotServiceEnabled(context);
     }
+
     /**
      * 供 MyApplication 冷启动 / 开机自启广播复用：只要开关没被用户手动关掉（未写过 KEY_ENABLED 时
      * 默认视为开启）且无障碍服务已经授权，就拉起前台监听，不需要用户每次都手动进设置页点一下。

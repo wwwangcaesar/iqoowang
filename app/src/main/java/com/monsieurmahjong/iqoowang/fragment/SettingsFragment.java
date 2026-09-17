@@ -4,7 +4,9 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
+import android.net.Uri;
 import android.os.Bundle;
+import android.os.PowerManager;
 import android.provider.Settings;
 import android.util.Log;
 import android.view.Gravity;
@@ -254,13 +256,13 @@ public class SettingsFragment extends Fragment {
         // 不能只挂在"手动打开开关"这个动作上，否则这批用户永远看不到，所以这里也补一次检查
         if (enabled) {
             maybePromptVivoAutoStart();
+            maybeRequestIgnoreBatteryOptimizations();
         }
 
         switchShakeLog.setOnCheckedChangeListener((buttonView, isChecked) -> {
             if (isChecked && !AccessibilityStatusUtils.isScreenshotServiceEnabled(requireContext())) {
                 switchShakeLog.setChecked(false);
-                Toast.makeText(requireContext(), "请先在系统设置里给本 App 开启无障碍服务，摇一摇才能截图识别金额", Toast.LENGTH_LONG).show();
-                startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+                showAccessibilityGuideDialog();
                 return;
             }
 
@@ -276,6 +278,7 @@ public class SettingsFragment extends Fragment {
                 }
                 androidx.core.content.ContextCompat.startForegroundService(requireContext(), serviceIntent);
                 maybePromptVivoAutoStart();
+                maybeRequestIgnoreBatteryOptimizations();
             } else {
                 requireContext().stopService(serviceIntent);
             }
@@ -303,6 +306,55 @@ public class SettingsFragment extends Fragment {
                         "摇一摇才能在锁屏/后台稳定跳出记账页。现在去设置一下？")
                 .setPositiveButton("去设置", (d, w) -> VivoAutoStartHelper.openAutoStartSettings(requireContext()))
                 .setNegativeButton("稍后再说", null)
+                .show();
+    }
+
+    /**
+     * 标准 Android 电池优化白名单，跨 vivo 自己的"后台高耗电"是两层不同的限制，都需要单独放开。
+     * 不是vivo专属，AOSP原生机制：Doze/待机模式下系统默认会限制不在这个白名单里的App。
+     * 用 PowerManager.isIgnoringBatteryOptimizations() 做实时判断而不是存一个"弹过一次"的标记——
+     * 这个API本身就能准确反映当前是否已经放开，比vivo那两项没有官方查询接口的权限更可靠，
+     * 已经放开就不会再弹，用户后续手动撤销了也会在下次打开设置页时重新提示。
+     */
+    private void maybeRequestIgnoreBatteryOptimizations() {
+        if (getContext() == null) return;
+        PowerManager pm = (PowerManager) requireContext().getSystemService(Context.POWER_SERVICE);
+        if (pm == null || pm.isIgnoringBatteryOptimizations(requireContext().getPackageName())) return;
+
+        try {
+            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+            intent.setData(Uri.parse("package:" + requireContext().getPackageName()));
+            startActivity(intent);
+        } catch (Exception e) {
+            Log.w(TAG, "跳转电池优化白名单授权页面失败", e);
+        }
+    }
+
+    /**
+     * 【202609】Android 15 上，非应用商店渠道安装（侧载）的App申请无障碍等敏感权限会被系统标记为
+     * "受限设置"：直接去无障碍页开，开关点了也可能不会真正生效。vivo官方支持文档确认了这个机制，
+     * 覆盖短信权限/无障碍/使用情况访问/显示在其他应用上层等一整类敏感权限，不是本App独有，也不是
+     * "用久了自动失效"，而是每次重新安装新版本这个限制都会恢复——开发阶段频繁重装尤其容易碰到。
+     * 必须先去应用详情页解除限制，再回无障碍设置页操作，顺序不能反，所以用弹窗把两步都讲清楚，
+     * 比直接跳无障碍设置页更不容易让用户卡在"点了没反应"这一步猜不到原因。
+     */
+    private void showAccessibilityGuideDialog() {
+        if (getContext() == null) return;
+        new AlertDialog.Builder(requireContext())
+                .setTitle("开启无障碍服务分两步")
+                .setMessage("Android 15 默认限制侧载安装（不是应用商店装的）的App使用无障碍等敏感权限，"
+                        + "直接去无障碍页开可能点了没反应。\n\n"
+                        + "第一步：应用信息页 → 右上角「⋮」菜单 → 「允许受限设置」\n"
+                        + "第二步：再回无障碍设置页，找到本App并开启\n\n"
+                        + "如果之前已经开过、突然又失效了，大概率是重新安装了新版本——这个限制每次"
+                        + "重装都会恢复，需要重新走一遍上面两步。")
+                .setPositiveButton("去应用信息页", (d, w) -> {
+                    Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+                    intent.setData(Uri.parse("package:" + requireContext().getPackageName()));
+                    startActivity(intent);
+                })
+                .setNegativeButton("直接去无障碍页", (d, w) ->
+                        startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
                 .show();
     }
 
