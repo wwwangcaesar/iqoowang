@@ -43,9 +43,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <!-- 摇一摇触发用 AlarmManager.setAlarmClock() 无感拉起Activity，这个API本身也要精确闹钟权限
          （之前以为它能豁免，实测线上报了SecurityException，已确认是三个exact alarm API都要）。
-         Android 12+ 默认不给，需要引导用户去"闹钟和提醒"专项权限页手动开，
-         入口见 SettingsFragment.requestExactAlarmPermissionIfNeeded() -->
+         【202609二次修复】USE_EXACT_ALARM 是普通权限，装上就自动授予、不可被用户撤销（除非卸载），
+         不需要像 SCHEDULE_EXACT_ALARM 那样再单独跳系统设置页引导用户手动开——Google Play 对
+         USE_EXACT_ALARM 有“必须是日历/闹钟类核心功能App”的上架审核限制，但这个App不上架，
+         纯个人签名安装，不受这条约束。两个权限一起声明：USE_EXACT_ALARM 覆盖 Android 13+，
+         SCHEDULE_EXACT_ALARM 在 Android 12/12L 上同样是装上自动给，双重保险覆盖 Android 12 起的全部版本。 -->
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"

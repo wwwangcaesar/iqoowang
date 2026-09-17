@@ -103,6 +103,8 @@ public class SettingsFragment extends Fragment {
     private static final String KEY_MONTHLY_BUDGET = "monthly_budget_cents";
     private static final int MIN_BUDGET = 1000;
     private static final int MAX_BUDGET = 20000;
+    /** vivo「自启动/后台弹出界面」提示只在装机后弹一次，不管默认开启还是手动打开的开关，存在 shake_log_prefs 里 */
+    private static final String KEY_VIVO_HINT_SHOWN = "vivo_autostart_hint_shown";
 
     // ─────────────────────────────────────────────────────
     //  家庭新闻数据模型
@@ -248,6 +250,11 @@ public class SettingsFragment extends Fragment {
         switchShakeLog.setOnCheckedChangeListener(null);
         switchShakeLog.setChecked(enabled);
         updateShakeStatusText(enabled);
+        // 摇一摇现在默认开启，用户可能从没手动点过这个开关就已经在跑了——vivo专属权限提示
+        // 不能只挂在"手动打开开关"这个动作上，否则这批用户永远看不到，所以这里也补一次检查
+        if (enabled) {
+            maybePromptVivoAutoStart();
+        }
 
         switchShakeLog.setOnCheckedChangeListener((buttonView, isChecked) -> {
             if (isChecked && !AccessibilityStatusUtils.isScreenshotServiceEnabled(requireContext())) {
@@ -279,10 +286,16 @@ public class SettingsFragment extends Fragment {
      * vivo/iQOO 设备额外提示：摇一摇触发已经换成 AlarmManager 豁免窗口直接拉起Activity，
      * 这在标准Android层面足够可靠，但vivo自己的后台管理层可能仍然独立拦截——没有官方API
      * 能像无障碍服务那样自动弹去索要，只能引导用户手动跳转放开"自启动"/"后台弹出界面"。
-     * 只在打开开关这个动作发生时提示一次，不做成每次进设置页都弹的强打扰。
+     * 装机后只弹一次（记在 KEY_VIVO_HINT_SHOWN），不管这次是默认开启触发的还是用户手动打开
+     * 开关触发的，不做成每次进设置页都弹的强打扰。
      */
     private void maybePromptVivoAutoStart() {
         if (!VivoAutoStartHelper.isVivoDevice() || getContext() == null) return;
+
+        SharedPreferences shakePrefs = requireContext()
+                .getSharedPreferences(ShakeDetectService.PREFS, Context.MODE_PRIVATE);
+        if (shakePrefs.getBoolean(KEY_VIVO_HINT_SHOWN, false)) return;
+        shakePrefs.edit().putBoolean(KEY_VIVO_HINT_SHOWN, true).apply();
 
         new AlertDialog.Builder(requireContext())
                 .setTitle("再放开一个 vivo 权限")

@@ -169,8 +169,12 @@ public class ShakeDetectService extends Service implements SensorEventListener {
      * setExactAndAllowWhileIdle() / setAlarmClock() 三个API都受这个权限约束，没有例外。
      * 现在按权限是否已授予分两条路：授予了走AlarmManager豁免窗口（无感、不弹通知）；
      * 没授予就退化回弹通知兜底，保证摇一摇"不会没反应"，只是体验退回到需要点一下。
-     * 引导用户去系统设置页授予这个权限的入口在 SettingsFragment 打开开关那一刻
-     * （requestExactAlarmPermissionIfNeeded()），正常使用下很快就会转向前一条路径。
+     * 【202609二次修复】Manifest 里补上 USE_EXACT_ALARM（普通权限，装上自动给，不可被用户在
+     * 设置页撤销）之后，上面这个 canScheduleExactAlarms() 判断在实际运行中应该始终为 true，
+     * fireViaNotificationFallback() 这条退化分支理论上不会再走到——保留它只是防御性写法，
+     * 不再依赖某个不存在的"引导用户去设置页授权"入口（旧版注释提到的
+     * SettingsFragment.requestExactAlarmPermissionIfNeeded() 从未真正实现过，个人签名安装
+     * 场景下也用不上，已经不需要了）。
      */
     private void fireTrampolineLaunch() {
         AlarmManager alarmManager = getSystemService(AlarmManager.class);
