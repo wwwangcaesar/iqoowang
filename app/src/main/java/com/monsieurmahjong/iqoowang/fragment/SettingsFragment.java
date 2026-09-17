@@ -19,6 +19,7 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.widget.SwitchCompat;
 import androidx.cardview.widget.CardView;
 import androidx.fragment.app.Fragment;
@@ -40,6 +41,7 @@ import com.monsieurmahjong.iqoowang.utils.AchievementCelebrationDialog;
 import com.monsieurmahjong.iqoowang.utils.CheckInManager;
 import com.monsieurmahjong.iqoowang.utils.SpBudgetUtils;
 import com.monsieurmahjong.iqoowang.utils.StreakManager;
+import com.monsieurmahjong.iqoowang.utils.VivoAutoStartHelper;
 import com.monsieurmahjong.iqoowang.view.CoolBudgetSeekBar;
 
 import java.io.IOException;
@@ -266,10 +268,29 @@ public class SettingsFragment extends Fragment {
                     requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 2001);
                 }
                 androidx.core.content.ContextCompat.startForegroundService(requireContext(), serviceIntent);
+                maybePromptVivoAutoStart();
             } else {
                 requireContext().stopService(serviceIntent);
             }
         });
+    }
+
+    /**
+     * vivo/iQOO 设备额外提示：摇一摇触发已经换成 AlarmManager 豁免窗口直接拉起Activity，
+     * 这在标准Android层面足够可靠，但vivo自己的后台管理层可能仍然独立拦截——没有官方API
+     * 能像无障碍服务那样自动弹去索要，只能引导用户手动跳转放开"自启动"/"后台弹出界面"。
+     * 只在打开开关这个动作发生时提示一次，不做成每次进设置页都弹的强打扰。
+     */
+    private void maybePromptVivoAutoStart() {
+        if (!VivoAutoStartHelper.isVivoDevice() || getContext() == null) return;
+
+        new AlertDialog.Builder(requireContext())
+                .setTitle("再放开一个 vivo 权限")
+                .setMessage("vivo 系统还需要单独给「自启动」和「后台弹出界面」这两项权限，" +
+                        "摇一摇才能在锁屏/后台稳定跳出记账页。现在去设置一下？")
+                .setPositiveButton("去设置", (d, w) -> VivoAutoStartHelper.openAutoStartSettings(requireContext()))
+                .setNegativeButton("稍后再说", null)
+                .show();
     }
 
     private void updateShakeStatusText(boolean enabled) {

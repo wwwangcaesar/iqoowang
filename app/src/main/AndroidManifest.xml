@@ -10,6 +10,11 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="androidamap" />
         </intent>
+        <!-- vivo/iQOO 自启动+后台弹出界面管理页所在的包：用显式ComponentName跳转虽然
+             不强制要求声明这个，但不同Android版本对包可见性处理细节有出入，加上更保险 -->
+        <package android:name="com.iqoo.secure" />
+        <package android:name="com.vivo.permissionmanager" />
+        <package android:name="com.vivo.abe" />
     </queries>
 
     <uses-permission android:name="android.permission.CAMERA" />
@@ -36,9 +41,11 @@
     <!-- 摇一摇记账用：前台Service必需的基础权限 + Android 14 specialUse 类型专属权限 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <!-- 摇晃触发时如果手机在锁屏/后台，需要这个权限才能弹全屏通知直接唤起记账页；
-         没有这个权限也不会崩，只是触发时退化成普通通知，需要用户自己点一下 -->
-    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- 摇一摇触发用 AlarmManager.setAlarmClock() 无感拉起Activity，这个API本身也要精确闹钟权限
+         （之前以为它能豁免，实测线上报了SecurityException，已确认是三个exact alarm API都要）。
+         Android 12+ 默认不给，需要引导用户去"闹钟和提醒"专项权限页手动开，
+         入口见 SettingsFragment.requestExactAlarmPermissionIfNeeded() -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -166,6 +173,12 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+        <!-- AlarmManager.setAlarmClock() 的投递目标：只由本App自己创建的PendingIntent触发，
+             不挂intent-filter、exported=false，外部App拿不到触发它的途径 -->
+        <receiver
+            android:name=".service.ShakeTrampolineReceiver"
+            android:enabled="true"
+            android:exported="false" />
         <service
             android:name=".service.ShakeDetectService"
             android:enabled="true"
