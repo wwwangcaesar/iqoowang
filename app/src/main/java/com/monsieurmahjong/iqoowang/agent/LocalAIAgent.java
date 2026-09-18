@@ -828,6 +828,59 @@ public class LocalAIAgent {
         return sb.toString();
     }
 
+    /**
+     * 【2026-09-17新增，对应用户要求"分时数据简单代码判断不准确时使用本地AI校验"】规则引擎
+     * (IntradayPatternAnalyzer)算出的趋势/反转/量能信号互相矛盾、或反转只达弱确认时，
+     * 由这里喊本地AI结合具体数字再判断一次，产出简短的定性说明——不是"确认/不确认"这种
+     * 二元买卖结论（那是verifySignal的职责，且必须先有规则命中的Action才会调用），这里
+     * 纯粹是给"规则自己都判断不准的分时形态"补一个人话解读，写进决策日志供事后参考。
+     * 跟analyzeIntradayReversal（专门给水下反转用）是同一类"定性解读不给结论"的设计，
+     * 但覆盖场景更广——不限定必须是水下反转，任何trend/volume/reversal互相矛盾的情况都适用。
+     */
+    public void verifyIntradayPattern(String code, String name, String ruleSummaryText, String ambiguousReason,
+                                       com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote quote,
+                                       AICallback cb) {
+        if (!tryAcquireInferLock()) {
+            cb.onError("AI正在思考中，本轮跳过");
+            return;
+        }
+        mExecutor.execute(() -> {
+            try {
+                String prompt = buildIntradayVerifyPrompt(name, code, ruleSummaryText, ambiguousReason, quote);
+                if (mEngine.isReady()) {
+                    mEngine.reset();
+                    runStream(prompt, cb);
+                } else {
+                    mInferring.set(false);
+                    cb.onError("本地AI模型未就绪，本轮跳过");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "verifyIntradayPattern", e);
+                mInferring.set(false);
+                mMainHandler.post(() -> cb.onError(e.getMessage()));
+            }
+        });
+    }
+
+    private String buildIntradayVerifyPrompt(String name, String code, String ruleSummaryText, String ambiguousReason,
+                                              com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.Quote quote) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(getSystemPrompt("GENERAL")).append("\n\n");
+        sb.append("【分时形态校验任务】").append(name).append("(").append(code).append(")的分时图，")
+                .append("程序按固定规则算出的客观数字如下，但这几个信号之间出现了矛盾或可信度不够扎实，")
+                .append("规则本身判断不准，需要你结合数字再看一眼给出你自己的定性判断：\n\n");
+        sb.append("规则算出的摘要：").append(ruleSummaryText).append("\n");
+        sb.append("具体矛盾/存疑点：").append(ambiguousReason).append("\n");
+        if (quote != null) {
+            sb.append(String.format(Locale.CHINA, "现价¥%.2f 今开¥%.2f 最高¥%.2f 最低¥%.2f\n",
+                    quote.price, quote.open, quote.high, quote.low));
+        }
+        sb.append("\n【输出要求】不超过80字，直接说清楚：这个分时形态你倾向于判断成什么（比如\"更像是缩量整理后的")
+                .append("正常回踏，不是真反转\"，或\"量能放大+价格企稳，倾向于判断为真反转但还需再观察几分钟确认\"），")
+                .append("不要输出\"判断：确认/不确认\"这种格式，只需要一段定性说明。\n");
+        return sb.toString();
+    }
+
     private void runStream(String prompt, AICallback cb) {
         final StringBuilder full = new StringBuilder();
 

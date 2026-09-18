@@ -55,6 +55,11 @@ public class RealtimeMonitorService extends Service {
     private final TradingRuleEngine mEngine = new TradingRuleEngine();
     private int mTickCount = 0;
     private final Set<String> mStaleWarnedCodes = new HashSet<>();
+    /** 【2026-09-17新增】分时形态"判断不准确"时喊本地AI校验一次的节流——同一支股票哪怕一直处于
+     *  ambiguous状态，也不应该每2分钟tick都去抢一次本来只有一份的推理资源，跟真正的买卖
+     *  信号复核/水下反转解读挤占同一把锁。 */
+    private final java.util.Map<String, Long> mLastIntradayAiCheckAt = new java.util.HashMap<>();
+    private static final long INTRADAY_AI_CHECK_COOLDOWN_MS = 15 * 60_000;
 
     // 断档检测：把每次tick的时间戳存进SharedPreferences，App/服务重启时用来判断
     // 中间是不是隔了太久没监控（被系统杀了、网络断了、或者根本没打开App）
@@ -522,6 +527,15 @@ public class RealtimeMonitorService extends Service {
         TradingRuleEngine.RuleResult result = mEngine.evaluate(
                 item.code, item.status, quote, minutePoints, prevDay, trackState, pattern);
 
+        // 【2026-09-17新增，对应用户要求"简单代码判断不准确时使用本地ai校验"】规则引擎自己算出的
+        // 分时趋势/量能/反转三个信号若互相矛盾，说明规则本身判断不准，此时额外喊一次本地AI
+        // 结合具体数字再看一眼，不等往后走到是否命中买卖action那一步——即使本轮没有任何
+        // action触发（纯观察中的候选池股票），分时形态本身的可信度也同样值得校验。纯事后定性
+        // 补充，不影响已经算出的result本身，不阻塞本轮tick。
+        if (result.intradaySummary != null && result.intradaySummary.ambiguous) {
+            maybeVerifyIntradayPattern(item, quote, result.intradaySummary);
+        }
+
         if (result.stateUpdate != null) {
             WatchlistManager.get().saveTrackState(item.code, result.stateUpdate);
         }
@@ -644,6 +658,40 @@ public class RealtimeMonitorService extends Service {
             sb.append(" ｜ 指标：").append(metrics);
         }
         return sb.toString();
+    }
+
+    /** 【2026-09-17新增，对应用户要求"分时数据简单代码判断不准确时使用本地ai校验，不要为了应付而
+     *  回答"】规则计算出的趋势/反转/量能信号互相矛盾时，喊本地AI结合现价/量能再看一眼，
+     *  结果写进这支股票的决策日志（"分时"类型标签）。这是纯粹的事后定性补充，不影响已经
+     *  算出的result本身、不阻塞本轮tick、拿不到推理锁就安静跳过（不算错误，只是这一轮没抓到，
+     *  下次ambiguous再触发时会重试）。15分钟节流，避免同一支股票持续ambiguous时每2分钟tick
+     *  都去抢推理资源。 */
+    private void maybeVerifyIntradayPattern(WatchlistManager.WatchlistItem item, RealtimeQuoteManager.Quote quote,
+                                             IntradayPatternAnalyzer.IntradayTechnicalSummary summary) {
+        long now = System.currentTimeMillis();
+        Long lastAt = mLastIntradayAiCheckAt.get(item.code);
+        if (lastAt != null && now - lastAt < INTRADAY_AI_CHECK_COOLDOWN_MS) return;
+        mLastIntradayAiCheckAt.put(item.code, now);
+        LocalAIAgent.get(getApplicationContext()).verifyIntradayPattern(item.code, item.name,
+                summary.summaryText, summary.ambiguousReason, quote,
+                new LocalAIAgent.AICallback() {
+                    @Override public void onToken(String token) {}
+                    @Override
+                    public void onComplete(String fullText) {
+                        try {
+                            DecisionLogger.get().logIntradayAnalysis(item.code, item.name,
+                                    "【分时形态校验】规则判断存疑：" + summary.ambiguousReason
+                                            + "\n  规则摘要：" + summary.summaryText
+                                            + "\n  本地AI校验：" + fullText);
+                        } catch (Exception e) {
+                            Log.e(TAG, "写分时形态AI校验日志失败", e);
+                        }
+                    }
+                    @Override
+                    public void onError(String msg) {
+                        Log.i(TAG, "分时形态AI校验未执行（" + msg + "），本轮跳过，下次ambiguous再触发时重试");
+                    }
+                });
     }
 
     /** T+1 同日保护：卖出类信号标注可卖/锁定股数（操盘手经验终版.md 5.2节） */

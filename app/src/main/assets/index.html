@@ -3046,6 +3046,27 @@ function loadFenshiChart(code) {
   } catch (e) { console.error('loadFenshiChart', e); }
 }
 
+/** 【2026-09-17新增，修复分时图黑屏】Android端发现分时缓存为空时（比如当前看的股票
+ *  不在候选池/持仓范围内，监控tick循环从没替它拉过），会在后台主动补拉一次，拉到后
+ *  通过这里推送过来。用户如果这时候还停留在同一支股票的页面就直接重新渲染，已经切走了
+ *  就忽略（避免画到错的股票上）。 */
+window.onMinuteChartDataReady = function(jsonStr) {
+  try {
+    const data = JSON.parse(jsonStr || '{}');
+    if (!data.code || data.code !== STATE.currentKlineCode) return;
+    STATE.currentFenshiData = data;
+    drawFenshiChart(data);
+  } catch (e) { console.error('onMinuteChartDataReady', e); }
+};
+
+/** 主动补拉也失败时的具体原因——替换掉drawFenshiChart那个通用占位提示，让用户看到到底
+ *  是"行情接口失败"还是"分时接口失败"，而不是筠统一句"可能是…或…"。 */
+window.onMinuteChartError = function(code, msg) {
+  if (code !== STATE.currentKlineCode) return;
+  const upd = document.getElementById('fenshiUpdatedAt');
+  if (upd) upd.textContent = '分时数据获取失败：' + msg;
+};
+
 function drawFenshiChart(data) {
   const canvas = document.getElementById('fenshiCanvas');
   if (!canvas) return;

@@ -815,7 +815,13 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         try {
             RealtimeQuoteManager.Quote q = RealtimeQuoteManager.get().getCachedQuote(code);
             List<RealtimeQuoteManager.MinutePoint> points = RealtimeQuoteManager.get().getCachedMinuteLine(code);
-            if (q == null && points.isEmpty()) return "{}";
+            if (q == null && points.isEmpty()) {
+                // 【2026-09-17修复：分时图黑屏无数据】缓存彻底为空——多半是这支股票不在候选池/
+                // 持仓范围内，监控tick循环从没替它拉过数据。主动补拉一次，不再干等tick循环
+                // （它本来就不会管这支股票）。
+                triggerActiveMinuteChartFetch(code);
+                return "{}";
+            }
             JSONObject o = new JSONObject();
             o.put("code", code);
             if (q != null) {
@@ -844,6 +850,94 @@ public class StockBridge implements RealtimeMonitorService.Listener {
             Log.e(TAG, "getMinuteChartData失败", e);
             return "{}";
         }
+    }
+
+    /** 单次去重：同一支股票短时间内(10秒)不会因为前端连续多次调用getMinuteChartData（比如快速
+     *  切换K线周期按钮附带触发）而重复发起好几轮补拉请求。 */
+    private final java.util.Map<String, Long> mActiveFetchInFlight = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long ACTIVE_FETCH_DEDUPE_MS = 10_000;
+
+    /** 【2026-09-17新增，对应用户要求"分时图正确准确、不降级的获取实时股票的分时数据信息"】
+     *  主动补拉某支股票的行情+分时数据——只在getMinuteChartData发现缓存彻底为空时触发，
+     *  成功后通过window.onMinuteChartDataReady推给前端。全程详细记录每一步的结果（成功/失败+
+     *  具体原因），失败原因既写这支股票自己的当日日志文件，也写一条到_system汇总文件，
+     *  对应用户"加入分时图的详细日志记录，记录在_system日志中一定要明确为什么分时图就是画不
+     *  出来"的要求，不再是排查不到原因的黑屏。 */
+    private void triggerActiveMinuteChartFetch(String code) {
+        long now = System.currentTimeMillis();
+        Long lastAt = mActiveFetchInFlight.get(code);
+        if (lastAt != null && now - lastAt < ACTIVE_FETCH_DEDUPE_MS) return;
+        mActiveFetchInFlight.put(code, now);
+
+        String logPrefix = "【分时图主动补拉】";
+        try {
+            DecisionLogger.get().logNote(String.format(java.util.Locale.CHINA,
+                    "%s%s：缓存为空（不在候选池/持仓范围内，监控tick循环从未替它拉取过分时数据），开始主动补拉行情+分时",
+                    logPrefix, code));
+        } catch (Exception ignored) {}
+
+        List<String> codes = new ArrayList<>();
+        codes.add(code);
+        RealtimeQuoteManager.get().fetchBatch(codes, (quotes, failed) -> {
+            RealtimeQuoteManager.Quote q = quotes.get(code);
+            if (q == null) {
+                String msg = logPrefix + code + "：补拉行情失败（腾讯+新浪两个源都没拿到，可能是代码有误或网络问题），分时图暂时无法显示";
+                Log.w(TAG, msg);
+                try {
+                    DecisionLogger.get().logNote(msg);
+                    DecisionLogger.get().logNote(code, null, msg);
+                } catch (Exception ignored) {}
+                evalJs("window.onMinuteChartError && window.onMinuteChartError('" + code + "','行情获取失败')");
+                return;
+            }
+            RealtimeQuoteManager.get().fetchMinuteLine(code, new RealtimeQuoteManager.MinuteCallback() {
+                @Override
+                public void onResult(String c, List<RealtimeQuoteManager.MinutePoint> points) {
+                    try {
+                        DecisionLogger.get().logNote(logPrefix + code + "：补拉成功，行情¥" + q.price
+                                + " 分时点数=" + points.size() + "，已推送给前端渲染");
+                    } catch (Exception ignored) {}
+                    try {
+                        JSONObject o = new JSONObject();
+                        o.put("code", c);
+                        o.put("name", q.name);
+                        o.put("prevClose", q.prevClose);
+                        o.put("open", q.open);
+                        o.put("high", q.high);
+                        o.put("low", q.low);
+                        o.put("price", q.price);
+                        o.put("changeAmt", q.changeAmt);
+                        o.put("changePct", q.changePct);
+                        o.put("updatedAt", RealtimeQuoteManager.get().getCachedMinuteLineUpdatedAt(c));
+                        JSONArray arr = new JSONArray();
+                        for (RealtimeQuoteManager.MinutePoint p : points) {
+                            JSONObject po = new JSONObject();
+                            po.put("time", p.time);
+                            po.put("price", p.price);
+                            po.put("avgPrice", p.avgPrice);
+                            po.put("volume", p.volume);
+                            arr.put(po);
+                        }
+                        o.put("points", arr);
+                        String escaped = o.toString().replace("\\", "\\\\").replace("'", "\\'");
+                        evalJs("window.onMinuteChartDataReady && window.onMinuteChartDataReady('" + escaped + "')");
+                    } catch (Exception e) {
+                        Log.e(TAG, "补拉后拼装分时图JSON失败", e);
+                    }
+                }
+                @Override
+                public void onError(String c, String msg) {
+                    String fullMsg = logPrefix + code + "：行情拿到了，但分时数据补拉失败——" + msg
+                            + "（分时接口请求或解析出错，不是候选池/持仓归属问题）";
+                    Log.w(TAG, fullMsg);
+                    try {
+                        DecisionLogger.get().logNote(fullMsg);
+                        DecisionLogger.get().logNote(code, q.name, fullMsg);
+                    } catch (Exception ignored) {}
+                    evalJs("window.onMinuteChartError && window.onMinuteChartError('" + code + "','" + msg.replace("'", "\\'") + "')");
+                }
+            });
+        });
     }
 
     /** 当前跟踪中的候选池（观察中/已建底仓/已加仓，不含止损/已移除的） */

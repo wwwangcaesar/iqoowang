@@ -57,6 +57,10 @@ public class TradingRuleEngine {
          *  未检测到/已推送过。非空时RealtimeMonitorService据此写决策日志+推送通知+起AI分析，
          *  不影响本次result自己的action（可能同时有其他action，两者互不影响）。 */
         public IntradayPatternAnalyzer.VReversal underwaterReversal;
+        /** 【2026-09-17新增】分时图技术指标综合摘要（趋势/量能/反转），每轮都会计算并挂载，
+         *  不像underwaterReversal那样只在水下检测到反转时才有值。ambiguous=true时
+         *  RealtimeMonitorService会据此额外触发一次本地AI校验（见该类evaluateAndAct()）。 */
+        public IntradayPatternAnalyzer.IntradayTechnicalSummary intradaySummary;
     }
 
     public static class DivergenceState {
@@ -222,24 +226,22 @@ public class TradingRuleEngine {
         VolumeCheck vol = checkVolume(code, quote, minutePoints, hour, minute);
         LimitInfo limitInfo = computeLimitInfo(code, quote, minutePoints, waterLine);
 
-        // 【分时经验规则步骤5·D补充】把分时形态（V型反转检测）纳入metrics这个"一处生成、处处消费"
-        // 的字符串——它会同时流进决策日志(logRulePush)、监控快照(buildSnapshotLine)、AI校验prompt
-        // (verifySignal的入参就是它)，不用像最初设想的那样另起一套Context Block管线，对应用户
-        // "决策日志和买入/卖出逻辑要加入分时数据技术指标分析"的要求。IntradayPatternAnalyzer纯计算、
-        // 不发网络请求，每轮evaluate()都跟一次代价很低。
-        IntradayPatternAnalyzer.VReversal iv = IntradayPatternAnalyzer.get().detectVReversal(minutePoints);
-        String intradayTag;
-        if (iv.detected) {
-            intradayTag = String.format(Locale.CHINA, "%s反转@¥%.2f(量能%.1fx%s%s)",
-                    "BOTTOM".equals(iv.direction) ? "底部" : "顶部", iv.extremePrice, iv.volRatio,
-                    iv.midConfirm ? "·已站稳VWAP" : "", iv.strongConfirm ? "·已破当日高" : "");
-        } else {
-            intradayTag = "无明显反转形态";
-        }
+        // 【分时经验规则步骤5·D补充，2026-09-17再次增强】把分时形态纳入metrics这个"一处生成、
+        // 处处消费"的字符串——它会同时流进决策日志(logRulePush)、监控快照(buildSnapshotLine)、AI校验
+        // prompt(verifySignal的入参就是它)，对应用户"决策日志和买入/卖出逻辑要加入分时数据技术指标
+        // 分析"的要求。这里在原来只有V型反转检测的基础上，进一步换成IntradayPatternAnalyzer.
+        // summarize()——同时给出趋势方向(上升/下降/震荡)、量能特征(放量/缩量/正常)、反转形态
+        // 三块，不再只有反转这一项；并新增ambiguous标记：当这几个独立信号互相矛盾、或反转
+        // 仅达弱确认时，标记为"规则自己判断不准"，供RealtimeMonitorService据此额外喊一次本地
+        // AI校验（用户明确要求"简单代码判断不准确时使用本地ai校验，不要为了应付而回答"）。
+        // IntradayPatternAnalyzer纯计算、不发网络请求，每轮evaluate()都跟一次代价很低。
+        IntradayPatternAnalyzer.IntradayTechnicalSummary intradaySummary =
+                IntradayPatternAnalyzer.get().summarize(minutePoints);
+        result.intradaySummary = intradaySummary;
 
         result.metrics = String.format(Locale.CHINA,
-                "水线¥%.2f VWAP¥%.2f 量比%.2fx(阈值%.2fx) 5分钟量比%.2fx %s ｜ 分时形态:%s",
-                waterLine, vwap, vol.dayRatio, vol.threshold, vol.recent5Ratio, vol.detail, intradayTag);
+                "水线¥%.2f VWAP¥%.2f 量比%.2fx(阈值%.2fx) 5分钟量比%.2fx %s ｜ %s",
+                waterLine, vwap, vol.dayRatio, vol.threshold, vol.recent5Ratio, vol.detail, intradaySummary.summaryText);
 
         DivergenceState state = trackState != null ? copyState(trackState) : new DivergenceState();
         updateIntradayPeak(quote, prevDay, state);

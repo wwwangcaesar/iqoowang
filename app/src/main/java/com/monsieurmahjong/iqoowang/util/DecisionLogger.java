@@ -275,6 +275,14 @@ public class DecisionLogger {
         appendStockLog(code, name, "决策", "买入逻辑追踪：" + traceDetail);
     }
 
+    /** 【2026-09-17新增】分时图技术指标分析专用类型标签——趋势/量能/反转形态相关的记录
+     *  （包括规则自己算出来的摘要、以及判断不准时喊本地AI校验的结果）统一用这个类型标签，
+     *  跟"决策"/"AI分析"/"监控"区分开，方便浏览时一眼认出这是分时图相关分析而不是买卖
+     *  决策本身。 */
+    public void logIntradayAnalysis(String code, String name, String text) {
+        appendStockLog(code, name, "分时", text);
+    }
+
     // ══════════════════════════════════════════
     // 读取方法——供"决策日志"专属页面浏览
     // ══════════════════════════════════════════
