@@ -36,6 +36,14 @@ public class StockMasterApp extends Application {
         DatabaseManager.init(this);
         Log.i(TAG, "DatabaseManager initialized");
 
+        // 【2026-09-19新增·协作aiD，对应用户"分时图不降级获取实时分时数据"要求】实时行情/
+        // 分时数据磁盘持久化——之前sMinuteCache等纯内存缓存一旦进程重启就清零，分时图跟着
+        // 变回一片空白，只能干等下一轮tick或主动补拉。现在成功拉到的数据会顺手落一份到
+        // SharedPreferences（仅限当天有效），init()只是把Context传进去，不调用不影响原有
+        // 纯内存行为。
+        com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.init(this);
+        Log.i(TAG, "RealtimeQuoteManager initialized");
+
         // 【R1】A股法定节假日日历——MarketDataManager.computeExpectedTradeDate()等处依赖它，
         // 必须在MarketDataManager之前初始化
         com.monsieurmahjong.iqoowang.util.TradingCalendar.init(this);

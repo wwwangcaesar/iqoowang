@@ -152,19 +152,134 @@ public class RealtimeQuoteManager {
     private static final Map<String, List<MinutePoint>> sMinuteCache = new java.util.concurrent.ConcurrentHashMap<>();
     private static final Map<String, Long> sMinuteCacheUpdatedAt = new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** 拿某支股最新一次缓存的行情，没缓存过返回null（刚加进池、还没来得及拉到第一轮时会这样） */
-    public Quote getCachedQuote(String code) { return sLatestQuoteCache.get(code); }
+    /** 【2026-09-19新增·协作aiD，对应用户"分时图不降级获取实时分时数据"要求】上面三个缓存都是
+     *  纯内存Map——Android后台监控服务被系统回收进程、App被手动划掉、或者只是简单重启，都会让
+     *  它们清零，跟WatchlistManager.prevDayVwap当初做持久化改造要解决的是完全同一个问题（那边
+     *  注释原话："Android后台监控服务被系统回收进程、重启是常态"）。现补一层SharedPreferences
+     *  磁盘持久化：每次成功拉到新数据顺手落一份，仅限"今天"这一天有效——跨天的旧快照一律视为
+     *  无效，不能把上一个交易日的分时图误当成"今天"展示。init()由StockMasterApp.onCreate()
+     *  调用；不调用init()时sAppContext为null，持久化读写全部安全跳过，退化为原来的纯内存行为，
+     *  不会报错、不影响任何现有调用方。 */
+    private static android.content.Context sAppContext;
+    private static final String PREFS_DISK_CACHE = "minute_quote_disk_cache";
 
-    /** 拿某支股最新一次缓存的分时数据，没缓存过返回空列表。 */
-    public List<MinutePoint> getCachedMinuteLine(String code) {
-        List<MinutePoint> l = sMinuteCache.get(code);
-        return l != null ? l : new ArrayList<>();
+    public static void init(android.content.Context context) {
+        sAppContext = context.getApplicationContext();
     }
 
-    /** 这份分时缓存是什么时候拉的，前端用来判断数据多新鲜（没缓存过返回0）。 */
+    private static String todayStr() {
+        return new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(new java.util.Date());
+    }
+
+    private void persistQuote(String code, Quote q) {
+        if (sAppContext == null || q == null) return;
+        try {
+            JSONObject o = new JSONObject();
+            o.put("date", todayStr());
+            o.put("name", q.name); o.put("price", q.price); o.put("open", q.open);
+            o.put("high", q.high); o.put("low", q.low); o.put("prevClose", q.prevClose);
+            o.put("changeAmt", q.changeAmt); o.put("changePct", q.changePct);
+            o.put("volume", q.volume); o.put("amount", q.amount); o.put("time", q.time);
+            sAppContext.getSharedPreferences(PREFS_DISK_CACHE, android.content.Context.MODE_PRIVATE)
+                    .edit().putString("quote_" + code, o.toString()).apply();
+        } catch (Exception ignored) {}
+    }
+
+    private Quote loadPersistedQuote(String code) {
+        if (sAppContext == null) return null;
+        try {
+            String raw = sAppContext.getSharedPreferences(PREFS_DISK_CACHE, android.content.Context.MODE_PRIVATE)
+                    .getString("quote_" + code, null);
+            if (raw == null) return null;
+            JSONObject o = new JSONObject(raw);
+            if (!todayStr().equals(o.optString("date"))) return null; // 不是今天的快照，一律视为无效
+            Quote q = new Quote();
+            q.code = code; q.market = market(code); q.source = "disk_cache";
+            q.name = o.optString("name"); q.price = o.optDouble("price");
+            q.open = o.optDouble("open"); q.high = o.optDouble("high"); q.low = o.optDouble("low");
+            q.prevClose = o.optDouble("prevClose"); q.changeAmt = o.optDouble("changeAmt");
+            q.changePct = o.optDouble("changePct"); q.volume = o.optLong("volume");
+            q.amount = o.optDouble("amount"); q.time = o.optString("time");
+            return q;
+        } catch (Exception e) { return null; }
+    }
+
+    private void persistMinuteLine(String code, List<MinutePoint> points) {
+        if (sAppContext == null || points == null || points.isEmpty()) return;
+        try {
+            JSONArray arr = new JSONArray();
+            for (MinutePoint p : points) {
+                JSONObject po = new JSONObject();
+                po.put("time", p.time); po.put("price", p.price); po.put("avgPrice", p.avgPrice);
+                po.put("volume", p.volume); po.put("cumVolume", p.cumVolume);
+                arr.put(po);
+            }
+            JSONObject o = new JSONObject();
+            o.put("date", todayStr());
+            o.put("updatedAt", System.currentTimeMillis());
+            o.put("points", arr);
+            sAppContext.getSharedPreferences(PREFS_DISK_CACHE, android.content.Context.MODE_PRIVATE)
+                    .edit().putString("minute_" + code, o.toString()).apply();
+        } catch (Exception ignored) {}
+    }
+
+    private List<MinutePoint> loadPersistedMinuteLine(String code) {
+        if (sAppContext == null) return null;
+        try {
+            String raw = sAppContext.getSharedPreferences(PREFS_DISK_CACHE, android.content.Context.MODE_PRIVATE)
+                    .getString("minute_" + code, null);
+            if (raw == null) return null;
+            JSONObject o = new JSONObject(raw);
+            if (!todayStr().equals(o.optString("date"))) return null;
+            JSONArray arr = o.optJSONArray("points");
+            if (arr == null) return null;
+            List<MinutePoint> result = new ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject po = arr.optJSONObject(i);
+                if (po == null) continue;
+                MinutePoint p = new MinutePoint();
+                p.time = po.optString("time"); p.price = po.optDouble("price");
+                p.avgPrice = po.optDouble("avgPrice"); p.volume = po.optLong("volume");
+                p.cumVolume = po.optLong("cumVolume");
+                result.add(p);
+            }
+            return result;
+        } catch (Exception e) { return null; }
+    }
+
+    private long loadPersistedMinuteLineUpdatedAt(String code) {
+        if (sAppContext == null) return 0;
+        try {
+            String raw = sAppContext.getSharedPreferences(PREFS_DISK_CACHE, android.content.Context.MODE_PRIVATE)
+                    .getString("minute_" + code, null);
+            if (raw == null) return 0;
+            JSONObject o = new JSONObject(raw);
+            if (!todayStr().equals(o.optString("date"))) return 0;
+            return o.optLong("updatedAt");
+        } catch (Exception e) { return 0; }
+    }
+
+    /** 拿某支股最新一次缓存的行情——内存缓存没有时退一步查磁盘持久化（仅限今天内有效），
+     *  两边都没有才真的返回null（刚加进池、还没来得及拉到第一轮，或者是隔天了磁盘缓存
+     *  也主动判定失效）。 */
+    public Quote getCachedQuote(String code) {
+        Quote q = sLatestQuoteCache.get(code);
+        return q != null ? q : loadPersistedQuote(code);
+    }
+
+    /** 拿某支股最新一次缓存的分时数据——同上，内存没有退一步查磁盘（仅限今天）。 */
+    public List<MinutePoint> getCachedMinuteLine(String code) {
+        List<MinutePoint> l = sMinuteCache.get(code);
+        if (l != null) return l;
+        List<MinutePoint> persisted = loadPersistedMinuteLine(code);
+        return persisted != null ? persisted : new ArrayList<>();
+    }
+
+    /** 这份分时缓存是什么时候拉的，前端用来判断数据多新鲜（内存和磁盘都没有返回0）。 */
     public long getCachedMinuteLineUpdatedAt(String code) {
         Long t = sMinuteCacheUpdatedAt.get(code);
-        return t != null ? t : 0L;
+        if (t != null) return t;
+        return loadPersistedMinuteLineUpdatedAt(code);
     }
 
     // ══════════════════════════════════════════
@@ -177,7 +292,10 @@ public class RealtimeQuoteManager {
             return;
         }
         QuoteCallback cachingCb = (quotes, failedCodes) -> {
-            if (quotes != null && !quotes.isEmpty()) sLatestQuoteCache.putAll(quotes);
+            if (quotes != null && !quotes.isEmpty()) {
+                sLatestQuoteCache.putAll(quotes);
+                for (Quote q : quotes.values()) persistQuote(q.code, q); // 【新增·协作aiD】顺手落盘，进程重启也能用
+            }
             cb.onResult(quotes, failedCodes);
         };
         if (tencentAvailable()) {
@@ -368,12 +486,25 @@ public class RealtimeQuoteManager {
     // 分时数据（今日分钟级走势）—— 规则引擎判断"是否已站稳分时低点"要用
     // ══════════════════════════════════════════
 
+    /** 【2026-09-19改造·协作aiD，对应用户"不降级的获取实时股票的分时数据信息"要求】原先失败
+     *  一次就直接回调onError，一次瞬时网络抖动就会让这一轮分时数据/分时图彻底拿不到，跟
+     *  fetchPrevDayVwap早就有的重试机制不是同一个标准（那边是首次+最多2次重试）。现改成
+     *  同款重试节奏：先重试几次（间隔递增800ms/1600ms），排除掉瞬时抖动这种假阴性，重试用尽
+     *  仍失败才真正回调onError——此时是真的这一刻确实拿不到（比如非交易时段接口本身没有
+     *  "今天"的数据），不是代码或网络的偶发问题，onError的msg里会写清楚已经重试过几次，
+     *  供决策日志/_system日志据此明确写出失败原因。 */
     public void fetchMinuteLine(String code, MinuteCallback cb) {
+        fetchMinuteLineAttempt(code, cb, 0);
+    }
+
+    private static final int MINUTE_LINE_MAX_RETRY = 2; // 首次+最多2次重试，共最多3次尝试
+
+    private void fetchMinuteLineAttempt(String code, MinuteCallback cb, int attempt) {
         String url = String.format(Locale.US, URL_TENCENT_MINUTE, market(code), code);
         Request req = new Request.Builder().url(url).build();
         HTTP.newCall(req).enqueue(new Callback() {
             @Override public void onFailure(Call call, IOException e) {
-                MAIN.post(() -> cb.onError(code, e.getMessage()));
+                retryOrFailMinuteLine(code, cb, attempt, "请求失败: " + e.getMessage());
             }
             @Override public void onResponse(Call call, Response resp) {
                 try (Response r = resp) {
@@ -381,18 +512,29 @@ public class RealtimeQuoteManager {
                     String body = new String(bytes, Charset.forName("UTF-8"));
                     List<MinutePoint> points = parseMinuteJson(body, code);
                     if (points.isEmpty()) {
-                        MAIN.post(() -> cb.onError(code, "分时数据为空或格式解析失败"));
+                        retryOrFailMinuteLine(code, cb, attempt, "分时数据为空或格式解析失败");
                     } else {
                         sMinuteCache.put(code, points); // 【D新增】顺手缓下，分时图功能按需读
                         sMinuteCacheUpdatedAt.put(code, System.currentTimeMillis());
+                        persistMinuteLine(code, points); // 【新增·协作aiD】顺手落盘，进程重启也能用（仅限今天）
                         MAIN.post(() -> cb.onResult(code, points));
                     }
                 } catch (Exception e) {
                     Log.w(TAG, "分时数据解析异常 " + code, e);
-                    MAIN.post(() -> cb.onError(code, e.getMessage()));
+                    retryOrFailMinuteLine(code, cb, attempt, "解析异常: " + e.getMessage());
                 }
             }
         });
+    }
+
+    private void retryOrFailMinuteLine(String code, MinuteCallback cb, int attempt, String reason) {
+        if (attempt < MINUTE_LINE_MAX_RETRY) {
+            Log.w(TAG, "分时数据获取失败(" + code + " 第" + (attempt + 1) + "次): " + reason + "，800ms后重试");
+            MAIN.postDelayed(() -> fetchMinuteLineAttempt(code, cb, attempt + 1), 800L * (attempt + 1));
+            return;
+        }
+        Log.w(TAG, "分时数据重试" + MINUTE_LINE_MAX_RETRY + "次后仍失败(" + code + "): " + reason);
+        MAIN.post(() -> cb.onError(code, reason + "（已重试" + MINUTE_LINE_MAX_RETRY + "次仍失败）"));
     }
 
     /**

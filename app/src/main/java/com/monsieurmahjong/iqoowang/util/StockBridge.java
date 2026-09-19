@@ -815,12 +815,18 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         try {
             RealtimeQuoteManager.Quote q = RealtimeQuoteManager.get().getCachedQuote(code);
             List<RealtimeQuoteManager.MinutePoint> points = RealtimeQuoteManager.get().getCachedMinuteLine(code);
-            if (q == null && points.isEmpty()) {
-                // 【2026-09-17修复：分时图黑屏无数据】缓存彻底为空——多半是这支股票不在候选池/
-                // 持仓范围内，监控tick循环从没替它拉过数据。主动补拉一次，不再干等tick循环
-                // （它本来就不会管这支股票）。
+            if (points.isEmpty()) {
+                // 【2026-09-17修复：分时图黑屏无数据】+【2026-09-19修复·协作aiD，对应用户本次
+                // 反馈】原先这里要求q==null且points为空才补拉——但q是行情缓存、points是分时
+                // 点位缓存，两者由tick循环里两次独立的网络请求分别写入，完全可能出现"行情那次
+                // 成功了但分时那次恰好失败"的半缓存状态：q!=null而points为空。原逻辑下这种情况会
+                // 跳过补拉，前端直接看到"暂无分时数据"却完全不会尝试去补救，得干等下一轮tick（还
+                // 得是交易时段内）。改成只要分时点位这个分时图真正需要的数据是空的就触发补拉，
+                // 不再受q是否已缓存影响。
                 triggerActiveMinuteChartFetch(code);
-                return "{}";
+                if (q == null) return "{}"; // 行情也没有，先返回空，等补拉回调推送
+                // q已缓存但分时点位为空：先把已有的行情信息（名称/现价等）返回给前端展示表头，
+                // 分时曲线部分等补拉回调用onMinuteChartDataReady推送完整数据
             }
             JSONObject o = new JSONObject();
             o.put("code", code);
