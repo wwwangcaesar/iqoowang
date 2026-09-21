@@ -826,8 +826,36 @@ function isPointInRing(pt, ring) {
 }
 
 /** 判断经纬度是否落入 GeoJSON Feature 几何多边形内部 */
+/** 计算并缓存 Feature 的经纬度包围盒，用于点分类前的快速排除：对明显不可能命中的 feature 提前返回，避免每次都做完整的射线法判断——这是数据量大时分类卡顿的主因之一 */
+function getFeatureBBox(feature) {
+  if (feature._bbox) return feature._bbox;
+  let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+  const rings = [];
+  const geom = feature.geometry;
+  if (geom) {
+    if (geom.type === 'Polygon') {
+      (geom.coordinates || []).forEach(r => rings.push(r));
+    } else if (geom.type === 'MultiPolygon') {
+      (geom.coordinates || []).forEach(poly => (poly || []).forEach(r => rings.push(r)));
+    }
+  }
+  rings.forEach(ring => {
+    ring.forEach(([lng, lat]) => {
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+    });
+  });
+  feature._bbox = [minLng, minLat, maxLng, maxLat];
+  return feature._bbox;
+}
+
+/** 判断经纬度是否落入 GeoJSON Feature 几何多边形内部 */
 function isPointInFeature(lng, lat, feature) {
   if (!feature || !feature.geometry) return false;
+  const bbox = getFeatureBBox(feature);
+  if (lng < bbox[0] || lng > bbox[2] || lat < bbox[1] || lat > bbox[3]) return false;
   const geom = feature.geometry;
   const pt = [lng, lat];
   if (geom.type === 'Polygon') {
@@ -1031,6 +1059,25 @@ const PALETTE_BORDER = [
   '#00FFC6', '#38BDF8', '#818CF8', '#C084FC', '#FBBF24', '#34D399', '#60A5FA', '#2DD4BF'
 ];
 
+// 【性能优化】点数一多，逐点动画的 effectScatter 是市级/区县级卡顿的主因之一：
+// 超过阈值就换成没有逐点动画的普通 scatter；数量少的时候才用好看的 effectScatter。
+const EFFECT_SCATTER_THRESHOLD = 60;
+// 无论数据多大，一次最多渲染这么多个点，防止以后数据越积越多导致卡顿越来越严重
+const MAX_RENDERED_POINTS = 300;
+// 自定义HTML标记（带脉冲动画）每个都是真实 DOM 元素，高清街区图层里点多了很卡：
+// 超过这个数量就换成 AMap 自带的轻量级 Marker（无自定义DOM、无CSS动画）
+const AMAP_CUSTOM_MARKER_THRESHOLD = 25;
+
+function scatterSeriesTypeFor(count) {
+  return count > EFFECT_SCATTER_THRESHOLD ? 'scatter' : 'effectScatter';
+}
+
+// 点太多时只取最近的一批用于渲染；统计数字（总额、笔数）仍然按全量计算，不受这个限制影响
+function capPointsForRendering(points) {
+  if (points.length <= MAX_RENDERED_POINTS) return points;
+  return points.slice(points.length - MAX_RENDERED_POINTS);
+}
+
 // 全球主要枢纽（用于 3D-Earth 跨洋飞线）
 const GLOBAL_HUBS = [
   { name: '北京', coord: [116.4074, 39.9042] },
@@ -1208,7 +1255,7 @@ function generateMuGuiLinGlobeLines() {
         const p1 = origin.coord;
         const p2 = dest.coord;
         const pts = [];
-        const numPts = 32;
+        const numPts = 18;
         for (let i = 0; i <= numPts; i++) {
           const t = i / numPts;
           const lng = p1[0] + (p2[0] - p1[0]) * t;
@@ -1235,7 +1282,7 @@ function generateMuGuiLinGlobeLines() {
 
   const magneticSeries = ringConfigs.map((cfg) => {
     const coords = [];
-    for (let deg = 0; deg <= 360; deg += 3) {
+    for (let deg = 0; deg <= 360; deg += 6) {
       const rad = deg * Math.PI / 180;
       const lng = deg > 180 ? deg - 360 : deg;
       const lat = Math.sin(rad) * cfg.inc;
@@ -1310,7 +1357,7 @@ function initGlobe() {
     globe: {
       baseTexture: EARTH_TEXTURE,
       environment: STARFIELD_TEXTURE,
-      shading: 'realistic',
+      shading: 'lambert',
       displacementScale: 0.02,
       atmosphere: {
         show: true,
@@ -1391,7 +1438,7 @@ function startContinentBreathing() {
   let step = 0;
   globePulseTimer = setInterval(() => {
     if (state.mode !== 'globe' || !globeChart) return;
-    step += 0.1;
+    step += 0.6;
     const baseOpacity = 0.55 + Math.sin(step) * 0.35;
     const baseSize = 5 + Math.sin(step) * 2.8;
     
@@ -1402,7 +1449,7 @@ function startContinentBreathing() {
         itemStyle: { opacity: baseOpacity },
       }],
     });
-  }, 100);
+  }, 600);
 }
 
 function stopContinentBreathing() {
@@ -1851,6 +1898,7 @@ async function drillIntoProvince(name, adcode, center) {
 
     // 用当前省份下各城市的 GeoJSON 多边形，自动识别各消费点所属城市
     points.forEach(pt => {
+      if (pt._cityClassified) return;
       for (const f of geoJson.features) {
         if (isPointInFeature(pt.lng, pt.lat, f)) {
           pt.city = f.properties.name;
@@ -1858,6 +1906,7 @@ async function drillIntoProvince(name, adcode, center) {
           break;
         }
       }
+      pt._cityClassified = true;
     });
 
     const cityData = geoJson.features.map((f, i) => ({
@@ -1879,7 +1928,7 @@ async function drillIntoProvince(name, adcode, center) {
         borderColor: '#00FFC6',
         textStyle: { color: '#FFF', fontSize: 12 },
         formatter: params => {
-          if (params.seriesType === 'effectScatter') {
+          if (params.seriesType !== 'map') {
             return `📍 <b>${params.data.name}</b><br/>金额: <span style="color:#FBBF24;font-weight:bold;">${params.data.amount}</span><br/>分类: ${params.data.cat || '日常消费'}<br/><span style="color:#94A3B8;font-size:11px;">时间: ${params.data.time || ''}</span>`;
           }
           return `🏙️ <b>${params.name}</b><br/><span style="color:#94A3B8;">点击进一步下钻到城市</span>`;
@@ -1929,7 +1978,7 @@ async function drillIntoProvince(name, adcode, center) {
         },
         {
           name: '消费足迹',
-          type: 'effectScatter',
+          type: scatterSeriesTypeFor(capPointsForRendering(points).length),
           coordinateSystem: 'geo',
           symbolSize: 13,
           rippleEffect: {
@@ -1952,7 +2001,7 @@ async function drillIntoProvince(name, adcode, center) {
             textBorderColor: '#000000',
             textBorderWidth: 2.5,
           },
-          data: points.map(pt => ({
+          data: capPointsForRendering(points).map(pt => ({
             id: pt.id,
             name: pt.name,
             value: [pt.lng, pt.lat],
@@ -2003,6 +2052,7 @@ async function drillIntoCity(cityName, cityAdcode, center) {
 
     // 用当前城市下各区县的 GeoJSON 多边形，自动识别各消费点所属区县
     cityPoints.forEach(pt => {
+      if (pt._districtClassified) return;
       for (const f of geoJson.features) {
         if (isPointInFeature(pt.lng, pt.lat, f)) {
           pt.district = f.properties.name;
@@ -2010,6 +2060,7 @@ async function drillIntoCity(cityName, cityAdcode, center) {
           break;
         }
       }
+      pt._districtClassified = true;
     });
 
     const districtData = geoJson.features.map((f, i) => ({
@@ -2031,7 +2082,7 @@ async function drillIntoCity(cityName, cityAdcode, center) {
         borderColor: '#00FFC6',
         textStyle: { color: '#FFF', fontSize: 12 },
         formatter: params => {
-          if (params.seriesType === 'effectScatter') {
+          if (params.seriesType !== 'map') {
             return `📍 <b>${params.data.name}</b><br/>金额: <span style="color:#FBBF24;font-weight:bold;">${params.data.amount}</span><br/>分类: ${params.data.cat || '日常消费'}<br/><span style="color:#94A3B8;font-size:11px;">时间: ${params.data.time || ''}</span>`;
           }
           return `🏘️ <b>${params.name}</b><br/><span style="color:#94A3B8;">点击下钻到区县，查看详细地理位置</span>`;
@@ -2081,7 +2132,7 @@ async function drillIntoCity(cityName, cityAdcode, center) {
         },
         {
           name: '消费足迹',
-          type: 'effectScatter',
+          type: scatterSeriesTypeFor(capPointsForRendering(cityPoints).length),
           coordinateSystem: 'geo',
           symbolSize: 12,
           rippleEffect: {
@@ -2105,7 +2156,7 @@ async function drillIntoCity(cityName, cityAdcode, center) {
             textBorderColor: '#000000',
             textBorderWidth: 3.0,
           },
-          data: cityPoints.map(pt => ({
+          data: capPointsForRendering(cityPoints).map(pt => ({
             id: pt.id,
             name: pt.name,
             value: [pt.lng, pt.lat],
@@ -2327,22 +2378,34 @@ function initOrUpdateAmap(centerLng, centerLat, spots) {
     amapMarkers = [];
   }
 
-  const listToRender = (spots && spots.length > 0) ? spots : (state.selectedSpot ? [state.selectedSpot] : []);
+  const listToRender = capPointsForRendering(
+    (spots && spots.length > 0) ? spots : (state.selectedSpot ? [state.selectedSpot] : [])
+  );
+  const useCustomMarker = listToRender.length <= AMAP_CUSTOM_MARKER_THRESHOLD;
 
   listToRender.forEach(pt => {
-    const markerContent = `
-      <div class="amap-custom-marker" onclick="handleAmapMarkerClick('${escapeHtml(pt.name)}')">
-        <div class="marker-pulse"></div>
-        <div class="marker-pin">📍</div>
-        <div class="marker-label">${escapeHtml(pt.name)}</div>
-      </div>
-    `;
-    const marker = new AMap.Marker({
-      position: [pt.lng, pt.lat],
-      content: markerContent,
-      offset: new AMap.Pixel(-12, -30),
-      title: pt.name,
-    });
+    let marker;
+    if (useCustomMarker) {
+      const markerContent = `
+        <div class="amap-custom-marker" onclick="handleAmapMarkerClick('${escapeHtml(pt.name)}')">
+          <div class="marker-pulse"></div>
+          <div class="marker-pin">📍</div>
+          <div class="marker-label">${escapeHtml(pt.name)}</div>
+        </div>
+      `;
+      marker = new AMap.Marker({
+        position: [pt.lng, pt.lat],
+        content: markerContent,
+        offset: new AMap.Pixel(-12, -30),
+        title: pt.name,
+      });
+    } else {
+      marker = new AMap.Marker({
+        position: [pt.lng, pt.lat],
+        title: pt.name,
+      });
+      marker.on('click', () => handleAmapMarkerClick(pt.name));
+    }
     amapMarkers.push(marker);
   });
 
@@ -2424,7 +2487,7 @@ function goBack() {
 /** 2D 地图事件绑定 */
 function setupMapInteractions() {
   mapChart.on('click', params => {
-    if (params.componentType === 'series' && params.seriesType === 'effectScatter') {
+    if (params.componentType === 'series' && params.seriesType !== 'map') {
       const evt = params.event && params.event.event;
       const x = evt ? evt.clientX : window.innerWidth / 2;
       const y = evt ? evt.clientY : window.innerHeight / 2;

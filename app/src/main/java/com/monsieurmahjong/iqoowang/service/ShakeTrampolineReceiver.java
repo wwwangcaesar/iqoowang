@@ -38,6 +38,10 @@ public class ShakeTrampolineReceiver extends BroadcastReceiver {
         if (imageUri != null) {
             target.putExtra(QuickLogActivity.EXTRA_CAPTURED_IMAGE_URI, imageUri);
         }
+        String recognizedAmount = intent.getStringExtra(QuickLogActivity.EXTRA_RECOGNIZED_AMOUNT);
+        if (recognizedAmount != null) {
+            target.putExtra(QuickLogActivity.EXTRA_RECOGNIZED_AMOUNT, recognizedAmount);
+        }
 
         try {
             context.startActivity(target);

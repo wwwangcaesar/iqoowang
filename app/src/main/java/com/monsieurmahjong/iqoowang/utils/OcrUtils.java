@@ -2,6 +2,7 @@ package com.monsieurmahjong.iqoowang.utils;
 
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.net.Uri;
 
 import com.google.android.gms.tasks.Tasks;
@@ -87,6 +88,39 @@ public class OcrUtils {
                         callback.onFailure("OCR识别失败: " + e.getMessage());
                     });
         } catch (IOException e) {
+            e.printStackTrace();
+            callback.onFailure("图片加载失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 【202609 速度修复新增】摇一摇路径专用：直接在内存位图上跑识别，不用先存盘再从Uri
+     * 解码读一遍——省掉一轮编码/解码，是摇一摇"弹窗慢"问题里能拿到的最大一块优化。
+     * 识别规则（正则）跟上面 Uri 版本完全一致，只是输入源换成已经在内存里的位图。
+     * @param bitmap 调用方需保证这张位图在回调触发前不被回收/复用
+     */
+    public static void parsePaymentScreenshotAsync(Bitmap bitmap, OcrCallback callback) {
+        try {
+            InputImage image = InputImage.fromBitmap(bitmap, 0);
+            recognizer.process(image)
+                    .addOnSuccessListener(result -> {
+                        String fullText = result.getText();
+                        Pattern amountPattern = Pattern.compile("(?<=[￥¥]\\s?)\\d+\\.\\d{2}");
+                        Matcher amountMatcher = amountPattern.matcher(fullText);
+
+                        if (amountMatcher.find()) {
+                            String amountStr = amountMatcher.group();
+                            long amount = (long) (Double.parseDouble(amountStr) * 100);
+                            callback.onSuccess(new ExpenseData(amount, fullText));
+                        } else {
+                            callback.onFailure("未识别到有效金额");
+                        }
+                    })
+                    .addOnFailureListener(e -> {
+                        e.printStackTrace();
+                        callback.onFailure("OCR识别失败: " + e.getMessage());
+                    });
+        } catch (Exception e) {
             e.printStackTrace();
             callback.onFailure("图片加载失败: " + e.getMessage());
         }

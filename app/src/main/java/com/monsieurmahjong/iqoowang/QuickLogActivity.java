@@ -85,6 +85,13 @@ public class QuickLogActivity extends AppCompatActivity {
      * 把图片URI原样带过来，本Activity不用再自己发一次截图请求，也不用重新查相册"最新一张"。
      */
     public static final String EXTRA_CAPTURED_IMAGE_URI = "com.monsieurmahjong.iqoowang.extra.CAPTURED_IMAGE_URI";
+    /**
+     * 【202609 速度修复】摇一摇路径下，ScreenshotService 已经在内存位图上把OCR也跑完了，
+     * 识别到的金额（元，如"88.00"）直接通过这个extra带过来；本Activity拿到非null值就直接
+     * 回填金额框，不用再自己申请存储权限、重新解码一次图片、跑一次OCR——这是"摇一摇弹窗
+     * 要等5秒多"问题的主要修复点。识别失败时这个extra是null，走手动填的体验。
+     */
+    public static final String EXTRA_RECOGNIZED_AMOUNT = "com.monsieurmahjong.iqoowang.extra.RECOGNIZED_AMOUNT";
 
     private EditText etAmount;
     private GridLayout gridCategories;
@@ -107,6 +114,9 @@ public class QuickLogActivity extends AppCompatActivity {
     /** showRealUI() 拿到的图片URI：摇一摇/NFC触发时是 ScreenshotService 截好的那张精确URI，
      * 手动打开时是null。startScreenshotOcrWorkflow() 优先用这个，没有才退化去查相册最新一张。 */
     private String capturedImageUriString;
+    /** 摇一摇速度优化路径下 ScreenshotService 提前识别好的金额；非null时 showRealUI() 直接回填，
+     *  不再调用 checkStoragePermissionAndProcess()/startScreenshotOcrWorkflow() 那套OCR流程 */
+    private String preRecognizedAmount;
 
     private BroadcastReceiver screenshotReceiver = new BroadcastReceiver() {
         @Override
@@ -123,7 +133,7 @@ public class QuickLogActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        Log.d(TAG, "📱 onCreate 启动");
+        Log.d(TAG, "📱 onCreate 启动 [耗时统计:activity_oncreate_start]");
 
         // 允许在锁屏上直接显示并点亮屏幕：摇一摇触发时手机很可能在口袋里屏幕已经息屏/锁屏，
         // 不加这两行的话摇完手机只会在后台静静截图，用户什么都看不到。
@@ -159,29 +169,30 @@ public class QuickLogActivity extends AppCompatActivity {
     private void handleNfcIntent(Intent intent) {
         String action = intent != null ? intent.getAction() : null;
         boolean isShake = ACTION_SHAKE_LOG.equals(action);
-        // 【202609 截图时序修复】摇一摇现在由 ScreenshotService 在拉起本Activity之前就已经截图+
-        // 存好图，通过 EXTRA_CAPTURED_IMAGE_URI 把URI带过来了——本Activity不用再自己发一次截图
-        // 请求（那样等于在自己已经顶到最前面之后才截图，截到的会是自家App的内容，详见
-        // ShakeDetectService/ScreenshotService 类注释）。有这个extra就直接显示真实UI。
-        String preCapturedUri = isShake ? intent.getStringExtra(EXTRA_CAPTURED_IMAGE_URI) : null;
 
-        if (isShake && preCapturedUri != null) {
+        // 【202609 截图+速度修复】摇一摇现在由 ScreenshotService 在拉起本Activity之前就已经
+        // 截图、在内存位图上跑完OCR了，金额/图片URI通过extra带过来——本Activity不用再自己发
+        // 一次截图请求（那样等于在自己已经顶到最前面之后才截图，截到的会是自家App的内容，
+        // 详见 ShakeDetectService/ScreenshotService 类注释），也不用再重新解码图片跑一次OCR。
+        // 只要是摇一摇触发，不管有没有带到金额/URI，都直接显示真实UI，绝不落到下面NFC专用
+        // 的重新截图分支——那个分支这时候截到的只会是记账页自己，不是用户原本在看的App。
+        if (isShake) {
+            preRecognizedAmount = intent.getStringExtra(EXTRA_RECOGNIZED_AMOUNT);
+            String preCapturedUri = intent.getStringExtra(EXTRA_CAPTURED_IMAGE_URI);
             entrySource = "摇一摇";
             isNfc = false;
-            Log.d(TAG, "📳 摇一摇触发！图片已经由 ScreenshotService 提前截好，直接显示真实UI: " + preCapturedUri);
+            Log.d(TAG, "📳 摇一摇触发！金额=" + preRecognizedAmount + "，图片URI=" + preCapturedUri
+                    + "，直接显示真实UI [耗时统计:activity_oncreate_shake]");
             showRealUI(preCapturedUri);
             return;
         }
 
         // NFC 碰卡走的还是老链路：先保持全透明不 setContentView，发广播让无障碍服务截图，
         // 收到截图完成广播后才真正显示 UI 并跑 OCR，靠 transparent 主题透出底下App这一刻的画面。
-        boolean triggeredByScreenshot = NfcAdapter.ACTION_NDEF_DISCOVERED.equals(action) || isShake;
-
-        if (triggeredByScreenshot) {
-            isNfc = NfcAdapter.ACTION_NDEF_DISCOVERED.equals(action);
-            entrySource = isNfc ? "NFC触摸" : "摇一摇";
-            Log.d(TAG, (isNfc ? "⚡ NFC 碰卡触发！" : "📳 摇一摇触发（没带预截图URI，走老兜底链路）！")
-                    + "当前 Activity 处于【全透明隐身状态】，正在向后台无障碍发截图命令...");
+        if (NfcAdapter.ACTION_NDEF_DISCOVERED.equals(action)) {
+            isNfc = true;
+            entrySource = "NFC触摸";
+            Log.d(TAG, "⚡ NFC 碰卡触发！当前 Activity 处于【全透明隐身状态】，正在向后台无障碍发截图命令...");
             sendBroadcast(new Intent(ScreenshotService.ACTION_REQUEST_SCREENSHOT));
         } else {
             Log.d(TAG, "👆 正常点击图标或非截图类唤醒，无需隐身截图，直接展示 UI");
@@ -220,7 +231,20 @@ public class QuickLogActivity extends AppCompatActivity {
         gridCategories = findViewById(R.id.grid_categories);
         db = AppDatabase.getDatabase(this);
 
-        checkStoragePermissionAndProcess();
+        if (preRecognizedAmount != null) {
+            // 摇一摇速度优化路径：金额已经识别好了，直接回填，不用再走一遍OCR流程
+            etAmount.setText(preRecognizedAmount);
+            etAmount.setSelection(preRecognizedAmount.length());
+            Toast.makeText(this, "已自动识别金额: ¥" + preRecognizedAmount, Toast.LENGTH_SHORT).show();
+        } else if (!"摇一摇".equals(entrySource)) {
+            // 摇一摇路径没识别到金额时不走这条查相册兜底：这一刻相册里的最新一张未必是刚截的
+            // 这张（摇一摇现在不等存盘完成就已经弹出页面了，存盘还在后台跑），宁可留空让用户
+            // 手动填，也不要错填一个不相关的金额
+            checkStoragePermissionAndProcess();
+        } else {
+            Log.d(TAG, "📳 摇一摇未识别到金额，留空让用户手动填写");
+            Toast.makeText(this, "已截图，未识别到金额，请手动输入", Toast.LENGTH_SHORT).show();
+        }
         requestLocationPermissionIfNeeded();
 
         // 🚨【已删除】：删除了导致无限死循环的 handleNfcIntent(getIntent());
@@ -237,11 +261,6 @@ public class QuickLogActivity extends AppCompatActivity {
             // saveAndExit(payTypeName);
             finish();
         });
-
-        if (imagePath != null) {
-            // TODO: 将截图路径渲染到你的 ImageView 上
-            Toast.makeText(this, "凭证已自动截取！", Toast.LENGTH_SHORT).show();
-        }
     }
 
     /** 已有定位权限时才发起请求；没权限先不管，等 showRealUI() 里再补要权限 */
