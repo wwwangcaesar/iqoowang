@@ -5,6 +5,7 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.View;
 import android.view.Window;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
@@ -48,6 +49,11 @@ public class MapExploreActivity extends AppCompatActivity {
 
         webView = new WebView(this);
         setContentView(webView);
+
+        // 这个 WebView 里跑着 ECharts-GL 的 WebGL 地球和大量动画，显式指定硬件图层比依赖
+        // <application> 级别的 hardwareAccelerated="true" 默认行为更可靠——部分机型/WebView实现对
+        // WebView 自己这层 View 的合成方式还需要这个显式提示才能真正走到 GPU 合成路径
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
