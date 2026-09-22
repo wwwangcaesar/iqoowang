@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    原生街区图层单个消费点 Marker 的外观：图钉 + 名称标签，垂直排列。
+    这个布局会被 BitmapDescriptorFactory.fromView() 转成一张静态图当 Marker 图标用——
+    注意"静态"两个字：View 本身不会动，脉冲光圈是另外用 AMap 原生 Circle 叠加在同一经纬度上
+    单独做 ValueAnimator 动画（见 DistrictStreetMapActivity），不是靠这个 View 自己转出来的
+    Bitmap 反复重绘实现的，这样量大也不会像原来 WebView 里逐个 DOM 跑 CSS 动画那样卡。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:paddingHorizontal="4dp"
+    android:paddingVertical="2dp">
+
+    <TextView
+        android:id="@+id/marker_pin"
+        android:layout_width="26dp"
+        android:layout_height="26dp"
+        android:background="@drawable/bg_marker_pin"
+        android:gravity="center"
+        android:text="📍"
+        android:textSize="13sp" />
+
+    <TextView
+        android:id="@+id/marker_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:background="@drawable/bg_marker_label"
+        android:maxLines="1"
+        android:paddingHorizontal="7dp"
+        android:paddingVertical="2dp"
+        android:text="地点名"
+        android:textColor="#FFFFFF"
+        android:textSize="10sp"
+        android:textStyle="bold" />
+
+</LinearLayout>

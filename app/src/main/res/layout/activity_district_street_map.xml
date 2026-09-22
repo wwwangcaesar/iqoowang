@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0A0E17">
+
+    <com.amap.api.maps.MapView
+        android:id="@+id/map_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 顶部：返回 + 区县名称/点位数量，浮在地图上方，样式跟 LocationMapActivity 保持一致 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:id="@+id/tv_street_back"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:background="#CC0A0E17"
+            android:padding="10dp"
+            android:text="‹ 返回"
+            android:textColor="#00FFC6"
+            android:textSize="15sp" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:background="@drawable/dark_glass_card"
+            android:orientation="vertical"
+            android:paddingHorizontal="18dp"
+            android:paddingVertical="14dp">
+
+            <TextView
+                android:id="@+id/tv_street_district_name"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="19sp"
+                android:textStyle="bold"
+                tools:text="鼓楼区" />
+
+            <TextView
+                android:id="@+id/tv_street_point_count"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="#00FFC6"
+                android:textSize="12sp"
+                tools:text="共 12 笔消费足迹" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 底部：点击某个 Marker 后弹出的消费详情卡片，默认隐藏 -->
+    <LinearLayout
+        android:id="@+id/layout_street_info_card"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_margin="16dp"
+        android:background="@drawable/dark_glass_card"
+        android:orientation="vertical"
+        android:padding="20dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/tv_street_spot_name"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textColor="#FFFFFF"
+                    android:textSize="17sp"
+                    android:textStyle="bold"
+                    tools:text="瑞幸咖啡（新街口店）" />
+
+                <TextView
+                    android:id="@+id/tv_street_spot_meta"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:textColor="#94A3B8"
+                    android:textSize="12sp"
+                    tools:text="餐饮美食 · 09-18 14:32" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_street_spot_amount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FBBF24"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                tools:text="¥32.00" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btn_street_navigate"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/neon_button_confirm"
+            android:text="导航前往"
+            android:textColor="#0A0E17"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+</FrameLayout>
