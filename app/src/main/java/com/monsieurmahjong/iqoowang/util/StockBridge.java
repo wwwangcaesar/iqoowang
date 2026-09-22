@@ -325,10 +325,29 @@ public class StockBridge implements RealtimeMonitorService.Listener {
      * 获取所有持仓（JSON）
      * JS调用：Android.getPositions()
      * 返回：JSON字符串
+     *
+     * 【2026-09-22新增】额外拼上每支持仓股票缓存的prevClose（昨收），供前端区分展示
+     * "今日涨跌幅"（现价相对昨收）和"持有涨跌幅"（现价相对成本价）——原先只有DatabaseManager
+     * 存的avgCost/currentPrice，持仓卡片上唯一的百分比其实一直只是"持有涨跌幅"，容易被
+     * 误当成当日涨跌看。没缓存到该股票行情时（比如App刚重启还没拉过一轮行情）不写这个
+     * 字段，前端自行判断展示"--"，不编造数字。
      */
     @JavascriptInterface
     public String getPositions() {
-        return mDb.getPositionsJson();
+        try {
+            JSONArray arr = new JSONArray(mDb.getPositionsJson());
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject o = arr.getJSONObject(i);
+                RealtimeQuoteManager.Quote q = RealtimeQuoteManager.get().getCachedQuote(o.optString("code"));
+                if (q != null && q.prevClose > 0) {
+                    o.put("prevClose", q.prevClose);
+                }
+            }
+            return arr.toString();
+        } catch (Exception e) {
+            Log.e(TAG, "getPositions附加prevClose失败，回退为不带prevClose的原始数据", e);
+            return mDb.getPositionsJson();
+        }
     }
 
     /**

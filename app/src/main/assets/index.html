@@ -1184,6 +1184,7 @@ window.initPositions = function(jsonStr) {
         floatPnl: p.floatPnl, floatPnlPct: p.floatPnlPct,
         sellableQty: (p.sellableQty !== undefined ? p.sellableQty : p.qty),
         lockedQty: (p.lockedQty || 0),
+        prevClose: p.prevClose || 0, // 【2026-09-22新增】今日涨跌幅要用，见renderPositions
       };
     });
     updateAssetDisplay();
@@ -2599,6 +2600,7 @@ function confirmTrade() {
             floatPnl: p.floatPnl, floatPnlPct: p.floatPnlPct,
             sellableQty: (p.sellableQty !== undefined ? p.sellableQty : p.qty),
             lockedQty: (p.lockedQty || 0),
+            prevClose: p.prevClose || 0,
           };
         });
       }
@@ -3419,6 +3421,12 @@ function renderPositions() {
     const pnl = (curP - pos.cost) * pos.qty;
     const pnlPct = (curP - pos.cost) / pos.cost * 100;
     const isUp = pnl >= 0;
+    // 【2026-09-22新增】今日涨跌幅=现价相对昨收，跟上面pnlPct(持有涨跌幅=现价相对成本价)
+    // 是两个不同基准，之前卡片上只有pnlPct一个百分比，容易被误当成今日涨跌看。prevClose
+    // 没缓存到时（比如App刚重启还没拉过一轮行情）不编造数字，直接显示"--"。
+    const hasTodayPct = !!(pos.prevClose && pos.prevClose > 0);
+    const todayPct = hasTodayPct ? (curP - pos.prevClose) / pos.prevClose * 100 : null;
+    const todayIsUp = todayPct !== null ? todayPct >= 0 : isUp;
     const progressPct = Math.min(100, Math.max(0, 50 + pnlPct * 2));
     const wl = STATE.watchlistItems.find(w => w.code === code);
     const monitorRow = wl
@@ -3435,12 +3443,12 @@ function renderPositions() {
       <div class="position-item" onclick="openSellModal('${code}')">
         <div class="pos-top">
           <div>
-            <div class="pos-name">${pos.name}</div>
+            <div class="pos-name">${pos.name} <span style="font-size:10px;font-weight:600;color:${isUp?'var(--up-red)':'var(--down-green)'};">总${isUp?'+':''}${pnlPct.toFixed(2)}%</span></div>
             <div class="pos-code">${code}</div>
           </div>
           <div class="pos-pnl">
-            <div class="pos-pnl-val ${isUp ? 'c-up' : 'c-down'}">${isUp?'+':''}¥${Math.abs(pnl).toFixed(0)}</div>
-            <div class="pos-pnl-pct ${isUp ? 'c-up' : 'c-down'}">${isUp?'+':''}${pnlPct.toFixed(2)}%</div>
+            <div class="pos-pnl-val ${isUp ? 'c-up' : 'c-down'}">${pnl>=0?'+':'-'}¥${Math.abs(pnl).toFixed(0)}</div>
+            <div class="pos-pnl-pct ${todayIsUp ? 'c-up' : 'c-down'}">${todayPct !== null ? `今${todayPct>=0?'+':''}${todayPct.toFixed(2)}%` : '今日--'}</div>
           </div>
         </div>
         <div class="pos-bottom">

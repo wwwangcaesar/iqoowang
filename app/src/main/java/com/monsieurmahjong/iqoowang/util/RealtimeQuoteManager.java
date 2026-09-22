@@ -498,6 +498,10 @@ public class RealtimeQuoteManager {
     }
 
     private static final int MINUTE_LINE_MAX_RETRY = 2; // 首次+最多2次重试，共最多3次尝试
+    // 【2026-09-22·Claude 修复】这个常量之前在下面被引用但从未声明过，文件实际编译不过——
+    // 这里补回作为兜底文案，真正的具体原因现在由 parseMinuteJson 通过 reasonOut 传回来，
+    // 这个常量只在 reasonOut 意外为空时才会被用到。
+    private static final String MINUTE_PARSE_FAIL_DETAIL = "分时数据为空或格式解析失败";
 
     private void fetchMinuteLineAttempt(String code, MinuteCallback cb, int attempt) {
         String url = String.format(Locale.US, URL_TENCENT_MINUTE, market(code), code);
@@ -510,9 +514,10 @@ public class RealtimeQuoteManager {
                 try (Response r = resp) {
                     byte[] bytes = r.body().bytes();
                     String body = new String(bytes, Charset.forName("UTF-8"));
-                    List<MinutePoint> points = parseMinuteJson(body, code);
+                    String[] failReason = new String[1]; // 【2026-09-22·Claude】out参数，避免共享字段在并发拉取多支股票时互相覆盖
+                    List<MinutePoint> points = parseMinuteJson(body, code, failReason);
                     if (points.isEmpty()) {
-                        retryOrFailMinuteLine(code, cb, attempt, "分时数据为空或格式解析失败");
+                        retryOrFailMinuteLine(code, cb, attempt, failReason[0] != null ? failReason[0] : MINUTE_PARSE_FAIL_DETAIL);
                     } else {
                         sMinuteCache.put(code, points); // 【D新增】顺手缓下，分时图功能按需读
                         sMinuteCacheUpdatedAt.put(code, System.currentTimeMillis());
@@ -546,13 +551,32 @@ public class RealtimeQuoteManager {
      * 量级，导致TradingRuleEngine里所有依赖分时VWAP的判断长期在错误基准上运行，现已修正。
      * {"code":0,"msg":"","data":{"sh600000":{"date":"20260710",
      *   "minute":{"data":["0930 10.00 1234 12340.00", "0931 10.02 2221 22254.67", ...]}}}}
+     *
+     * 【2026-09-22·Claude 修复】上面这条注释里写的响应形状（"minute":{"data":[...]}）不是这个
+     * 接口实测会返回的真实形状，也是下面代码一直在用的取值路径——但用手机浏览器直接访问
+     * https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=sz002264 拿到的真实响应是：
+     * {"code":0,"msg":"","data":{"sz002264":{"data":{"date":"20260921",
+     *   "data":["0930 7.35 24911 18309585.00", "0931 7.37 76244 56064079.00", ...]},
+     *   "qt":{...},"mx_price":{...}}}}
+     * 数组在 stockObj.data.data，根本没有"minute"这一层——这正是分时数据全天每一轮都失败
+     * （"分时数据为空或格式解析失败"）的根因：下面代码找的是stockObj.minute.data，这个接口从
+     * 未返回过这个形状，所以逐分钟必然100%命中"无minute.data数组"这个分支，重试3次因为是同一个
+     * 结构性问题、不是网络抖动，自然次次都失败。现改为优先按实测的data.data取，"minute"分支保留
+     * 作兼容兜底（不确定这个接口是否在其他场景/股票/时间点下会返回旧形状，留着比删掉更稳妥）。
+     * 同时把4种失败分支各自的具体原因通过reasonOut带出去，不再全部塌缩成一句通用文案，方便
+     * 决策日志/logcat直接看出卡在哪一步、原始响应长什么样。
      */
-    private List<MinutePoint> parseMinuteJson(String body, String code) {
+    private List<MinutePoint> parseMinuteJson(String body, String code, String[] reasonOut) {
         List<MinutePoint> result = new ArrayList<>();
         try {
             JSONObject root = new JSONObject(body);
             JSONObject data = root.optJSONObject("data");
-            if (data == null) { Log.w(TAG, "分时响应无data字段: " + truncate(body)); return result; }
+            if (data == null) {
+                String msg = "分时响应无data字段: " + truncate(body);
+                Log.w(TAG, msg);
+                reasonOut[0] = msg;
+                return result;
+            }
             String fullCode = market(code) + code;
             JSONObject stockObj = data.optJSONObject(fullCode);
             if (stockObj == null) {
@@ -560,10 +584,25 @@ public class RealtimeQuoteManager {
                 java.util.Iterator<String> keys = data.keys();
                 if (keys.hasNext()) stockObj = data.optJSONObject(keys.next());
             }
-            if (stockObj == null) { Log.w(TAG, "分时响应未找到股票数据: " + truncate(body)); return result; }
-            JSONObject minuteObj = stockObj.optJSONObject("minute");
-            JSONArray arr = minuteObj != null ? minuteObj.optJSONArray("data") : null;
-            if (arr == null) { Log.w(TAG, "分时响应无minute.data数组: " + truncate(body)); return result; }
+            if (stockObj == null) {
+                String msg = "分时响应未找到股票数据: " + truncate(body);
+                Log.w(TAG, msg);
+                reasonOut[0] = msg;
+                return result;
+            }
+            // 实测真实形状是 stockObj.data.data，"minute.data"是之前注释里写错的旧形状，保留作兼容兜底
+            JSONObject innerData = stockObj.optJSONObject("data");
+            JSONArray arr = innerData != null ? innerData.optJSONArray("data") : null;
+            if (arr == null) {
+                JSONObject minuteObj = stockObj.optJSONObject("minute");
+                arr = minuteObj != null ? minuteObj.optJSONArray("data") : null;
+            }
+            if (arr == null) {
+                String msg = "分时响应无data.data/minute.data数组: " + truncate(body);
+                Log.w(TAG, msg);
+                reasonOut[0] = msg;
+                return result;
+            }
 
             long prevCumVol = 0;
             for (int i = 0; i < arr.length(); i++) {
@@ -584,7 +623,9 @@ public class RealtimeQuoteManager {
                 result.add(p);
             }
         } catch (Exception e) {
+            String msg = "分时JSON解析异常: " + e.getMessage() + "，原始响应: " + truncate(body);
             Log.w(TAG, "分时JSON解析失败，原始响应: " + truncate(body), e);
+            reasonOut[0] = msg;
         }
         return result;
     }
