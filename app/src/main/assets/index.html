@@ -1147,6 +1147,13 @@ const STATE = {
   wins: 0,
   tradeTarget: null,
   tradeQty: 1,
+  // 【修复：切到持仓tab就重新触发一次监控服务启动】initPositions不是只在App冷启动时调用
+  // 一次——每次切到"持仓"tab，switchTab都会重新调Android.getPositions()→window.initPositions()，
+  // 之前那里没有任何一次性保护，只要监控开关偏好是开着的，每次切tab都会重新调一次
+  // Android.startMonitor()，导致监控服务被频繁重启（决策日志里能看到大量间隔仅几秒到几十秒的
+  // "监控服务启动"记录）。这个标记只在App这次运行期间第一次调用initPositions时真正去恢复监控，
+  // 之后的调用只刷新持仓数据本身，不再重复触发startMonitor。
+  monitorAutoResumed: false,
   chatHistory: [],
   // 真实行情K线缓存 { "600519_日K": [...bars] }
   klineCache: {},
@@ -1198,7 +1205,8 @@ window.initPositions = function(jsonStr) {
       refreshAgentStats();
       loadPendingReviews();
       loadRecentTrades();
-      if (Android.loadPrefs('monitor_running', '0') === '1') {
+      if (!STATE.monitorAutoResumed && Android.loadPrefs('monitor_running', '0') === '1') {
+        STATE.monitorAutoResumed = true;
         const savedInterval = +Android.loadPrefs('monitor_interval', '120000') || 120000;
         document.getElementById('monitorInterval').value = String(savedInterval);
         Android.startMonitor(savedInterval);
@@ -3883,6 +3891,20 @@ window.onQuoteData=function(jsonStr){
       updateAssetDisplay();renderPositions();
     }
     if(q.code===STATE.currentKlineCode) updateDetailPanel(q);
+    // 【修复：买入成交价直接沿用了候选池触发价，不是用户实际确认下单那一刻的价格】买卖弹窗
+    // 打开时（openTradeModal/openSellModal）会主动发一次Android.fetchQuote(code)刷新，这里补上接收
+    // 端：弹窗当前还开着、且这条行情恰好是弹窗里那支股票时，把弹窗显示的价格和
+    // STATE.tradeTarget里实际会被confirmTrade()拿去记账的price/latestClose都更新成最新行情，不再让
+    // 用户confirm时看到、系统记录时用到的还是打开弹窗那一刻（可能是候选池信号触发时、已经过去
+    // 好几分钟）的旧价格。
+    if(STATE.tradeTarget && STATE.tradeTarget.code===q.code
+        && document.getElementById('tradeModal').classList.contains('show')){
+      STATE.tradeTarget.price=q.price;
+      STATE.tradeTarget.latestClose=q.price;
+      const mp=document.getElementById('modalPrice');
+      if(mp) mp.textContent=`¥${q.price.toFixed(2)}`;
+      updateModalAmount();
+    }
   }catch(e){}
 };
 
@@ -3942,6 +3964,14 @@ function openTradeModal(code, stockObj) {
   }
   STATE.tradeTarget=stock;
   STATE.tradeQty=1;
+  // 【修复：买入成交价直接沿用了候选池触发价】stockObj传进来的price（尤其是从
+  // openPendingTradeModal走候选池待确认信号过来时）是规则引擎当初触发信号那一刻的价格，可能
+  // 已经是好几分钟前的旧价——AI复核本身最长可以等到3分钟超时，加上用户看到通知到实际
+  // 点开确认之间的时间，现价早就可能变了。这里主动发一次Android.fetchQuote(code)刷新，拿到
+  // 最新行情后由onQuoteData负责把弹窗显示的价格和真正会被confirmTrade()记账的
+  // STATE.tradeTarget.price/latestClose都更新掉，用户点"确认买入"时看到、系统实际记录的
+  // 都会是这次刷新到的最新价，不再是打开弹窗那一刻的旧值。
+  if (IS_ANDROID && code) Android.fetchQuote(code);
   const price=stock.latestClose||stock.price||0;
   // 买入时按现金算步进器上限，不能让+按钮点到一个明知会因资金不足而失败的数量。
   // 1.003留一点手续费安全边距，最终能买多少以Android.recordTrade()的实际拒绝为准，
@@ -3970,6 +4000,9 @@ function openTradeModal(code, stockObj) {
 function openSellModal(code){
   const pos=STATE.positions[code];
   if(!pos){showToast('持仓不存在');return;}
+  // 【修复】同样主动刷新一次行情，理由同 openTradeModal——虽然pos.currentPrice比候选池触发价
+  // 新（有定时自动刷新），但不保证是点开卖出弹窗那一刻的实时值，顺手再发一次不吃产。
+  if (IS_ANDROID && code) Android.fetchQuote(code);
   const curP=pos.currentPrice||pos.cost;
   const pnl=(curP-pos.cost)*pos.qty;
   const sellableQty=(pos.sellableQty!==undefined?pos.sellableQty:pos.qty);

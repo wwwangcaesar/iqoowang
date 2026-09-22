@@ -333,7 +333,17 @@ public class RealtimeMonitorService extends Service {
                         RealtimeQuoteManager.get().fetchMinuteLine(item.code, new RealtimeQuoteManager.MinuteCallback() {
                             @Override public void onResult(String code, List<RealtimeQuoteManager.MinutePoint> points) {}
                             @Override public void onError(String code, String msg) {
+                                // 【2026-09-22修复：待确认状态期间分时数据失败查不到原因】这里之前只写Log.w，
+                                // 跟非待确认路径（下面fetchMinuteLine那一处的onError处理）不一致——后者会额外写
+                                // 一条到决策日志，这里没有。待确认信号往往会挂好几个小时甚至一整天（等用户点
+                                // 确认/忽略），这段时间里分时数据抳取失败会完全从决策日志里消失，只在Logcat能看到，
+                                // 用户在自己手机上根本看不到，会误以为“不点确认就不同步监控了”。改成跟非待
+                                // 确认路径同款写法，两条路径保持一致。
                                 Log.w(TAG, "待确认状态分时数据获取失败 " + code + ": " + msg);
+                                try {
+                                    DecisionLogger.get().logNote(item.code, item.name,
+                                            "【分时数据获取失败】" + msg + "（待确认状态期间，分时图暂时无法更新，下一轮tick自动重试）");
+                                } catch (Exception ignored) {}
                             }
                         });
                     }
