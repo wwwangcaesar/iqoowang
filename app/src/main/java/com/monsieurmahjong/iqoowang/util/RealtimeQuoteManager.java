@@ -505,7 +505,17 @@ public class RealtimeQuoteManager {
 
     private void fetchMinuteLineAttempt(String code, MinuteCallback cb, int attempt) {
         String url = String.format(Locale.US, URL_TENCENT_MINUTE, market(code), code);
-        Request req = new Request.Builder().url(url).build();
+        // 【2026-09-23新增，排查WAF拦截】实测日志抓到过一次这个接口返回腾讯
+        // WAF挑战页(waf.tencent.com/501page.html)而不是JSON——这条请求之前完全没带
+        // User-Agent/Referer，OkHttp默认UA就是"okhttp/4.x"这种一望而知的非浏览器签名，
+        // 配合本 app固定节奏(每2分钟)、同一批股票代码的轮询模式，比普通浏览器访问更容易被
+        // WAF按行为特征命中。加上贴近真实浏览器的UA+Referer不能保证100%不再被拦（WAF也
+        // 可能按IP/频率维度拦截，这属于另一个量级的问题，单靠改请求头解决不了），但这是能做、
+        // 且没有副作用的最直接改善，跟同文件里新浪批量行情请求早就带着Referer是同一个道理。
+        Request req = new Request.Builder().url(url)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+                .header("Referer", "https://gu.qq.com/")
+                .build();
         HTTP.newCall(req).enqueue(new Callback() {
             @Override public void onFailure(Call call, IOException e) {
                 retryOrFailMinuteLine(code, cb, attempt, "请求失败: " + e.getMessage());
@@ -652,7 +662,12 @@ public class RealtimeQuoteManager {
 
     private void fetchPrevDayVwapAttempt(String code, String expectedDate, PrevDayVwapCallback cb, int attempt) {
         String url = String.format(Locale.US, URL_TENCENT_DAY_QUERY, market(code), code);
-        Request req = new Request.Builder().url(url).build();
+        // 【2026-09-23新增】跟 fetchMinuteLineAttempt 同一个域名(web.ifzq.gtimg.cn)、同样排查WAF
+        // 拦截风险，补上同款浏览器UA/Referer，理由见那边注释。
+        Request req = new Request.Builder().url(url)
+                .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+                .header("Referer", "https://gu.qq.com/")
+                .build();
         HTTP.newCall(req).enqueue(new Callback() {
             @Override public void onFailure(Call call, IOException e) {
                 retryOrFallbackVwap(code, expectedDate, cb, attempt, "请求失败: " + e.getMessage());

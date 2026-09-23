@@ -346,6 +346,34 @@ public class TradingRuleEngine {
         return result;
     }
 
+    /**
+     * 【2026-09-23新增，修复"待确认状态期间监控快照缺少VWAP/量比/分时形态指标"】
+     * RealtimeMonitorService对待确认(PENDING_*)状态的股票故意不重新调用上面的evaluate()——那会
+     * 重新走一遍状态机、有重复判定/重复弹卡片的风险。但用户明确要求"分时均价等主要信息一定要
+     * 记录到位"，之前待确认分支因此完全放弃了指标计算（buildSnapshotLine的metrics参数硬编码传
+     * null），导致一个信号只要挂着没确认（常见几小时甚至一整天），期间的监控快照就只有裸的
+     * 现价/成本对比，没有VWAP/水线/量比/分时趋势——这些恰恰是evaluate()开头就会算好、且不涉及
+     * 任何状态读写或买卖判定的纯计算部分。这里把这部分单独抽成一个只读方法，供待确认分支复用，
+     * 保证"不重新判定信号"和"指标信息不丢"两者都满足。传入的minutePoints允许用缓存（不强制
+     * 发起新请求），拿不到分时数据时vol/intradaySummary会退化成"数据不足"，不会抛异常。
+     */
+    public String computeMetricsOnly(String code, RealtimeQuoteManager.Quote quote,
+                                      List<RealtimeQuoteManager.MinutePoint> minutePoints,
+                                      PrevDayRef prevDay) {
+        if (quote == null || prevDay == null || !prevDay.hasData) return "";
+        double waterLine = prevDay.prevClose;
+        double vwap = computeVwap(minutePoints, quote);
+        Calendar cal = Calendar.getInstance();
+        int hour = cal.get(Calendar.HOUR_OF_DAY);
+        int minute = cal.get(Calendar.MINUTE);
+        VolumeCheck vol = checkVolume(code, quote, minutePoints, hour, minute);
+        IntradayPatternAnalyzer.IntradayTechnicalSummary intradaySummary =
+                IntradayPatternAnalyzer.get().summarize(minutePoints);
+        return String.format(Locale.CHINA,
+                "水线¥%.2f VWAP¥%.2f 量比%.2fx(阈值%.2fx) 5分钟量比%.2fx %s ｜ %s",
+                waterLine, vwap, vol.dayRatio, vol.threshold, vol.recent5Ratio, vol.detail, intradaySummary.summaryText);
+    }
+
     // ══════════════════════════════════════════
     // 买入：底仓
     // ══════════════════════════════════════════

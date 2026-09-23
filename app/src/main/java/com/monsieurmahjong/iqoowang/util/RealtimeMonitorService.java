@@ -302,7 +302,19 @@ public class RealtimeMonitorService extends Service {
                         String judgment = String.format(java.util.Locale.CHINA,
                                 "待确认·%s（触发价¥%.2f，等待你确认/忽略）",
                                 item.pendingAction != null ? item.pendingAction : "?", item.pendingPrice);
-                        String line = buildSnapshotLine(item, pendingQuote, pendingHolding, pendingHoldCost, judgment, null);
+                        // 【2026-09-23修复：待确认状态监控快照缺少VWAP/量比/分时形态】之前这里
+                        // metrics硬编码传null——不重新跑完整evaluate()是对的（避免重复判定），但连"算指标"
+                        // 这个纯计算、不涉及状态变更/买卖判定的部分也一起被跳过了，导致一支信号只要挂着
+                        // 没确认（常见几小时甚至一整天），期间的监控快照就完全没有VWAP/水线/量比/分时
+                        // 趋势这些用户明确要求要记录的技术指标，跟正常路径(evaluateAndAct→result.metrics)比
+                        // 是个信息缺口。用缓存的分时数据（本轮或上一轮已经拉到的，不额外发请求，也不重新
+                        // 走一遍会修改state的完整evaluate）算一份只读指标字符串，见TradingRuleEngine.
+                        // computeMetricsOnly()注释。
+                        List<RealtimeQuoteManager.MinutePoint> pendingCachedPoints =
+                                RealtimeQuoteManager.get().getCachedMinuteLine(item.code);
+                        String pendingMetrics = mEngine.computeMetricsOnly(
+                                item.code, pendingQuote, pendingCachedPoints, mEngine.getPrevDayRef(item.code));
+                        String line = buildSnapshotLine(item, pendingQuote, pendingHolding, pendingHoldCost, judgment, pendingMetrics);
                         if (line != null) DecisionLogger.get().logMonitorLine(item.code, item.name, line);
                     }
                     // 【2026-09-16修复：持仓页待确认信号期间止损价消失、分时图不刷新】待确认状态下
@@ -440,7 +452,8 @@ public class RealtimeMonitorService extends Service {
         if (today.equals(mLastRankDate)) return;
         mLastRankDate = today;
 
-        String snapshot = buildCandidateSnapshotText();
+        final java.util.Map<String, CandidateIndicators> indicators = new java.util.HashMap<>();
+        String snapshot = buildCandidateSnapshotText(indicators);
         if (snapshot == null) {
             Log.i(TAG, "候选池排行榜：候选池为空，今日跳过");
             return;
@@ -451,7 +464,8 @@ public class RealtimeMonitorService extends Service {
             @Override
             public void onComplete(String fullText) {
                 try {
-                    DatabaseManager.get().saveCandidateRanking(rankDate, fullText);
+                    String toSave = buildRankingJson(fullText, indicators);
+                    DatabaseManager.get().saveCandidateRanking(rankDate, toSave != null ? toSave : fullText);
                     fireRankingReadyNotification(rankDate);
                     DecisionLogger.get().logNote("候选池排行榜已生成，日期" + rankDate);
                 } catch (Exception e) {
@@ -465,11 +479,59 @@ public class RealtimeMonitorService extends Service {
         });
     }
 
+    /** 供候选池排行榜用的每支股票结构化技术指标快照，与AI打完分的评分/理由合并存库，这样前端
+     *  才能分三栏展示“股票信息/技术指标/AI分析”，不用再把AI返回的整段文本直接摆给用户看。 */
+    private static class CandidateIndicators {
+        String name, code, holdingNote, techSummary;
+        double price, changePct;
+        boolean holding;
+    }
+
+    /** 把AI输出的“股票：名称(代码)\n评分：N\n理由：文字”逐块文本解析成结构化数组，并且用code跟
+     *  buildCandidateSnapshotText同一轮产出的indicators做一次合并——分数/理由来自AI（唯一真正
+     *  做排序判断的一方），价格/涨跌幅/技术指标摘要/持仓状态来自程序实时计算（不依赖AI“记得住”
+     *  数字），JSON存库后前端就能分“股票信息/技术指标/AI分析”三栏渲染，不用再整段甩给用户读。
+     *  任何一块解析失败不影响其他块，最后解析不出任何一条时返回null，调用方回退成保存AI原始
+     *  文本，不会让排行榜彻底显示空白。 */
+    private String buildRankingJson(String aiText, java.util.Map<String, CandidateIndicators> indicators) {
+        if (aiText == null) return null;
+        org.json.JSONArray arr = new org.json.JSONArray();
+        java.util.regex.Pattern blockPattern = java.util.regex.Pattern.compile(
+                "股票[：:]\\s*(.+?)\\(([0-9A-Za-z]+)\\)\\s*[\\r\\n]+评分[：:]\\s*(\\d+)\\s*[\\r\\n]+理由[：:]\\s*(.+?)(?=股票[：:]|$)",
+                java.util.regex.Pattern.DOTALL);
+        java.util.regex.Matcher m = blockPattern.matcher(aiText);
+        while (m.find()) {
+            try {
+                String name = m.group(1).trim();
+                String code = m.group(2).trim();
+                int score = Integer.parseInt(m.group(3).trim());
+                String reason = m.group(4).trim();
+                org.json.JSONObject row = new org.json.JSONObject();
+                row.put("name", name);
+                row.put("code", code);
+                row.put("score", score);
+                row.put("aiReason", reason);
+                CandidateIndicators ind = indicators != null ? indicators.get(code) : null;
+                if (ind != null) {
+                    row.put("holdingNote", ind.holdingNote);
+                    row.put("techSummary", ind.techSummary);
+                    row.put("price", ind.price);
+                    row.put("changePct", ind.changePct);
+                    row.put("holding", ind.holding);
+                }
+                arr.put(row);
+            } catch (Exception ignored) {
+                // 单块解析失败就跳过这一条，不影响其余股票正常显示
+            }
+        }
+        return arr.length() > 0 ? arr.toString() : null;
+    }
+
     /** 【R10】把当前具备买入条件或持仓中的候选股拼成AI能直接读懂的文本快照，全部取自
      *  WatchlistManager已经落库的最新状态（lastNote字段本身就是上一轮evaluate()算好的人话），
      *  不重新发网络请求、不重新跑一遍规则引擎，与tick节奏解耦。返回null表示候选池为空，
      *  调用方不应该再去调AI。 */
-    private String buildCandidateSnapshotText() {
+    private String buildCandidateSnapshotText(java.util.Map<String, CandidateIndicators> indicatorsOut) {
         List<WatchlistManager.WatchlistItem> items = WatchlistManager.get().getActiveWatchlist();
         StringBuilder sb = new StringBuilder();
         int n = 0;
@@ -480,10 +542,50 @@ public class RealtimeMonitorService extends Service {
                     || (WatchlistManager.STATUS_WATCHING.equals(item.status)
                         && item.lastNote != null && !item.lastNote.isEmpty());
             if (!relevant) continue;
-            sb.append(String.format(java.util.Locale.CHINA, "%d. %s(%s) 状态=%s%s。%s\n",
-                    ++n, item.name, item.code, item.status,
-                    holding ? "(持仓中)" : "",
-                    item.lastNote != null ? item.lastNote : ""));
+
+            // 【核心修复】持仓/T+1状态：明确写成一句话交给AI，不能让AI从status枚举自己猜——之前
+            // “已买入、T+1不可卖”这个事实完全没有出现在给AI的文本里，规则引擎的旧理由文案
+            // （比如低开路径的“解套确认”）又是站在“要不要买入”的候选股视角写的，两者拼在
+            // 一起，AI只能照单全收，把候选股买入理由当成已持仓股票的排名理由输出，不是AI推理错了，
+            // 是喂给它的信息本身就没说清楚“这支已经买完、不能再谈买不买了”。
+            String holdingNote;
+            if (holding) {
+                int sellableQty = DatabaseManager.get().getSellableQuantity(item.code);
+                int totalQty = pos.getQuantity();
+                holdingNote = sellableQty <= 0
+                        ? String.format(java.util.Locale.CHINA,
+                            "持仓中，%d股全部为今日买入，T+1前不可卖(可卖0股)，此时只需判断是否加仓/继续持有，不要再讨论是否买入", totalQty)
+                        : String.format(java.util.Locale.CHINA,
+                            "持仓中，%d股可卖%d股，此时只需判断是否加仓/减仓/继续持有，不要再讨论是否买入", totalQty, sellableQty);
+            } else {
+                holdingNote = "未持仓，仍是候选观察股，可以讨论是否买入";
+            }
+
+            RealtimeQuoteManager.Quote q = RealtimeQuoteManager.get().getCachedQuote(item.code);
+            List<RealtimeQuoteManager.MinutePoint> minutePoints = RealtimeQuoteManager.get().getCachedMinuteLine(item.code);
+            IntradayPatternAnalyzer.IntradayTechnicalSummary techSummary = IntradayPatternAnalyzer.get().summarize(minutePoints);
+
+            // 【核心修复】优先用pendingReason（当前这一刻真正待确认信号的理由，加仓信号触发时就是它，
+            // 必要时还经过AI二次校验），不再无条件用lastNote——lastNote只在markStarter/markAdded这类
+            // 状态跃迁那一瞬间被写一次，之后哪怕已经有了新的待确认信号，它也不会跟着更新，候选池
+            // 排行榜读到的就是几小时甚至今天开盘时“建议底仓”那句旧话。
+            String reason = (item.pendingReason != null && !item.pendingReason.isEmpty()) ? item.pendingReason : item.lastNote;
+
+            sb.append(String.format(java.util.Locale.CHINA,
+                    "%d. %s(%s)。%s。%s。%s。原始理由：%s\n",
+                    ++n, item.name, item.code, holdingNote,
+                    q != null ? String.format(java.util.Locale.CHINA, "现价¥%.2f，涨跌幅%.2f%%", q.price, q.changePct) : "现价数据暂缺",
+                    techSummary.summaryText,
+                    reason != null ? reason : "暂无"));
+
+            if (indicatorsOut != null) {
+                CandidateIndicators ind = new CandidateIndicators();
+                ind.name = item.name; ind.code = item.code;
+                ind.holding = holding; ind.holdingNote = holdingNote;
+                ind.techSummary = techSummary.summaryText;
+                if (q != null) { ind.price = q.price; ind.changePct = q.changePct; }
+                indicatorsOut.put(item.code, ind);
+            }
         }
         return n == 0 ? null : sb.toString();
     }
