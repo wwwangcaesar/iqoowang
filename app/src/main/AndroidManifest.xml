@@ -147,7 +147,7 @@
              不影响现有 map_explore.html 那套流程正常使用 -->
         <activity
             android:name=".map.DistrictStreetMapActivity"
-            android:exported="false" />
+            android:exported="true" />
         <activity
             android:name=".piggy.PiggyBankActivity"
             android:exported="false" />
