@@ -143,6 +143,11 @@
         <activity
             android:name=".map.MapExploreActivity"
             android:exported="false" />
+        <!-- 【202609 新增】原生高清街区图层，目前还只接 Mock 数据、没接入导航流程，
+             不影响现有 map_explore.html 那套流程正常使用 -->
+        <activity
+            android:name=".map.DistrictStreetMapActivity"
+            android:exported="false" />
         <activity
             android:name=".piggy.PiggyBankActivity"
             android:exported="false" />

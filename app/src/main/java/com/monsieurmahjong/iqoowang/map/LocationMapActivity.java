@@ -1,12 +1,9 @@
 package com.monsieurmahjong.iqoowang.map;
 
-import android.content.Intent;
-import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -28,6 +25,7 @@ import com.amap.api.services.route.RideRouteResult;
 import com.amap.api.services.route.RouteSearch;
 import com.amap.api.services.route.WalkRouteResult;
 import com.monsieurmahjong.iqoowang.R;
+import com.monsieurmahjong.iqoowang.utils.AmapNavigationHelper;
 import com.monsieurmahjong.iqoowang.utils.LocationHelper;
 
 import java.util.ArrayList;
@@ -53,7 +51,6 @@ public class LocationMapActivity extends AppCompatActivity implements RouteSearc
     public static final String EXTRA_NAME = "extra_name";
 
     private static final String TAG = "LocationMapActivity";
-    private static final String AMAP_PACKAGE = "com.autonavi.minimap";
     /** 路线画成蓝绿色，跟 App 整体的荧光青主题色呼应 */
     private static final int ROUTE_COLOR = 0xFF00C6FF;
 
@@ -186,67 +183,11 @@ public class LocationMapActivity extends AppCompatActivity implements RouteSearc
     @Override public void onRideRouteSearched(RideRouteResult rideRouteResult, int i) {}
 
     /**
-     * 唤起高德地图 App 做真实导航：不传起点（slat/slon），高德会自动用设备当前定位当起点。
-     * dev=0 表示传入的经纬度已经是高德自己的 GCJ-02 坐标，不需要服务端二次纠偏——这也是为什么
-     * 定位那一步坚持用高德自己的定位 SDK（见 LocationHelper），坐标系从头到尾保持一致。
+     * 唤起高德地图 App 做真实导航。具体降级链路见 AmapNavigationHelper（抽成公共方法后，
+     * 原生街区图层那边也要用同一套，不想再拷贝一份）。
      */
     private void openAmapNavigation(double lat, double lon, String name) {
-        try {
-            // 1. 优先使用高德地图导航协议 (androidamap://navi)
-            // 该协议直接以精确经纬度 (lat, lon) 作为导航终点坐标，dev=0 (高德GCJ02坐标系)，style=2 (驾车导航)，
-            // poiname 为目的地展示名称。这样高德地图会严格按照 GPS 坐标导航，绝不会误搜到其他同名地点或旧地点。
-            String naviUri = "androidamap://navi?sourceApplication=iqoowang"
-                    + "&lat=" + lat
-                    + "&lon=" + lon
-                    + "&dev=0&style=2"
-                    + "&poiname=" + Uri.encode(name);
-            Intent naviIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(naviUri));
-            naviIntent.setPackage(AMAP_PACKAGE);
-            naviIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-
-            if (naviIntent.resolveActivity(getPackageManager()) != null) {
-                startActivity(naviIntent);
-                return;
-            }
-
-            // 2. 降级使用路径规划协议 (androidamap://route/plan/)
-            String routeUri = "androidamap://route/plan/?sourceApplication=iqoowang"
-                    + "&dlat=" + lat
-                    + "&dlon=" + lon
-                    + "&dname=" + Uri.encode(name)
-                    + "&dev=0&t=0";
-            Intent routeIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(routeUri));
-            routeIntent.setPackage(AMAP_PACKAGE);
-            routeIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-            if (routeIntent.resolveActivity(getPackageManager()) != null) {
-                startActivity(routeIntent);
-                return;
-            }
-
-            // 3. 降级使用通用的 amapuri://
-            String fallbackUri = "amapuri://route/plan/?sourceApplication=iqoowang"
-                    + "&dlat=" + lat
-                    + "&dlon=" + lon
-                    + "&dname=" + Uri.encode(name)
-                    + "&dev=0&t=0";
-            Intent fallbackIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(fallbackUri));
-            fallbackIntent.setPackage(AMAP_PACKAGE);
-            fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-            if (fallbackIntent.resolveActivity(getPackageManager()) != null) {
-                startActivity(fallbackIntent);
-                return;
-            }
-
-            // 4. 降级使用外部浏览器唤起高德 Web 导航
-            String webUri = "https://uri.amap.com/navigation?to=" + lon + "," + lat + "," + Uri.encode(name)
-                    + "&mode=car&src=iqoowang&coordinate=gaode&callnative=1";
-            Intent webIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(webUri));
-            webIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            startActivity(webIntent);
-        } catch (Exception e) {
-            Log.e(TAG, "唤起高德导航异常", e);
-            Toast.makeText(this, "未安装高德地图，无法导航", Toast.LENGTH_SHORT).show();
-        }
+        AmapNavigationHelper.openNavigation(this, lat, lon, name);
     }
 
     // MapView 生命周期转发，官方要求的标准写法，缺一个都可能导致地图状态异常或内存泄漏
