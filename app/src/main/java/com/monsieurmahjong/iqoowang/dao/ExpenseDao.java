@@ -88,6 +88,16 @@ public interface ExpenseDao {
     @Query("SELECT * FROM expense_table WHERE latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY timestamp DESC")
     List<Expense> getExpensesWithLocationSync();
 
+    /** 【原生高清街区图层专用】按区县名称查该区县下所有带有效经纬度的消费记录。
+     * 没直接按 adCode 查，因为早期（2026-08定位功能上线之前）的记录不一定写入了 adCode，
+     * 但 district 这个人可读名称字段比较稳定（和 map_explore.html 里自己做多边形分类时的典参照字段一致）。 */
+    @Query("SELECT * FROM expense_table WHERE district = :districtName AND latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY timestamp DESC")
+    List<Expense> getExpensesByDistrictSync(String districtName);
+
+    /** 【原生高清街区图层专用】按城市名称查，给未来可能直接从市级跳这个页面（不再途经区县选择）的用法预留 */
+    @Query("SELECT * FROM expense_table WHERE city = :cityName AND latitude IS NOT NULL AND longitude IS NOT NULL ORDER BY timestamp DESC")
+    List<Expense> getExpensesByCitySync(String cityName);
+
     @Delete
     void deleteExpense(Expense expense);
 

@@ -3,6 +3,7 @@ package com.monsieurmahjong.iqoowang.map;
 import android.animation.Animator;
 import android.animation.ValueAnimator;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.view.LayoutInflater;
@@ -10,6 +11,7 @@ import android.view.View;
 import android.view.animation.LinearInterpolator;
 import android.widget.Button;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
@@ -25,9 +27,13 @@ import com.amap.api.maps.model.LatLngBounds;
 import com.amap.api.maps.model.Marker;
 import com.amap.api.maps.model.MarkerOptions;
 import com.monsieurmahjong.iqoowang.R;
+import com.monsieurmahjong.iqoowang.dao.AppDatabase;
+import com.monsieurmahjong.iqoowang.dao.Expense;
 import com.monsieurmahjong.iqoowang.utils.AmapNavigationHelper;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 
@@ -39,13 +45,17 @@ import java.util.Locale;
  * AMap 原生 Circle 叠加同一坐标、半径/透明度交给 ValueAnimator 驱动，是原生矢量图层的
  * 属性动画，比"每个点各自一个DOM元素+独立CSS动画"便宜得多——两边视觉效果基本一致，
  * 性能不是一个量级。
- *
- * 【当前阶段：先接 Mock 数据，不接生产数据】按用户要求，这一步只把原生页面本身做完整、
- * 做正确，用一批写死的示例消费点验证视觉效果和交互；MapExploreActivity/map_explore.html
- * 里"市级点击进区县"的入口还没有改成跳这个页面，正常使用流程完全不受影响。等这个页面
- * 本身验证没问题了，再单独做一轮：1) 从 Room 数据库查真实的某区县消费点数据传进来，
- * 2) 把 map_explore.html 里省→市→区县那一步的跳转目标换成这个原生页面。
- *
+ * <p>
+ * 【202609 三次修改：接入真实数据】现在支持三种数据来源，onCreate 里按优先级依次判断：
+ * 1) 调用方直接把点位列表（EXTRA_POINTS）传进来——最快，不用查库；
+ * 2) 只传了区县名/城市名（EXTRA_DISTRICT_NAME / EXTRA_CITY_NAME）——本页面自己异步查
+ * Room 数据库里这个区县/城市下所有带经纬度的真实消费记录（ExpenseDao.getExpensesByDistrictSync
+ * / getExpensesByCitySync）；
+ * 3) 什么都没传（比如裸启动这个 Activity 做界面测试）——退化成写死的示例数据，方便不接真机
+ * 数据库也能看效果。
+ * MapExploreActivity/map_explore.html 里"市级点击进区县"的入口还没有改成跳这个页面，
+ * 正常使用流程完全不受影响，这一步只是让本页面具备了查真实数据的能力。
+ * <p>
  * 【202609 二次修复：缩放时光圈闪烁】AMap 原生 Circle 是矢量图形类，半径单位是"米"，不是
  * "像素"——地图放大时同样的米数在屏幕上占的像素会跟着变大，脉冲光圈就会从"细小的呼吸感"
  * 迅速膨胀成一个硕大的圆不停放大缩小，视觉上就是用户说的"闪烁"。（查了官方文档确认过，
@@ -54,28 +64,38 @@ import java.util.Locale;
  * 现在的做法：不再用固定的"米"作为光圈半径，而是记住"想要多少像素"，每次相机缩放变化时
  * （setOnCameraChangeListener）用标准 Web 墨卡托投影公式把"像素"换算成对应纬度、当前
  * 缩放级别下应该用多少"米"，再喂给 Circle.setRadius()——这样光圈在屏幕上看起来的大小
- * 无论怎么缩放都基本不变，回到用户满意的"第一种动画效果"那种观感。
+ * 无论怎么缩放都基本不变。
  */
 public class DistrictStreetMapActivity extends AppCompatActivity {
 
     public static final String EXTRA_DISTRICT_NAME = "extra_district_name";
     public static final String EXTRA_DISTRICT_ADCODE = "extra_district_adcode";
-    /** 市区名称，没传区县名只传城市名时用作查询粒度退化（例如未来市级直接跳这个页面、不再途经区县选择那步的话） */
+    /**
+     * 市区名称，没传区县名只传城市名时用作查询粒度退化（例如未来市级直接跳这个页面、不再途经区县选择那步的话）
+     */
     public static final String EXTRA_CITY_NAME = "extra_city_name";
     public static final String EXTRA_POINTS = "extra_points";
 
-    /** 原生渲染扛得住比 WebView 多得多的点，但还是留一个上限，避免极端数据量下 Marker 多到影响可读性 */
+    private static final String MOCK_DISPLAY_NAME = "示例区县（Mock数据）";
+
+    /**
+     * 原生渲染扛得住比 WebView 多得多的点，但还是留一个上限，避免极端数据量下 Marker 多到影响可读性
+     */
     private static final int MAX_POINTS = 500;
 
-    /** 标准 Web 墨卡托投影公式里 zoom=0、赤道上的"米/像素"基准值，高德/百度/Google地图共用同一套瓦片体系 */
+    /**
+     * 标准 Web 墨卡托投影公式里 zoom=0、赤道上的"米/像素"基准值，高德/百度/Google地图共用同一套瓦片体系
+     */
     private static final double BASE_METERS_PER_PIXEL = 156543.03392;
 
     private MapView mapView;
     private AMap aMap;
+    private AppDatabase db;
     private final List<Marker> markers = new ArrayList<>();
     private final List<Animator> pulseAnimators = new ArrayList<>();
     private final List<PulseEntry> pulseEntries = new ArrayList<>();
 
+    private TextView tvPointCount;
     private View infoCard;
     private TextView tvSpotName;
     private TextView tvSpotMeta;
@@ -87,20 +107,20 @@ public class DistrictStreetMapActivity extends AppCompatActivity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_district_street_map);
 
-        String districtName = getIntent().getStringExtra(EXTRA_DISTRICT_NAME);
-        if (districtName == null || districtName.trim().isEmpty()) districtName = "示例区县（Mock数据）";
+        db = AppDatabase.getDatabase(this);
 
-        List<StreetPoint> points = getIntent().getParcelableArrayListExtra(EXTRA_POINTS);
-        if (points == null || points.isEmpty()) {
-            points = generateMockPoints();
-        }
-        if (points.size() > MAX_POINTS) {
-            points = points.subList(0, MAX_POINTS);
-        }
+        String districtName = getIntent().getStringExtra(EXTRA_DISTRICT_NAME);
+        String cityName = getIntent().getStringExtra(EXTRA_CITY_NAME);
+        List<StreetPoint> passedPoints = getIntent().getParcelableArrayListExtra(EXTRA_POINTS);
+        boolean hasLocationHint = (districtName != null && !districtName.trim().isEmpty())
+                || (cityName != null && !cityName.trim().isEmpty());
+        String displayName = (districtName != null && !districtName.trim().isEmpty()) ? districtName
+                : (cityName != null && !cityName.trim().isEmpty()) ? cityName
+                : MOCK_DISPLAY_NAME;
 
         TextView tvBack = findViewById(R.id.tv_street_back);
         TextView tvDistrictName = findViewById(R.id.tv_street_district_name);
-        TextView tvPointCount = findViewById(R.id.tv_street_point_count);
+        tvPointCount = findViewById(R.id.tv_street_point_count);
         infoCard = findViewById(R.id.layout_street_info_card);
         tvSpotName = findViewById(R.id.tv_street_spot_name);
         tvSpotMeta = findViewById(R.id.tv_street_spot_meta);
@@ -108,8 +128,7 @@ public class DistrictStreetMapActivity extends AppCompatActivity {
         Button btnNavigate = findViewById(R.id.btn_street_navigate);
 
         tvBack.setOnClickListener(v -> finish());
-        tvDistrictName.setText(districtName);
-        tvPointCount.setText("共 " + points.size() + " 笔消费足迹");
+        tvDistrictName.setText(displayName);
         btnNavigate.setOnClickListener(v -> {
             if (selectedPoint != null) {
                 AmapNavigationHelper.openNavigation(this, selectedPoint.lat, selectedPoint.lng, selectedPoint.name);
@@ -118,10 +137,18 @@ public class DistrictStreetMapActivity extends AppCompatActivity {
 
         mapView = findViewById(R.id.map_view);
         mapView.onCreate(savedInstanceState);
-        initMap(points);
+        initMap();
+
+        if (passedPoints != null && !passedPoints.isEmpty()) {
+            onPointsReady(passedPoints);
+        } else if (hasLocationHint) {
+            loadRealDataAsync(districtName, cityName);
+        } else {
+            onPointsReady(generateMockPoints());
+        }
     }
 
-    private void initMap(List<StreetPoint> points) {
+    private void initMap() {
         aMap = mapView.getMap();
         aMap.setMapType(AMap.MAP_TYPE_NIGHT); // 暗夜底图，呼应 App 整体的赛博朋克配色，不需要额外申请自定义地图样式ID
         aMap.getUiSettings().setZoomControlsEnabled(false);
@@ -149,7 +176,72 @@ public class DistrictStreetMapActivity extends AppCompatActivity {
                 updatePulseScaleForZoom(cameraPosition.zoom);
             }
         });
+    }
 
+    /**
+     * 异步查真实数据：区县名优先，没有的话退化成城市名（粒度更粗，一个城市下所有点）。
+     * Room 的 XxxSync 系列方法要求不在主线程调用，跟这个项目其他地方（QuickLogActivity、
+     * ScreenshotService 等）一样，手动开一个 Thread，查完切回主线程更新 UI。
+     */
+    private void loadRealDataAsync(String districtName, String cityName) {
+        tvPointCount.setText("正在加载真实消费记录…");
+        new Thread(() -> {
+            List<Expense> expenses;
+            if (districtName != null && !districtName.trim().isEmpty()) {
+                expenses = db.expenseDao().getExpensesByDistrictSync(districtName);
+            } else {
+                expenses = db.expenseDao().getExpensesByCitySync(cityName);
+            }
+
+            List<StreetPoint> converted = new ArrayList<>();
+            for (Expense e : expenses) {
+                StreetPoint pt = fromExpense(e);
+                if (pt != null) converted.add(pt);
+            }
+
+            runOnUiThread(() -> {
+                if (converted.isEmpty()) {
+                    Toast.makeText(this, "这个区域还没有带位置信息的消费记录", Toast.LENGTH_SHORT).show();
+                    new Handler().postDelayed(() -> {
+                        finish();
+                    }, 1000);
+
+                }
+                onPointsReady(converted);
+            });
+        }).start();
+    }
+
+    /**
+     * Expense → StreetPoint 转换。经纬度理论上不该为 null（DAO 查询已经用 WHERE latitude IS NOT NULL
+     * 过滤过），这里仍然判空直接跳过而不是给 0.0/0.0 兜底——0.0/0.0 在地图上是几内亚湾外海一个
+     * 真实存在的坐标点，Expense 类自己的注释也提到过这个坑，这里延续同样的处理原则。
+     */
+    private static StreetPoint fromExpense(Expense e) {
+        if (e.getLatitude() == null || e.getLongitude() == null) return null;
+
+        StreetPoint pt = new StreetPoint();
+        pt.id = e.getId();
+        pt.lat = e.getLatitude();
+        pt.lng = e.getLongitude();
+        String loc = e.getLocationName();
+        pt.name = (loc != null && !loc.trim().isEmpty())
+                ? loc
+                : (e.getCategoryName() != null ? e.getCategoryName() : "消费点");
+        pt.category = e.getCategoryName() != null ? e.getCategoryName() : "";
+        pt.amountFormatted = String.format(Locale.CHINA, "%.2f", e.getAmount() / 100.0);
+        pt.time = new SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(new Date(e.getTimestamp()));
+        return pt;
+    }
+
+    /**
+     * 不管点位是 Mock、调用方直传、还是查库查回来的，最后都从这里统一收口：限流、刷新计数文案、渲染
+     */
+    private void onPointsReady(List<StreetPoint> points) {
+        if (points.size() > MAX_POINTS) {
+            points = points.subList(0, MAX_POINTS);
+        }
+        tvPointCount.setText("共 " + points.size() + " 笔消费足迹");
         renderMarkers(points);
     }
 
@@ -239,14 +331,18 @@ public class DistrictStreetMapActivity extends AppCompatActivity {
         pulseAnimators.add(animator);
     }
 
-    /** 缩放变化时统一刷新每个光圈"当前1像素对应多少米"，动画下一帧就会用上新值 */
+    /**
+     * 缩放变化时统一刷新每个光圈"当前1像素对应多少米"，动画下一帧就会用上新值
+     */
     private void updatePulseScaleForZoom(float zoom) {
         for (PulseEntry entry : pulseEntries) {
             entry.metersPerPixel = metersPerPixel(entry.center.latitude, zoom);
         }
     }
 
-    /** 标准 Web 墨卡托投影公式：纬度越高，同样像素数对应的实际距离越短（南北两极附近趋近于0） */
+    /**
+     * 标准 Web 墨卡托投影公式：纬度越高，同样像素数对应的实际距离越短（南北两极附近趋近于0）
+     */
     private double metersPerPixel(double latitude, float zoom) {
         return BASE_METERS_PER_PIXEL * Math.cos(Math.toRadians(latitude)) / Math.pow(2, zoom);
     }
@@ -269,8 +365,9 @@ public class DistrictStreetMapActivity extends AppCompatActivity {
     }
 
     /**
-     * 【仅测试用】还没接生产数据时，生成一批南京新街口附近的示例消费点，方便直接在真机上
-     * 看到原生 Marker + 脉冲动画 + 信息卡片的实际效果。接入真实数据后这个方法就不会再被调用。
+     * 【仅测试用】完全没传区县名/城市名/点位时才会走到这里（比如裸启动这个 Activity 做界面
+     * 测试），生成一批南京新街口附近的示例消费点。真实数据接入后，只要 Intent 带了
+     * EXTRA_DISTRICT_NAME 或 EXTRA_CITY_NAME，这个方法就不会再被调用。
      */
     private List<StreetPoint> generateMockPoints() {
         double baseLat = 32.0415, baseLng = 118.7864;
@@ -326,14 +423,18 @@ public class DistrictStreetMapActivity extends AppCompatActivity {
         mapView.onSaveInstanceState(outState);
     }
 
-    /** 单个脉冲光圈需要跟踪的状态：圆本身、经纬度中心（算米/像素比要用纬度）、当前米/像素比 */
+    /**
+     * 单个脉冲光圈需要跟踪的状态：圆本身、经纬度中心（算米/像素比要用纬度）、当前米/像素比
+     */
     private static class PulseEntry {
         Circle circle;
         LatLng center;
         double metersPerPixel = 1;
     }
 
-    /** 单个消费点的数据模型；实现 Parcelable 是为了能通过 Intent extra 从别的页面传点位列表进来 */
+    /**
+     * 单个消费点的数据模型；实现 Parcelable 是为了能通过 Intent extra 从别的页面传点位列表进来
+     */
     public static class StreetPoint implements Parcelable {
         public long id;
         public String name;
@@ -343,7 +444,8 @@ public class DistrictStreetMapActivity extends AppCompatActivity {
         public String category;
         public String time;
 
-        public StreetPoint() {}
+        public StreetPoint() {
+        }
 
         protected StreetPoint(Parcel in) {
             id = in.readLong();

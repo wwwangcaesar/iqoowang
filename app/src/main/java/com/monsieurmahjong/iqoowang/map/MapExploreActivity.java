@@ -76,6 +76,28 @@ public class MapExploreActivity extends AppCompatActivity {
             startActivity(intent);
         }
 
+        /**
+         * 【202609 新增】市级点击区县时不再走 2D 下钻+抽屉那套，直接拉起原生高清街区图层（见 DistrictStreetMapActivity）。
+         * districtAdcode 现在这个原生页面自己的数据查询用不上（按名称查库），先原样带过去存一份，
+         * 以后如果查询逻辑改成按 adcode 匹配也不用再改这条 JS Bridge。
+         */
+        @JavascriptInterface
+        public void openNativeStreetLayer(String districtName, String districtAdcode, String cityName) {
+            runOnUiThread(() -> {
+                Intent intent = new Intent(MapExploreActivity.this, DistrictStreetMapActivity.class);
+                if (districtName != null && !districtName.isEmpty()) {
+                    intent.putExtra(DistrictStreetMapActivity.EXTRA_DISTRICT_NAME, districtName);
+                }
+                if (districtAdcode != null && !districtAdcode.isEmpty()) {
+                    intent.putExtra(DistrictStreetMapActivity.EXTRA_DISTRICT_ADCODE, districtAdcode);
+                }
+                if (cityName != null && !cityName.isEmpty()) {
+                    intent.putExtra(DistrictStreetMapActivity.EXTRA_CITY_NAME, cityName);
+                }
+                startActivity(intent);
+            });
+        }
+
         @JavascriptInterface
         public String getAmapKey() {
             return amapKey != null ? amapKey : "";

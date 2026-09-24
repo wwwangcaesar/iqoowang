@@ -2230,6 +2230,24 @@ async function drillIntoDistrict(districtName, districtAdcode, center) {
   openDistrictDrawer(districtName, districtAdcode, districtPoints);
 }
 
+/**
+ * 【202609 新增】市级点击区县不再调 drillIntoDistrict（那套 2D 下钻+抽屉），而是直接拉起
+ * 原生高清街区图层页面（DistrictStreetMapActivity），展示该区县底下全部消费地点。
+ * MapBridge.openNativeStreetLayer 不存在时（比如把这个页面单独拿到普通浏览器里调试）退化回旧的
+ * 2D下钻体验，不会直接无反应。
+ */
+function openNativeStreetLayer(districtName, districtAdcode, cityNameFallback) {
+  if (window.MapBridge && typeof window.MapBridge.openNativeStreetLayer === 'function') {
+    window.MapBridge.openNativeStreetLayer(
+      districtName || '',
+      districtAdcode ? String(districtAdcode) : '',
+      cityNameFallback || ''
+    );
+  } else {
+    drillIntoDistrict(districtName, districtAdcode, null);
+  }
+}
+
 /** 打开区县级专属详情抽屉 */
 function openDistrictDrawer(dName, dCode, points) {
   const name = dName || state.districtName || '当前区域';
@@ -2527,7 +2545,7 @@ function setupMapInteractions() {
 
     if (state.level === 'city') {
       const adcode = params.data && params.data.adcode;
-      drillIntoDistrict(params.name, adcode, params.data && params.data.center);
+      openNativeStreetLayer(params.name, adcode, state.cityName);
       return;
     }
   });
