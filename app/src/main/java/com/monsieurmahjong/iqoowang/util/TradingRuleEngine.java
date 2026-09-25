@@ -61,6 +61,10 @@ public class TradingRuleEngine {
          *  不像underwaterReversal那样只在水下检测到反转时才有值。ambiguous=true时
          *  RealtimeMonitorService会据此额外触发一次本地AI校验（见该类evaluateAndAct()）。 */
         public IntradayPatternAnalyzer.IntradayTechnicalSummary intradaySummary;
+        /** 【对应用户明确描述的"分时放量尖角"经验】本轮是否新检测到一个尖角信号（未推送过的），
+         *  null表示未检测到/已推送过。非空时RealtimeMonitorService据此写决策日志+推送通知+起AI解读，
+         *  不影响本次result自己的action（可能同时有其他action，两者互不影响）。 */
+        public IntradayPatternAnalyzer.VolumeSpikeReversal volumeSpikeSignal;
     }
 
     public static class DivergenceState {
@@ -86,6 +90,9 @@ public class TradingRuleEngine {
          *  比如"2026-09-15_10:15"），用于去重。不用反转点在分时数据里的下标去重，因为下标
          *  每个tick都会变（分时点列表一直在变长）。 */
         public String underwaterReversalNotifiedKey;
+        /** 【对应用户明确描述的"分时放量尖角"经验】最近一次已推送过的尖角信号标识（日期_方向_时间），
+         *  去重逻辑与underwaterReversalNotifiedKey同样，不用分时点列表下标（每个tick都会变）。 */
+        public String volumeSpikeNotifiedKey;
     }
 
     /**
@@ -238,10 +245,18 @@ public class TradingRuleEngine {
         IntradayPatternAnalyzer.IntradayTechnicalSummary intradaySummary =
                 IntradayPatternAnalyzer.get().summarize(minutePoints);
         result.intradaySummary = intradaySummary;
+        // 【2026-09-25新增·Claude，对应用户"日常信号复核/监控快照也要能看到全天走势，不只是
+        // 最近10个点"的要求】收盘前候选池排行榜那条链路已经在用summarizeFullDay()了，这里让每一次
+        // evaluate()——也就是买卖信号触发时喂给AI复核的metrics、以及每支股票的tick监控快照——
+        // 也带上同一份全天维度摘要，跟intradaySummary（近期窗口）互补，不重复计算（两个方法内部
+        // 各自独立扫一遍minutePoints，互不依赖）。
+        IntradayPatternAnalyzer.FullDaySummary fullDaySummary =
+                IntradayPatternAnalyzer.get().summarizeFullDay(minutePoints);
 
         result.metrics = String.format(Locale.CHINA,
-                "水线¥%.2f VWAP¥%.2f 量比%.2fx(阈值%.2fx) 5分钟量比%.2fx %s ｜ %s",
-                waterLine, vwap, vol.dayRatio, vol.threshold, vol.recent5Ratio, vol.detail, intradaySummary.summaryText);
+                "水线¥%.2f VWAP¥%.2f 量比%.2fx(阈值%.2fx) 5分钟量比%.2fx %s ｜ %s ｜ %s",
+                waterLine, vwap, vol.dayRatio, vol.threshold, vol.recent5Ratio, vol.detail,
+                intradaySummary.summaryText, fullDaySummary.summaryText);
 
         DivergenceState state = trackState != null ? copyState(trackState) : new DivergenceState();
         updateIntradayPeak(quote, prevDay, state);
@@ -254,6 +269,12 @@ public class TradingRuleEngine {
             updatePrevYangLow(code, state);
         }
 
+        // 【新增】分时放量尖角检测，独立于止损/底仓判断之外单独跑一次，不管当前status是
+        // 持仓还是观察中，检测到了就挂到result上，由RealtimeMonitorService决定怎么提示，不影响
+        // 下面止损/底仓/加仓/满仓各自的判断流程。
+        IntradayPatternAnalyzer.VolumeSpikeReversal volumeSpike = checkVolumeSpikeSignal(code, status, quote, minutePoints, state);
+        result.volumeSpikeSignal = volumeSpike;
+
         // ── 持仓：止损优先 ──
         if (isHolding(status)) {
             RuleResult stop = evaluateStopLoss(quote, prevDay, minutePoints, vol, state, pattern, hour, minute);
@@ -261,6 +282,7 @@ public class TradingRuleEngine {
                 stop.metrics = result.metrics + " | " + stop.metrics;
                 stop.stateUpdate = state;
                 stop.waterLine = waterLine; stop.vwap = vwap; stop.volRatio = vol.dayRatio;
+                stop.volumeSpikeSignal = volumeSpike;
                 annotateLimitAndHoldingPeriod(stop, limitInfo);
                 return stop;
             }
@@ -270,6 +292,7 @@ public class TradingRuleEngine {
                 surge.metrics = result.metrics;
                 surge.stateUpdate = state;
                 surge.waterLine = waterLine; surge.vwap = vwap; surge.volRatio = vol.dayRatio;
+                surge.volumeSpikeSignal = volumeSpike;
                 return surge;
             }
         }
@@ -285,6 +308,7 @@ public class TradingRuleEngine {
                 full.metrics = result.metrics;
                 full.stateUpdate = state;
                 full.waterLine = waterLine; full.vwap = vwap; full.volRatio = vol.dayRatio;
+                full.volumeSpikeSignal = volumeSpike;
                 annotateLimitAndHoldingPeriod(full, limitInfo);
                 return full;
             }
@@ -298,6 +322,7 @@ public class TradingRuleEngine {
                 add.metrics = result.metrics;
                 add.stateUpdate = state;
                 add.waterLine = waterLine; add.vwap = vwap; add.volRatio = vol.dayRatio;
+                add.volumeSpikeSignal = volumeSpike;
                 annotateLimitAndHoldingPeriod(add, limitInfo);
                 return add;
             }
@@ -339,6 +364,7 @@ public class TradingRuleEngine {
             starter.stateUpdate = state; // 持久化观察期已累计的峰值涨幅/重点监听计时状态，避免转入底仓后状态从零重算
             starter.waterLine = waterLine; starter.vwap = vwap; starter.volRatio = vol.dayRatio;
             starter.underwaterReversal = result.underwaterReversal; // 把上面的检测结果带到最终返回的result上
+            starter.volumeSpikeSignal = volumeSpike;
             annotateLimitAndHoldingPeriod(starter, limitInfo);
             return starter;
         }
@@ -369,9 +395,14 @@ public class TradingRuleEngine {
         VolumeCheck vol = checkVolume(code, quote, minutePoints, hour, minute);
         IntradayPatternAnalyzer.IntradayTechnicalSummary intradaySummary =
                 IntradayPatternAnalyzer.get().summarize(minutePoints);
+        // 【2026-09-25新增·Claude】待确认状态期间的监控快照也同样应该能看到全天走势摘要，跟上面
+        // evaluate()那边保持同步。
+        IntradayPatternAnalyzer.FullDaySummary fullDaySummary =
+                IntradayPatternAnalyzer.get().summarizeFullDay(minutePoints);
         return String.format(Locale.CHINA,
-                "水线¥%.2f VWAP¥%.2f 量比%.2fx(阈值%.2fx) 5分钟量比%.2fx %s ｜ %s",
-                waterLine, vwap, vol.dayRatio, vol.threshold, vol.recent5Ratio, vol.detail, intradaySummary.summaryText);
+                "水线¥%.2f VWAP¥%.2f 量比%.2fx(阈值%.2fx) 5分钟量比%.2fx %s ｜ %s ｜ %s",
+                waterLine, vwap, vol.dayRatio, vol.threshold, vol.recent5Ratio, vol.detail,
+                intradaySummary.summaryText, fullDaySummary.summaryText);
     }
 
     // ══════════════════════════════════════════
@@ -408,6 +439,28 @@ public class TradingRuleEngine {
 
         state.underwaterReversalNotifiedKey = key;
         result.underwaterReversal = r;
+    }
+
+    /**
+     * 【对应用户明确描述的"分时放量尖角"经验，与checkUnderwaterReversal并列的独立检测】卖出方向
+     * (TOP)只在持仓时才有意义（没有仓位无所谓"卖在最高点"）；买入方向(BOTTOM)只在观察中
+     * （尚未持仓）时才有意义。两个方向都只是"给出提示"，不直接产生Action、不会让规则引擎自动
+     * 执行买卖——跟checkUnderwaterReversal一样的定位，只是这里的提示会比水下反转更醒目（用户明确
+     * 要求"验证提示"）。
+     */
+    private IntradayPatternAnalyzer.VolumeSpikeReversal checkVolumeSpikeSignal(
+            String code, String status, RealtimeQuoteManager.Quote quote,
+            List<RealtimeQuoteManager.MinutePoint> minutePoints, DivergenceState state) {
+        IntradayPatternAnalyzer.VolumeSpikeReversal r = IntradayPatternAnalyzer.get().detectVolumeSpikeReversal(minutePoints);
+        if (!r.detected) return null;
+        if ("TOP".equals(r.direction) && !isHolding(status)) return null;
+        if ("BOTTOM".equals(r.direction) && !WatchlistManager.STATUS_WATCHING.equals(status)) return null;
+        if (minutePoints == null || r.spikeIndex < 0 || r.spikeIndex >= minutePoints.size()) return null;
+
+        String key = todayStr() + "_" + r.direction + "_" + minutePoints.get(r.spikeIndex).time;
+        if (key.equals(state.volumeSpikeNotifiedKey)) return null;
+        state.volumeSpikeNotifiedKey = key;
+        return r;
     }
 
     private RuleResult evaluateStarter(RealtimeQuoteManager.Quote quote, PrevDayRef prevDay,
@@ -1312,6 +1365,7 @@ public class TradingRuleEngine {
         c.pendingBreakStartTime = s.pendingBreakStartTime;
         c.pendingBreakRef = s.pendingBreakRef;
         c.underwaterReversalNotifiedKey = s.underwaterReversalNotifiedKey;
+        c.volumeSpikeNotifiedKey = s.volumeSpikeNotifiedKey;
         return c;
     }
 

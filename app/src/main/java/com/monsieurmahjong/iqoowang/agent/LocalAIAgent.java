@@ -788,6 +788,65 @@ public class LocalAIAgent {
     }
 
     /**
+     * 【对应用户明确描述的"分时放量尖角"经验，与下面analyzeIntradayReversal同一类"定性
+     * 解读不给结论"的设计】不能直接复用analyzeIntradayReversal——那个方法的prompt里硬编码了
+     * "现价仍低于昨收（处于水下）"这个前提，套用到本方法要覆盖的TOP(高位见顶)方向会
+     * 产生自相矛盾的错误描述。这里按方向(isTop)分别给出恰当的场景描述，其余"只解读
+     * 不给买卖结论"的设计原则不变。
+     */
+    public void analyzeVolumeSpikeSignal(String code, String name, boolean isTop, String contextText, AICallback cb) {
+        if (!tryAcquireInferLock()) {
+            cb.onError("AI正在思考中，请稍后");
+            return;
+        }
+        mExecutor.execute(() -> {
+            try {
+                String histNote = mCtxBuilder.buildStockHistoryNote(code);
+                String prompt = buildVolumeSpikePrompt(name, code, isTop, contextText, histNote);
+                if (mEngine.isReady()) {
+                    mEngine.reset();
+                    runStream(prompt, cb);
+                } else {
+                    mInferring.set(false);
+                    cb.onError("本地AI模型未就绪，暂时无法生成形态解读");
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "analyzeVolumeSpikeSignal", e);
+                mInferring.set(false);
+                mMainHandler.post(() -> cb.onError(e.getMessage()));
+            }
+        });
+    }
+
+    private String buildVolumeSpikePrompt(String name, String code, boolean isTop, String contextText, String histNote) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(getSystemPrompt("GENERAL")).append("\n\n");
+        if (isTop) {
+            sb.append("【高位放量尖角解读任务】").append(name).append("(").append(code).append(")当前持仓中，分时图检测到");
+            sb.append("一次量能尖角形态：当天目前为止最大的单分钟成交量，出现在相对高位，且这一分钟之后量能明显回落，");
+            sb.append("价格随之转折向下。用户描述的经验是：这种\"冲高放量+立刻缩量\"的尖角，往往意味着资金在此刻");
+            sb.append("集中出货/兑现，是短期见顶信号，若考虑止盈，此刻价位往往就是阶段性最高点。");
+            sb.append("这不是分歧K线止损位被跌破那种正式止损信号，只是提醒用户注意到这个形态，由用户自己判断要不要在此刻减仓/止盈。\n\n");
+        } else {
+            sb.append("【下跌途中放量尖角解读任务】").append(name).append("(").append(code).append(")分时图检测到");
+            sb.append("一次量能尖角形态：当天目前为止最大的单分钟成交量，出现在下跌途中的相对低位，且这一分钟之后");
+            sb.append("量能明显回落，价格随之转折向上。用户描述的经验是：这种\"探底放量+立刻缩量\"的尖角，");
+            sb.append("往往意味着恐慌抛压在此刻集中出清、下方接盘介入，是短线反转买点，且不要求现价站上分时均价/水线——");
+            sb.append("跟正式底仓规则(需要站稳VWAP)是两回事。这不是满足现有底仓规则的正式买入信号，只是提醒用户");
+            sb.append("注意到这个形态，由用户自己判断要不要提前介入。\n\n");
+        }
+        sb.append(contextText);
+        if (histNote != null && !histNote.isEmpty()) sb.append("历史交易：").append(histNote).append("\n");
+        sb.append("\n【重要】你的任务只是帮用户理解这个尖角形态说明了什么、可信度如何，绝对不要给出");
+        sb.append(isTop ? "\"建议卖出\"" : "\"建议买入\"").append("这类结论性判断——是否据此操作，由用户自己看完你的解读后决定，不是你来决定。\n");
+        sb.append("\n【输出要求】不超过150字，说清楚：这次尖角的量能倍数是否够扎实（对照下面给出的量能比数字）、")
+                .append(isTop ? "冲高后价格回落了多少、" : "探底后价格回升了多少、")
+                .append("跟同类尖角形态相比可信度如何、还有什么风险点用户需要注意（比如单次尖角也可能是主力试盘/")
+                .append("洗盘，不一定每次都是真转折）。不要输出\"判断：确认/不确认\"这类格式。\n");
+        return sb.toString();
+    }
+
+    /**
      * 【分时经验规则步骤4新增】水下反转形态解读——只做"这个反转形态说明了什么"的解读，不给"买"或
      *  "不买"的结论，用户自己看着解读结果判断要不要水下买入（对应用户原话"S通过这些分析
      *  自主判断是否水下买入"）。跿erifySignal不同：verifySignal产出的是"支持/存疑"二元

@@ -126,6 +126,82 @@ public class IntradayPatternAnalyzer {
         return r;
     }
 
+    public static class VolumeSpikeReversal {
+        public boolean detected;
+        /** "TOP"=高位放量尖角（卖出参考点）；"BOTTOM"=下跌途中放量尖角（买入参考点） */
+        public String direction = "";
+        public int spikeIndex = -1;
+        public double spikePrice;
+        public double spikeVolume;
+        /** 尖角量能 / 该点前5-10分钟均量 */
+        public double volRatio;
+    }
+
+    /**
+     * 【对应用户明确描述的"分时放量尖角"经验】跟上面detectVReversal是两套不同判据，不是同一个
+     * 东西的变体：detectVReversal要求反转点之后连续3根以上都放量，专门用来过滤"冲一下就缩量"
+     * 这种情况，判定为假反转不予确认；这里用户描述的恰恰就是"冲一下就缩量"本身——当天最大量、
+     * 尖角形状（这一分钟量能极大，前后都明显回落），在相对高位出现是见顶卖出参考，在下跌途中
+     * 的相对低位出现是触底买入参考，且触底这支不要求任何水线/VWAP前提——用户原话"并不一定要
+     * 站上分时均价，即使在水下也可以购买"。单点不要求持续性，阀值需要比detectVReversal
+     * 的1.5倍更严（现定2.5倍）防噪声。
+     */
+    public VolumeSpikeReversal detectVolumeSpikeReversal(List<RealtimeQuoteManager.MinutePoint> points) {
+        VolumeSpikeReversal r2 = new VolumeSpikeReversal();
+        if (points == null || points.size() < 8) return r2;
+        int n = points.size();
+
+        int maxIdx = 0;
+        for (int i = 1; i < n; i++) {
+            if (points.get(i).volume > points.get(maxIdx).volume) maxIdx = i;
+        }
+        if (maxIdx >= n - 1) return r2;
+
+        int baseWindow = Math.min(10, maxIdx);
+        if (baseWindow < 3) return r2;
+        long baseWindowSum = 0;
+        for (int i = maxIdx - baseWindow; i < maxIdx; i++) baseWindowSum += points.get(i).volume;
+        double baseAvg = baseWindowSum / (double) baseWindow;
+        if (baseAvg <= 0) return r2;
+        double volRatio = points.get(maxIdx).volume / baseAvg;
+        if (volRatio < 2.5) return r2;
+
+        int fadeWindow = Math.min(2, n - maxIdx - 1);
+        boolean faded = true;
+        for (int i = 1; i <= fadeWindow; i++) {
+            if (points.get(maxIdx + i).volume > points.get(maxIdx).volume * 0.6) { faded = false; break; }
+        }
+        if (!faded) return r2;
+
+        double curPrice = points.get(maxIdx).price;
+        double prevPrice = points.get(maxIdx - 1).price;
+        double nextPrice = points.get(maxIdx + 1).price;
+        String dir;
+        if (curPrice >= prevPrice && nextPrice < curPrice) {
+            dir = "TOP";
+        } else if (curPrice <= prevPrice && nextPrice > curPrice) {
+            dir = "BOTTOM";
+        } else {
+            return r2;
+        }
+
+        int trendWindow = Math.min(15, maxIdx);
+        double trendStart = points.get(maxIdx - trendWindow).price;
+        boolean priorUptrend = curPrice > trendStart;
+        boolean priorDowntrend = curPrice < trendStart;
+        if ("TOP".equals(dir) && !priorUptrend) return r2;
+        if ("BOTTOM".equals(dir) && !priorDowntrend) return r2;
+
+        r2.detected = true;
+        r2.direction = dir;
+        r2.spikeIndex = maxIdx;
+        r2.spikePrice = curPrice;
+        r2.spikeVolume = points.get(maxIdx).volume;
+        r2.volRatio = volRatio;
+        return r2;
+    }
+
+
     // ═══════════════════════════════════════════════
     // 【2026-09-17新增】分时图技术指标综合摘要——不管候选池观察中还是已持仓，也不管现价在
     // 水线上方还是下方，每一轮TradingRuleEngine.evaluate()都会调用一次，产出趋势方向、
@@ -153,6 +229,9 @@ public class IntradayPatternAnalyzer {
         public boolean ambiguous;
         /** ambiguous=true时具体是哪几点矛盾/不确定，供AI校验的prompt直接引用 */
         public String ambiguousReason = "";
+        /** 复用尖角反转检测（与reversal字段用的detectVReversal是两套独立判据），跟reversal
+         *  一样任何时候都会检测，不限定方向/持仓状态。 */
+        public VolumeSpikeReversal spikeReversal;
         /** 拼好的一行人话摘要，直接可以塞进决策日志/result.metrics */
         public String summaryText = "";
     }
@@ -204,6 +283,7 @@ public class IntradayPatternAnalyzer {
         // 反转形态：复用现有检测逻辑，不再限定“必须水下”——候选池/持仓不管现价在水线上方还是
         // 下方，反转形态本身都是有意义的客观信息。
         s.reversal = detectVReversal(points);
+        s.spikeReversal = detectVolumeSpikeReversal(points);
 
         // ambiguous判定：不引入任何新的主观阈值，纯粹检查这几个独立信号本身是否互相矛盾/
         // 证据不够扎实——这些矛盾本身就是“规则判断不准确”的客观信号，此时才值得喊本地AI
@@ -228,11 +308,109 @@ public class IntradayPatternAnalyzer {
         }
 
         s.summaryText = String.format(java.util.Locale.CHINA,
-                "分时趋势=%s(%.2f%%) 量能=%s(%.2fx) 反转=%s",
+                "分时趋势=%s(%.2f%%) 量能=%s(%.2fx) 反转=%s%s",
                 s.trend, s.trendChangePct, s.volumeState, s.recentVolRatio,
                 s.reversal.detected
                         ? (s.reversal.direction + (s.reversal.midConfirm ? "·中确认" : s.reversal.strongConfirm ? "·强确认" : "·弱确认"))
-                        : "未检测到");
+                        : "未检测到",
+                s.spikeReversal != null && s.spikeReversal.detected
+                        ? String.format(java.util.Locale.CHINA, " 尖角=%s@¥%.2f(%.2fx)",
+                                s.spikeReversal.direction, s.spikeReversal.spikePrice, s.spikeReversal.volRatio)
+                        : "");
+        return s;
+    }
+
+    // ═══════════════════════════════════════════════
+    // 【2026-09-25新增·Claude，对应用户"收盘排行榜需要通过一整个交易日的分时数据和整体成交量
+    // 评估哪只更适合持有"的要求】上面summarize()只看最近约10个分时点（不到20分钟），是"近期
+    // 变化"，不是"全天走势"——收盘前判断一支票今天到底是强势保持还是冲高回落，需要看开盘到
+    // 现在的完整轨迹，不能只看最后一小段。这里新增一个独立方法，跟summarize()互不影响、互不
+    // 依赖，输出全天最高/最低点出现的位置、现价在全天区间的百分位、全天走势形态、以及尾盘
+    // 量能相对全天均值的变化——这几点合起来才是"整体成交量的评估"要的东西。
+    // ═══════════════════════════════════════════════
+
+    public static class FullDaySummary {
+        public double dayHigh, dayLow;
+        public String dayHighTime = "", dayLowTime = "";
+        /** 现价在全天[dayLow, dayHigh]区间的位置百分比，0=全天最低，100=全天最高 */
+        public double pricePositionPct;
+        /** "单边上涨"/"单边下跌"/"先抑后扬"/"先扬后抑"/"高位震荡"/"低位震荡"/"数据不足" */
+        public String shape = "数据不足";
+        /** 尾盘（最后min(30,全部)个点）平均每分钟量 相对 全天平均每分钟量 的倍数 */
+        public double lateVolRatio;
+        /** "尾盘放量"/"尾盘缩量"/"正常"/"数据不足" */
+        public String lateVolState = "数据不足";
+        /** 拼好的一行人话摘要，直接可以塞进候选池排行榜snapshot */
+        public String summaryText = "";
+    }
+
+    /** @param points 分时点序列，应传入当天从开盘到现在的完整缓存（不是截断窗口），
+     *  数据不足6个点时返回"数据不足"摘要，不强行计算 */
+    public FullDaySummary summarizeFullDay(List<RealtimeQuoteManager.MinutePoint> points) {
+        FullDaySummary s = new FullDaySummary();
+        if (points == null || points.size() < 6) {
+            s.summaryText = "全天走势=数据不足";
+            return s;
+        }
+        int n = points.size();
+
+        // 全天最高/最低点及其出现的时间——不是最近窗口，是从开盘到现在的完整序列
+        int highIdx = 0, lowIdx = 0;
+        double high = points.get(0).price, low = points.get(0).price;
+        for (int i = 1; i < n; i++) {
+            double p = points.get(i).price;
+            if (p > high) { high = p; highIdx = i; }
+            if (p < low) { low = p; lowIdx = i; }
+        }
+        s.dayHigh = high; s.dayLow = low;
+        s.dayHighTime = points.get(highIdx).time;
+        s.dayLowTime = points.get(lowIdx).time;
+
+        double curPrice = points.get(n - 1).price;
+        s.pricePositionPct = high > low ? (curPrice - low) / (high - low) * 100 : 50;
+
+        // 走势形态：最高/最低点出现在前40%还是后40%的时间段，配合现价当前所处百分位综合判断——
+        // 不引入新的主观阈值体系，跟summarize()的0.15%趋势阈值是两回事，这里判断的是"全天
+        // 形状"，不是"最近变化率"。
+        boolean highEarly = highIdx <= n * 0.4;
+        boolean highLate = highIdx >= n * 0.6;
+        boolean lowEarly = lowIdx <= n * 0.4;
+        boolean lowLate = lowIdx >= n * 0.6;
+        if (s.pricePositionPct >= 80 && highLate) {
+            s.shape = "单边上涨";
+        } else if (s.pricePositionPct <= 20 && lowLate) {
+            s.shape = "单边下跌";
+        } else if (lowEarly && s.pricePositionPct >= 60) {
+            s.shape = "先抑后扬";
+        } else if (highEarly && s.pricePositionPct <= 40) {
+            s.shape = "先扬后抑";
+        } else if (s.pricePositionPct >= 50) {
+            s.shape = "高位震荡";
+        } else {
+            s.shape = "低位震荡";
+        }
+
+        // 尾盘量能：最后min(30,全部)个点的平均每分钟量 vs 全天平均每分钟量——收盘前用来判断
+        // "尾盘是不是有资金在加速进场/出逃"，跟summarize()的"近5分钟vs再往前5分钟"是不同量级
+        // 的观察窗口，互相补充不重复。
+        int lateWindow = Math.min(30, n);
+        long lateSum = 0;
+        for (int i = n - lateWindow; i < n; i++) lateSum += points.get(i).volume;
+        double lateAvg = lateSum / (double) lateWindow;
+        long totalSum = 0;
+        for (int i = 0; i < n; i++) totalSum += points.get(i).volume;
+        double wholeDayAvg = totalSum / (double) n;
+        if (wholeDayAvg > 0) {
+            s.lateVolRatio = lateAvg / wholeDayAvg;
+            if (s.lateVolRatio >= 1.5) s.lateVolState = "尾盘放量";
+            else if (s.lateVolRatio <= 0.6) s.lateVolState = "尾盘缩量";
+            else s.lateVolState = "正常";
+        }
+
+        s.summaryText = String.format(java.util.Locale.CHINA,
+                "全天走势=%s(高¥%.2f@%s/低¥%.2f@%s，现价处于区间%.0f%%分位) 尾盘量能=%s(%.2fx全天均值)",
+                s.shape, s.dayHigh, s.dayHighTime, s.dayLow, s.dayLowTime, s.pricePositionPct,
+                s.lateVolState, s.lateVolRatio);
         return s;
     }
 

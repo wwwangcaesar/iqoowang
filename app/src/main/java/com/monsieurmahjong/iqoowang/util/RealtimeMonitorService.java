@@ -482,8 +482,8 @@ public class RealtimeMonitorService extends Service {
     /** 供候选池排行榜用的每支股票结构化技术指标快照，与AI打完分的评分/理由合并存库，这样前端
      *  才能分三栏展示“股票信息/技术指标/AI分析”，不用再把AI返回的整段文本直接摆给用户看。 */
     private static class CandidateIndicators {
-        String name, code, holdingNote, techSummary;
-        double price, changePct;
+        String name, code, holdingNote, techSummary, fullDaySummary;
+        double price, changePct, waterLine, vwap, volRatio, prevDayVwap;
         boolean holding;
     }
 
@@ -515,9 +515,34 @@ public class RealtimeMonitorService extends Service {
                 if (ind != null) {
                     row.put("holdingNote", ind.holdingNote);
                     row.put("techSummary", ind.techSummary);
+                    row.put("fullDaySummary", ind.fullDaySummary);
                     row.put("price", ind.price);
                     row.put("changePct", ind.changePct);
                     row.put("holding", ind.holding);
+                    row.put("waterLine", ind.waterLine);
+                    row.put("vwap", ind.vwap);
+                    row.put("volRatio", ind.volRatio);
+                    row.put("prevDayVwap", ind.prevDayVwap);
+
+                    // 【2026-09-25新增·Claude，对应用户实测发现“AI理由里声称已站上VWAP，但实际
+                    // 现价一直在VWAP下方”的问题】小模型在一长串连续打分里，即使给了真实数字也可能读错/
+                    // 编错“是否站上”这种比较关系。这里不重新分析，只拿 AI 自己理由文字里“站上VWAP/
+                    // 跌破VWAP”这个具体断言，跟 ind 里真实的 price/vwap 做一次比对，读到矛盾就打个
+                    // 醒目警告，不静静让一句听起来很扎实、其实无从验证的“已站上VWAP”直接展示给用户。
+                    // 只打标记不直接改分数/剔除该股票——人工审阅时自己判断，比静静丢掉这条信息更安全。
+                    if (ind.vwap > 0 && ind.price > 0 && reason != null) {
+                        String reasonNoSpace = reason.replaceAll("\\s+", "");
+                        boolean claimsBelow = reasonNoSpace.contains("未站上VWAP") || reasonNoSpace.contains("未突破VWAP")
+                                || reasonNoSpace.contains("跌破VWAP") || reasonNoSpace.contains("低于VWAP");
+                        boolean claimsAbove = !claimsBelow && (reasonNoSpace.contains("站上VWAP") || reasonNoSpace.contains("突破VWAP"));
+                        boolean actuallyAbove = ind.price >= ind.vwap;
+                        if ((claimsAbove && !actuallyAbove) || (claimsBelow && actuallyAbove)) {
+                            row.put("vwapClaimMismatch", true);
+                            row.put("vwapClaimMismatchNote", String.format(java.util.Locale.CHINA,
+                                    "⚠️AI理由文字与实际数据矛盾：理由声称%s，但实际现价¥%.2f、今日VWAP¥%.2f，请以这两个实际数字为准，不要直接采信AI这句话",
+                                    claimsAbove ? "已站上VWAP" : "已跌破/未站上VWAP", ind.price, ind.vwap));
+                        }
+                    }
                 }
                 arr.put(row);
             } catch (Exception ignored) {
@@ -564,6 +589,32 @@ public class RealtimeMonitorService extends Service {
             RealtimeQuoteManager.Quote q = RealtimeQuoteManager.get().getCachedQuote(item.code);
             List<RealtimeQuoteManager.MinutePoint> minutePoints = RealtimeQuoteManager.get().getCachedMinuteLine(item.code);
             IntradayPatternAnalyzer.IntradayTechnicalSummary techSummary = IntradayPatternAnalyzer.get().summarize(minutePoints);
+            // 【2026-09-25新增·Claude，对应用户“排行榜要结合一整个交易日的分时数据和整体成交量做
+            // 深度分析”的要求】上面techSummary只看最近约10个分时点，是“近期变化”不是“全天走势”，
+            // 这里补一份全天维度的摘要（全天高低点位置、现价所处百分位、走势形态、尾盘量能变化），
+            // 详见IntradayPatternAnalyzer.summarizeFullDay()注释。
+            IntradayPatternAnalyzer.FullDaySummary fullDaySummary = IntradayPatternAnalyzer.get().summarizeFullDay(minutePoints);
+
+            // 【2026-09-25新增·Claude】水线/今日VWAP/量比这三个数字，之前只在候选池/持仓列表的
+            // 结构化展示里用（WatchlistManager.getLiveMetrics），排行榜snapshot里完全没有引用，
+            // AI只能从techSummary/reason这类自由文本里“恰好提到”的片段去猜。昨日全天真实VWAP
+            // （item.prevDayVwap/prevDayVwapDate）本身已经落库持久化，只是同样没被读到这里来。
+            // 现在统一拼成一段“关键指标”，保证候选池里每支股票喂给AI的数字口径一致、可以真横向
+            // 对比，不再各凭各的note措辞详略不一。
+            double[] liveMetrics = WatchlistManager.get().getLiveMetrics(item.code);
+            StringBuilder keyMetrics = new StringBuilder();
+            if (liveMetrics != null && liveMetrics.length >= 3) {
+                keyMetrics.append(String.format(java.util.Locale.CHINA,
+                        "水线¥%.2f 今日VWAP¥%.2f 量比%.2fx", liveMetrics[0], liveMetrics[1], liveMetrics[2]));
+                if (liveMetrics.length > 3 && liveMetrics[3] > 0) {
+                    keyMetrics.append(String.format(java.util.Locale.CHINA, " 前日低¥%.2f", liveMetrics[3]));
+                }
+            } else {
+                keyMetrics.append("水线/VWAP/量比数据暂缺");
+            }
+            if (item.prevDayVwap > 0 && item.prevDayVwapDate != null) {
+                keyMetrics.append(String.format(java.util.Locale.CHINA, " 昨日VWAP¥%.2f(%s)", item.prevDayVwap, item.prevDayVwapDate));
+            }
 
             // 【核心修复】优先用pendingReason（当前这一刻真正待确认信号的理由，加仓信号触发时就是它，
             // 必要时还经过AI二次校验），不再无条件用lastNote——lastNote只在markStarter/markAdded这类
@@ -572,10 +623,12 @@ public class RealtimeMonitorService extends Service {
             String reason = (item.pendingReason != null && !item.pendingReason.isEmpty()) ? item.pendingReason : item.lastNote;
 
             sb.append(String.format(java.util.Locale.CHINA,
-                    "%d. %s(%s)。%s。%s。%s。原始理由：%s\n",
+                    "%d. %s(%s)。%s。%s。%s。%s。%s。原始理由：%s\n",
                     ++n, item.name, item.code, holdingNote,
                     q != null ? String.format(java.util.Locale.CHINA, "现价¥%.2f，涨跌幅%.2f%%", q.price, q.changePct) : "现价数据暂缺",
+                    keyMetrics.toString(),
                     techSummary.summaryText,
+                    fullDaySummary.summaryText,
                     reason != null ? reason : "暂无"));
 
             if (indicatorsOut != null) {
@@ -583,6 +636,11 @@ public class RealtimeMonitorService extends Service {
                 ind.name = item.name; ind.code = item.code;
                 ind.holding = holding; ind.holdingNote = holdingNote;
                 ind.techSummary = techSummary.summaryText;
+                ind.fullDaySummary = fullDaySummary.summaryText;
+                if (liveMetrics != null && liveMetrics.length >= 3) {
+                    ind.waterLine = liveMetrics[0]; ind.vwap = liveMetrics[1]; ind.volRatio = liveMetrics[2];
+                }
+                ind.prevDayVwap = item.prevDayVwap;
                 if (q != null) { ind.price = q.price; ind.changePct = q.changePct; }
                 indicatorsOut.put(item.code, ind);
             }
@@ -689,6 +747,17 @@ public class RealtimeMonitorService extends Service {
                     handleUnderwaterReversal(item, quote, prevDay, result.underwaterReversal);
                 } catch (Exception e) {
                     Log.e(TAG, "处理水下反转信号失败", e);
+                }
+            }
+            // 【对应用户明确描述的"分时放量尖角"经验】与水下反转并列的独立检测，高位放量尖角
+            // (TOP，持仓中)视为卖出参考点，下跌途中放量尖角(BOTTOM，观察中)视为买入参考点且不
+            // 要求现价站上VWAP/水线——这正是用户原话"并不一定要站上分时均价，即使在水下也
+            // 可以购买"的诉求，跟水下反转"只描述不建议"的定位不同，按用户要求做成醒目的可执行提示。
+            if (result.volumeSpikeSignal != null) {
+                try {
+                    handleVolumeSpikeSignal(item, quote, result.volumeSpikeSignal);
+                } catch (Exception e) {
+                    Log.e(TAG, "处理分时放量尖角信号失败", e);
                 }
             }
             // 观察中的候选股：本轮无买卖信号时，检查是否该自动移出观察池
@@ -1268,6 +1337,98 @@ public class RealtimeMonitorService extends Service {
                 .setAutoCancel(true)
                 .build();
         nm.notify(underwaterNotifId(code), n);
+    }
+
+    private void handleVolumeSpikeSignal(WatchlistManager.WatchlistItem item, RealtimeQuoteManager.Quote quote,
+                                          IntradayPatternAnalyzer.VolumeSpikeReversal r) {
+        boolean isTop = "TOP".equals(r.direction);
+        String contextText = String.format(java.util.Locale.CHINA,
+                "%s，尖角点价格¥%.2f，尖角量能比%.2fx（相对前5-10分钟均量，当天目前最大单分钟成交量），现价¥%.2f。",
+                isTop ? "高位放量尖角，历史经验上往往是短期转折点，若持仓考虑止盈，此刻可参考为阶段性高点"
+                      : "下跌途中放量尖角，历史经验上往往是短线反转买点，不要求现价站上分时均价/水线",
+                r.spikePrice, r.volRatio, quote.price);
+
+        DecisionLogger.get().logNote(item.code, item.name,
+                (isTop ? "【高位放量尖角·卖出参考】" : "【下跌途中放量尖角·买入参考】") + contextText);
+        fireVolumeSpikeNotification(item.code, item.name, isTop, contextText, quote.price);
+
+        LocalAIAgent.get(getApplicationContext()).analyzeVolumeSpikeSignal(item.code, item.name, isTop, contextText,
+                new LocalAIAgent.AICallback() {
+                    @Override public void onToken(String token) {}
+                    @Override
+                    public void onComplete(String fullText) {
+                        try {
+                            DecisionLogger.get().logNote(item.code, item.name, "【放量尖角·AI完整分析】" + fullText);
+                            updateVolumeSpikeNotification(item.code, item.name, isTop, quote.price, fullText);
+                        } catch (Exception e) {
+                            Log.e(TAG, "追加放量尖角AI分析日志失败", e);
+                        }
+                    }
+                    @Override
+                    public void onError(String msg) {
+                        Log.w(TAG, "放量尖角AI分析失败: " + msg);
+                    }
+                });
+    }
+
+    private int volumeSpikeNotifId(String code) {
+        return ("spike_" + code).hashCode();
+    }
+
+    /** 用普通CHANNEL_ID通道（跟买卖信号一样的高优先级+震动），不用水下反转/重点监听那种低
+     *  优先级安静通道——用户明确要求这个信号要"验证提示"，应该比现有偏静默的水下反转更醒目。 */
+    private void fireVolumeSpikeNotification(String code, String name, boolean isTop, String contextText, double price) {
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        String title = (isTop ? "🔴 " : "🟢 ") + name + "(" + code + ") " + (isTop ? "高位放量尖角·卖出参考" : "下跌途中放量尖角·买入参考");
+        String content = String.format(java.util.Locale.CHINA, "¥%.2f · %s（AI分析中，稍后更新）", price, contextText);
+
+        Intent tapIntent = new Intent(this, MainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(this, volumeSpikeNotifId(code), tapIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        Notification n = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(content))
+                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build();
+        nm.notify(volumeSpikeNotifId(code), n);
+
+        try {
+            Vibrator vib = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+            if (vib != null && vib.hasVibrator()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    vib.vibrate(VibrationEffect.createWaveform(new long[]{0, 200, 100, 200, 100, 200}, -1));
+                } else {
+                    vib.vibrate(new long[]{0, 200, 100, 200, 100, 200}, -1);
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    /** AI完整解读跑完后更新同一条通知，不新增一条刷屏。 */
+    private void updateVolumeSpikeNotification(String code, String name, boolean isTop, double price, String aiFullText) {
+        NotificationManager nm = getSystemService(NotificationManager.class);
+        String title = (isTop ? "🔴 " : "🟢 ") + name + "(" + code + ") 放量尖角·AI分析已就绪";
+        String content = String.format(java.util.Locale.CHINA, "¥%.2f · %s", price, aiFullText);
+
+        Intent tapIntent = new Intent(this, MainActivity.class);
+        PendingIntent pi = PendingIntent.getActivity(this, volumeSpikeNotifId(code), tapIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
+        Notification n = new NotificationCompat.Builder(this, CHANNEL_ID)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(content))
+                .setSmallIcon(android.R.drawable.ic_menu_view)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build();
+        nm.notify(volumeSpikeNotifId(code), n);
     }
 
     /**
