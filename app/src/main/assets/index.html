@@ -631,7 +631,9 @@
           style="flex:1;background:none;border:none;outline:none;color:var(--text-prime);
                  font-size:13px;font-family:var(--font-body);"
           oninput="onSearchInput(this.value)"
-          onkeydown="if(event.key==='Enter') doSearch(this.value)"/>
+          onkeydown="if(event.key==='Enter') doSearch(this.value)"
+          onfocus="onSearchFocus()"
+          onblur="onSearchBlur()"/>
         <span onclick="doSearch(document.getElementById('stockSearchInput').value)"
           style="color:var(--accent-gold);font-size:12px;cursor:pointer;white-space:nowrap;">搜索</span>
       </div>
@@ -3262,6 +3264,95 @@ function drawFenshiVolume(data, prevClose, W, toX) {
   });
 }
 
+/** 【长按分时图看成交量】分时图长按交互——跟K线长按十字线(bindKlineGestures里那一段)同样用
+ *  .kline-tooltip样式类，但不能照搭K线那种"touchstart就无条件preventDefault"的做法——
+ *  K线本身有横向平移/缩放手势，无条件拦截是合理的；分时图没有任何平移/缩放功能，
+ *  如果也无条件preventDefault，用户在分时图区域正常上下滑页面会被拦住、滑不动。
+ *  这里改成：touchstart先不拦截，记录起点+启动400ms定时器；如果定时器触发前手指移动超过
+ *  阈值，判定为滑动意图，取消定时器、全程不 preventDefault，正常滑页面；定时器真正触发
+ *  （手指按住不动满400ms）才进入十字线模式，从这一刻起才开始 preventDefault，允许在图上
+ *  左右拖动查看不同时间点，松手时一并解除。 */
+function bindFenshiGestures() {
+  const canvas = document.getElementById('fenshiCanvas');
+  if (!canvas) return;
+  let longPressTimer = null;
+  let crosshairActive = false;
+  let startX = 0, startY = 0;
+  const MOVE_THRESHOLD = 10;
+
+  canvas.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1) return;
+    startX = e.touches[0].clientX;
+    startY = e.touches[0].clientY;
+    crosshairActive = false;
+    longPressTimer = setTimeout(() => {
+      crosshairActive = true;
+      showFenshiCrosshair(startX);
+    }, 400);
+  }, { passive: true });
+
+  canvas.addEventListener('touchmove', e => {
+    if (crosshairActive) {
+      e.preventDefault();
+      if (e.touches.length === 1) showFenshiCrosshair(e.touches[0].clientX);
+      return;
+    }
+    if (e.touches.length !== 1) return;
+    const dx = e.touches[0].clientX - startX, dy = e.touches[0].clientY - startY;
+    if (Math.hypot(dx, dy) > MOVE_THRESHOLD) clearTimeout(longPressTimer);
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', () => {
+    clearTimeout(longPressTimer);
+    crosshairActive = false;
+    hideFenshiCrosshair();
+  });
+  canvas.addEventListener('touchcancel', () => {
+    clearTimeout(longPressTimer);
+    crosshairActive = false;
+    hideFenshiCrosshair();
+  });
+}
+
+function showFenshiCrosshair(clientX) {
+  const data = STATE.currentFenshiData;
+  if (!data || !data.points || !data.points.length) return;
+  const canvas = document.getElementById('fenshiCanvas');
+  const rect = canvas.getBoundingClientRect();
+  const x = clientX - rect.left;
+
+  const prevClose = data.prevClose || data.points[0].price;
+  const pad = { t:14, b:8, l:6, r:58 };
+  const cw = rect.width - pad.l - pad.r;
+  const totalMinutes = 240;
+  const toX = t => pad.l + (minutesSinceOpen(t)/totalMinutes) * cw;
+
+  // 找离触摸点最近的数据点——分时点在时间上不一定连续（午休有跳空），不能直接按数组
+  // 下标比例算，逐个比较X坐标距离最稳妃，最多240个点，开销可忽略。
+  let nearest = data.points[0], minDist = Infinity;
+  data.points.forEach(p => {
+    const d = Math.abs(toX(p.time) - x);
+    if (d < minDist) { minDist = d; nearest = p; }
+  });
+
+  const pct = prevClose ? (nearest.price - prevClose) / prevClose * 100 : 0;
+  const tooltip = document.getElementById('fenshiTooltip');
+  if (!tooltip) return;
+  tooltip.className = 'kline-tooltip visible';
+  // 成交量字段在Java端（RealtimeQuoteManager.MinutePoint.volume注释）明确是"本分钟成交量增量（手）"，
+  // 不需要再除以100或万手转换。
+  tooltip.innerHTML = `<b>${nearest.time || '--'}</b><br>` +
+    `现价 <span class="${pct>=0?'c-up':'c-down'}">${nearest.price.toFixed(2)}</span>　` +
+    `${pct>=0?'+':''}${pct.toFixed(2)}%<br>` +
+    `均价 <span style="color:#f0b429">${(nearest.avgPrice||0).toFixed(2)}</span><br>` +
+    `成交量 <span style="color:var(--accent-gold)">${Math.round(nearest.volume||0).toLocaleString()}手</span>`;
+}
+
+function hideFenshiCrosshair() {
+  const t = document.getElementById('fenshiTooltip');
+  if (t) t.className = 'kline-tooltip';
+}
+
 function drawKline() {
   const data = getCurrentKlineData();
   klineViewStart = Math.max(0, data.length - klineViewCount);
@@ -3806,10 +3897,64 @@ function getSearchPool() {
   return pool;
 }
 
+/** 【2026-09-23新增】点击/聚焦搜索框时，如果还没输入任何内容，直接弹出当前所有监控中的
+ *  股票（候选池观察中/各类待确认 + 持仓，哪怕因为同步延迟还没进候选池也算），不用非得
+ *  记住代码/名称再手动敲，方便快速切换查看K线/分时图。跟原有搜索逻辑共用同一个下拉框
+ *  和selectStock()，一旦输入内容onSearchInput就会接管，按代码/名称正常过滤，不受影响。 */
+function onSearchFocus() {
+  const val = document.getElementById('stockSearchInput').value.trim();
+  if (!val) renderMonitoredStockDropdown();
+}
+
+/** 失焦延迟隐藏——留出时间让下拉项自己的onclick先触发(selectStock)，不然会先于点击事件
+ *  把下拉框隐藏掉，导致点了没反应。 */
+function onSearchBlur() {
+  setTimeout(() => {
+    const dd = document.getElementById('searchDropdown');
+    if (dd) dd.style.display = 'none';
+  }, 180);
+}
+
+function getMonitoredStockList() {
+  const map = new Map();
+  (STATE.watchlistItems || []).forEach(w => {
+    map.set(w.code, { code: w.code, name: w.name, status: w.status });
+  });
+  Object.entries(STATE.positions || {}).forEach(([code, p]) => {
+    if (!map.has(code)) map.set(code, { code, name: p.name || code, status: null });
+  });
+  return Array.from(map.values());
+}
+
+function renderMonitoredStockDropdown() {
+  const dd = document.getElementById('searchDropdown');
+  const items = getMonitoredStockList();
+  if (!items.length) {
+    dd.style.display = 'block';
+    dd.innerHTML = '<div style="padding:12px 14px;font-size:11px;color:var(--text-dim);text-align:center;">暂无监控中的股票</div>';
+    return;
+  }
+  dd.style.display = 'block';
+  dd.innerHTML = items.map(it => {
+    const label = it.status ? (WATCHLIST_STATUS_LABEL[it.status] || { text: it.status, color: 'var(--text-sub)' }) : { text: '持仓', color: 'var(--accent-gold)' };
+    return `
+    <div onclick="selectStock('${it.code}','${(it.name||it.code).replace(/'/g,'')}')"
+      style="padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;
+             display:flex;justify-content:space-between;align-items:center;
+             background:var(--bg-card);">
+      <div>
+        <span style="font-size:13px;font-weight:600;color:var(--text-prime);">${it.name||it.code}</span>
+        <span style="font-size:10px;color:var(--text-dim);margin-left:6px;font-family:var(--font-mono);">${it.code}</span>
+      </div>
+      <span style="color:${label.color};font-size:9px;border:1px solid ${label.color};border-radius:8px;padding:1px 6px;white-space:nowrap;">${label.text}</span>
+    </div>`;
+  }).join('');
+}
+
 function onSearchInput(val) {
   val = (val||'').trim();
   const dd = document.getElementById('searchDropdown');
-  if (!val) { dd.style.display='none'; return; }
+  if (!val) { renderMonitoredStockDropdown(); return; }
   const hits = getSearchPool().filter(s =>
     s.code.includes(val)||(s.name&&s.name.includes(val))
   ).slice(0,6);
@@ -3987,6 +4132,7 @@ function isTradeTime(){
   return mins>=9*60+25&&mins<=15*60+5&&d>=1&&d<=5;
 }
 let _quoteTimer=null;
+let _fenshiRedrawAt=0;
 function startRealTimeRefresh(){
   if(_quoteTimer)return;
   function tick(){
@@ -3994,6 +4140,18 @@ function startRealTimeRefresh(){
     const code=STATE.currentKlineCode;
     if(code&&code!=='000001'&&IS_ANDROID) Android.fetchQuote(code);
     if(IS_ANDROID) Android.setAutoRefresh(true);
+    // 【新增，分时图之前不会自动刷新画面】之前只有价格行情ticker(4秒/30秒一次)，分时图
+    // canvas只在首次打开页面时画一次，之后哪怕后端缓存已经更新（tick循环2分钟刷一次）画面也不会
+    // 跟着变，除非用户切走再切回。这里按30秒节流周期性重绘，跟后端2分钟的刷新节奏错开、
+    // 又不会因为跟着4秒一次的价格ticker硬绑而画得太频繁（分时图整条曲线重绘比单纯更新一个
+    // 价格数字贵得多）。getMinuteChartData是纯缓存读取，不发网络请求，频繁调用代价很低。
+    if (code && IS_ANDROID) {
+      const now = Date.now();
+      if (now - _fenshiRedrawAt >= 30000) {
+        _fenshiRedrawAt = now;
+        loadFenshiChart(code);
+      }
+    }
     _quoteTimer=setTimeout(tick,iv);
   }
   tick();
@@ -4764,6 +4922,7 @@ renderPositions();
 
 setTimeout(()=>{
   bindKlineGestures();
+  bindFenshiGestures();
   if(IS_ANDROID){
     addThinkLine('sys','[SYS] iQOO 11s · 真实行情 + 本地AI');
     try{
