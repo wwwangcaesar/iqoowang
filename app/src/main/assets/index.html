@@ -286,19 +286,22 @@
     background: var(--up-red); border-radius: 3px 0 0 3px;
   }
   .rank-card.down::before { background: var(--down-green); }
-  .rank-card-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-  .rank-score { font-family: var(--font-display); font-size: 16px; font-weight: 700; color: var(--accent-gold); }
-  .rank-name { font-size: 13px; font-weight: 600; color: var(--text-prime); }
-  .rank-code { font-size: 10px; color: var(--text-dim); font-family: var(--font-mono); }
+  .rank-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .rank-name-wrap { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .rank-name { font-size: 15px; font-weight: 700; color: var(--accent-gold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rank-code { font-size: 11px; color: var(--accent-gold2); font-family: var(--font-mono); opacity: 0.9; }
+  .rank-score { font-family: var(--font-display); font-size: 14px; font-weight: 700; color: var(--text-prime); flex-shrink: 0; }
   .rank-score-bar { height: 2px; border-radius: 1px; margin-top: 6px; background: var(--border); overflow: hidden; }
   .rank-score-fill { height: 100%; border-radius: 1px; background: linear-gradient(90deg, var(--accent-gold), #ff9800); }
-  .rank-stats { display: flex; flex-wrap: wrap; gap: 6px 10px; margin-top: 8px; font-size: 11px; color: var(--text-sub); font-family: var(--font-mono); }
+  .rank-stats { display: flex; flex-wrap: wrap; gap: 5px 10px; margin-top: 8px; font-size: 11px; color: var(--text-sub); font-family: var(--font-mono); }
   .rank-stats .up { color: var(--up-red); }
   .rank-stats .down { color: var(--down-green); }
   .rank-holding { font-size: 10px; color: var(--accent-cyan); margin-top: 5px; }
+  .rank-mismatch { font-size: 10px; color: var(--accent-gold); background: rgba(240,180,41,0.12); border-radius: 4px; padding: 3px 6px; margin-top: 5px; line-height: 1.5; }
   .rank-section-label { font-size: 9px; color: var(--text-dim); margin-top: 9px; letter-spacing: 1px; }
   .rank-tech { font-size: 11px; color: var(--text-sub); margin-top: 2px; font-family: var(--font-mono); }
-  .rank-reason { font-size: 12px; color: var(--text-prime); margin-top: 2px; line-height: 1.6; }
+  .rank-ai-label { font-size: 9px; color: var(--text-dim); margin-top: 9px; letter-spacing: 1px; }
+  .rank-reason { font-size: 12px; color: var(--text-prime); margin-top: 3px; line-height: 1.6; }
   .rank-empty { padding: 30px 12px; text-align: center; color: var(--text-dim); font-size: 11px; }
   .stock-info { flex: 1; }
   .stock-name { font-size: 13px; font-weight: 600; color: var(--text-prime); }
@@ -715,7 +718,17 @@
     <div class="card">
       <div class="card-header">
         <div class="card-title">分时图</div>
-        <div id="fenshiUpdatedAt" style="font-size:9px;color:var(--text-dim);"></div>
+        <div style="display:flex;align-items:center;gap:6px;">
+          <!-- 【新增，用户要求"切换日期查看对应日期的分时图数据"】只能选Android端
+               FenshiHistoryManager实际落过库的日期，不是随便选一个日期就有数据；切股票/冷启动时
+               会重新拉一遍这支股票自己的可选日期列表并重置回"今日"，见
+               loadFenshiDateOptions()/loadStockDetail()。 -->
+          <select id="fenshiDateSelect" onchange="onFenshiDateChange()"
+                  style="background:transparent;color:var(--text-sub);border:1px solid rgba(255,255,255,0.18);border-radius:4px;font-size:10px;padding:1px 3px;max-width:86px;">
+            <option value="today">今日</option>
+          </select>
+          <div id="fenshiUpdatedAt" style="font-size:9px;color:var(--text-dim);"></div>
+        </div>
       </div>
       <div class="kline-wrap">
         <div style="position:relative;">
@@ -1638,27 +1651,47 @@ function renderRankingCards(jsonText) {
   let rows;
   try { rows = JSON.parse(jsonText); } catch (e) { return false; }
   if (!Array.isArray(rows) || !rows.length) return false;
+  const fmtNum = v => (typeof v === 'number' && v > 0) ? v.toFixed(2) : null;
   box.innerHTML = rows.map(r => {
     const chg = typeof r.changePct === 'number' ? r.changePct : null;
     const isDown = chg !== null && chg < 0;
     const chgStr = chg !== null ? (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%' : '';
-    const priceStr = typeof r.price === 'number' && r.price > 0 ? '¥' + r.price.toFixed(2) : '';
+    const priceNum = fmtNum(r.price);
+    const waterNum = fmtNum(r.waterLine);
+    const vwapNum = fmtNum(r.vwap);
+    const prevVwapNum = fmtNum(r.prevDayVwap);
+    const volRatioNum = (typeof r.volRatio === 'number' && r.volRatio > 0) ? r.volRatio.toFixed(2) + 'x' : null;
     const score = Math.max(0, Math.min(100, r.score || 0));
+    // 【2026-09-25重构，对应用户"股票名称和代码单独一行、颜色突出；第二行主要指标；第三行
+    // 本地AI分析内容和主要信息"的要求重写：① 名称+代码独占一行、金色高亮（之前跟评分
+    // 挤在同一行且颜色一样引人注目，现在金色只给名称，评分改用较淡颜色居右）；② 现价/涨跌幅
+    // +水线/VWAP/量比/昨日VWAP这几个 buildRankingJson() 早就算好但之前前端从来没画出来过
+    // 的原始数字，拼成一行"主要指标"；③ AI原始分析文字单独一段，前面配一句持仓状态/矛盾
+    // 提示这类"主要信息"，跟第二行的纯数字指标分开，不混在一起。顺便补上 fullDaySummary
+    // （全天走势）——同样是早就算好但之前一直没被渲染的字段。
+    const metrics = [];
+    if (priceNum) metrics.push('<span>现价¥' + priceNum + '</span>');
+    if (chgStr) metrics.push('<span class="' + (isDown ? 'down' : 'up') + '">' + escRankText(chgStr) + '</span>');
+    if (waterNum) metrics.push('<span>水线¥' + waterNum + '</span>');
+    if (vwapNum) metrics.push('<span>VWAP¥' + vwapNum + '</span>');
+    if (volRatioNum) metrics.push('<span>量比' + volRatioNum + '</span>');
+    if (prevVwapNum) metrics.push('<span>昨VWAP¥' + prevVwapNum + '</span>');
     return '<div class="rank-card' + (isDown ? ' down' : '') + '">'
       + '<div class="rank-card-head">'
+      +   '<div class="rank-name-wrap">'
+      +     '<span class="rank-name">' + escRankText(r.name || '') + '</span>'
+      +     '<span class="rank-code">' + escRankText(r.code || '') + '</span>'
+      +   '</div>'
       +   '<span class="rank-score">' + score + '分</span>'
-      +   '<span class="rank-name">' + escRankText(r.name || '') + '</span>'
-      +   '<span class="rank-code">' + escRankText(r.code || '') + '</span>'
       + '</div>'
       + '<div class="rank-score-bar"><div class="rank-score-fill" style="width:' + score + '%;"></div></div>'
-      + '<div class="rank-stats">'
-      +   (priceStr ? '<span>现价 ' + priceStr + '</span>' : '')
-      +   (chgStr ? '<span class="' + (isDown ? 'down' : 'up') + '">' + escRankText(chgStr) + '</span>' : '')
-      + '</div>'
+      + (metrics.length ? '<div class="rank-stats">' + metrics.join('') + '</div>' : '')
       + (r.holdingNote ? '<div class="rank-holding">' + escRankText(r.holdingNote) + '</div>' : '')
-      + (r.techSummary ? '<div class="rank-section-label">技术指标</div><div class="rank-tech">' + escRankText(r.techSummary) + '</div>' : '')
-      + '<div class="rank-section-label">AI排行分析</div>'
+      + (r.vwapClaimMismatchNote ? '<div class="rank-mismatch">⚠️ ' + escRankText(r.vwapClaimMismatchNote) + '</div>' : '')
+      + '<div class="rank-ai-label">本地AI分析</div>'
       + '<div class="rank-reason">' + escRankText(r.aiReason || '') + '</div>'
+      + (r.techSummary ? '<div class="rank-section-label">近期分时技术指标</div><div class="rank-tech">' + escRankText(r.techSummary) + '</div>' : '')
+      + (r.fullDaySummary ? '<div class="rank-section-label">全天走势</div><div class="rank-tech">' + escRankText(r.fullDaySummary) + '</div>' : '')
       + '</div>';
   }).join('');
   return true;
@@ -3115,6 +3148,9 @@ function minutesSinceOpen(timeStr) {
 }
 
 function loadFenshiChart(code) {
+  // 【新增】正在查看历史某天时，不能被后台/定时器触发的"今日实时"刷新悔悔换掉——
+  // 用户明确选了日期查看，那份选择在切换股票/主动点回"今日"之前应该一直有效。
+  if (STATE.fenshiViewDate && STATE.fenshiViewDate !== 'today') return;
   try {
     const json = Android.getMinuteChartData(code);
     const data = JSON.parse(json || '{}');
@@ -3133,6 +3169,7 @@ function loadFenshiChart(code) {
  *  通过这里推送过来。用户如果这时候还停留在同一支股票的页面就直接重新渲染，已经切走了
  *  就忽略（避免画到错的股票上）。 */
 window.onMinuteChartDataReady = function(jsonStr) {
+  if (STATE.fenshiViewDate && STATE.fenshiViewDate !== 'today') return; // 同上，正在看历史日期时不被实时补拉结果打断
   try {
     const data = JSON.parse(jsonStr || '{}');
     if (!data.code || data.code !== STATE.currentKlineCode) return;
@@ -3145,9 +3182,68 @@ window.onMinuteChartDataReady = function(jsonStr) {
  *  是"行情接口失败"还是"分时接口失败"，而不是筠统一句"可能是…或…"。 */
 window.onMinuteChartError = function(code, msg) {
   if (code !== STATE.currentKlineCode) return;
+  if (STATE.fenshiViewDate && STATE.fenshiViewDate !== 'today') return; // 历史日期查看模式下，今日实时补拉失败跟当前画面无关
   const upd = document.getElementById('fenshiUpdatedAt');
   if (upd) upd.textContent = '分时数据获取失败：' + msg;
 };
+
+/** 【新增，用户要求"对分时图进行数据天数的缓存处理...通过切换日期进行加载对应日期的分时图
+ *  数据内容"】刷新分时图日期下拉框的可选项——只列出Android端FenshiHistoryManager真正落过库
+ *  的日期（不是任意日期都能选），"今日"永远是第一项、代表实时数据。切换到新股票/冷启动
+ *  默认股票时都要调用一次，同时把选择重置回"今日"，不能让上一支股票选的历史日期带到
+ *  这一支股票上（两支股票的可选日期本来就不同）。 */
+function loadFenshiDateOptions(code) {
+  const sel = document.getElementById('fenshiDateSelect');
+  if (!sel || !IS_ANDROID) return;
+  STATE.fenshiViewDate = 'today';
+  sel.innerHTML = '<option value="today">今日</option>';
+  try {
+    const dates = JSON.parse(Android.getFenshiHistoryDates(code) || '[]');
+    dates.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d; opt.textContent = d.slice(5); // "2026-09-20" 只显示"09-20"，下拉框位置有限
+      sel.appendChild(opt);
+    });
+  } catch (e) { console.error('loadFenshiDateOptions', e); }
+  sel.value = 'today';
+}
+
+/** 用户在分时图日期下拉框选了一天——"今日"切回实时路径（跟原来完全一样，走缓存+按需
+ *  补拉），历史日期走新的只读查询路径，两者共用同一个drawFenshiChart()渲染，不用两套画图
+ *  逻辑。 */
+function onFenshiDateChange() {
+  const sel = document.getElementById('fenshiDateSelect');
+  if (!sel || !STATE.currentKlineCode) return;
+  const val = sel.value;
+  if (val === 'today') {
+    STATE.fenshiViewDate = 'today';
+    loadFenshiChart(STATE.currentKlineCode);
+  } else {
+    STATE.fenshiViewDate = val;
+    loadFenshiHistoryForDate(STATE.currentKlineCode, val);
+  }
+}
+
+/** 加载某支股票某一天的历史分时数据——同步桥接方法，跟 loadFenshiChart 的今日路径一样直接
+ *  取结果渲染。这一天没有记录（比如这支股票那天还没被监控到、当天停牌）时清空图表并提示，
+ *  不编造/沿用上一次画面。 */
+function loadFenshiHistoryForDate(code, date) {
+  if (!IS_ANDROID) return;
+  try {
+    const json = Android.getFenshiHistoryByDate(code, date);
+    const data = JSON.parse(json || '{}');
+    const upd = document.getElementById('fenshiUpdatedAt');
+    if (!data.points || !data.points.length) {
+      STATE.currentFenshiData = null;
+      drawFenshiChart({points: []});
+      if (upd) upd.textContent = date + ' 无分时数据记录';
+      return;
+    }
+    STATE.currentFenshiData = data;
+    drawFenshiChart(data);
+    if (upd) upd.textContent = '历史 ' + date;
+  } catch (e) { console.error('loadFenshiHistoryForDate', e); }
+}
 
 function drawFenshiChart(data) {
   const canvas = document.getElementById('fenshiCanvas');
@@ -4015,6 +4111,7 @@ function loadStockDetail(code, name) {
   if(IS_ANDROID) {
     Android.fetchQuote(code);
     Android.fetchKline(code, currentPeriod, 120);
+    loadFenshiDateOptions(code); // 【新增】切股票时重置日期选择回"今日"+拉这支股票自己的可选历史日期
     loadFenshiChart(code); // 【D新增】分时图数据是同步桥接方法，直接取结果渲染，不用等回调
   } else {
     const mp=(Math.random()*30+5);
@@ -4945,6 +5042,7 @@ setTimeout(()=>{
     // 还没点过任何股票之前，分时图卡片对应的canvas从来没被画过一次，透出的是页面深色
     // 背景，看起来就是"一片黑、什么数据都没有"，不是网络或缓存问题，是这个函数压根
     // 没被调用过。
+    loadFenshiDateOptions(defCode); // 【新增】冷启动默认股票同样要初始化日期下拉框
     loadFenshiChart(defCode);
     // 显示AI状态到思考流
     try{

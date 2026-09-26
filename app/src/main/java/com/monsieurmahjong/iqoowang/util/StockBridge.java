@@ -268,6 +268,18 @@ public class StockBridge implements RealtimeMonitorService.Listener {
             } catch (Exception e) {
                 Log.e(TAG, "标记待复盘周期失败（不影响本笔交易结果）", e);
             }
+
+            // 【新增，用户明确要求"当这只股票被清仓卖出，再去删除对应的分时图数据内容"】
+            // 独立一份try/catch，不跟上面markCycleClosed共用——避免其中一个失败连累另一个都不执行，
+            // 沿用本方法一路"锦上添花的辅助操作各自隔离"的既有写法。
+            try {
+                com.monsieurmahjong.iqoowang.dao.Position posAfterFenshi = mDb.getPositionByCode(code);
+                if (posAfterFenshi == null || posAfterFenshi.getQuantity() <= 0) {
+                    FenshiHistoryManager.get().deleteHistoryForCode(code);
+                }
+            } catch (Exception e) {
+                Log.e(TAG, "清仓后清理分时历史失败（不影响本笔交易结果）", e);
+            }
         }
         return id;
     }
@@ -963,6 +975,40 @@ public class StockBridge implements RealtimeMonitorService.Listener {
                 }
             });
         });
+    }
+
+    /**
+     * 【新增，用户要求"对分时图进行数据天数的缓存处理...比如我想查看20号这只股票的分时图
+     * 信息，通过切换日期进行加载对应日期的分时图数据内容"】某支股票有分时历史数据的日期列表
+     * （新→旧），供前端日期切换控件只展示真正有数据可选的日期，不是任意日期都能点得动。
+     * JS调用：Android.getFenshiHistoryDates(code) → ["2026-09-20","2026-09-19",...] 或 "[]"
+     */
+    @JavascriptInterface
+    public String getFenshiHistoryDates(String code) {
+        try {
+            return new JSONArray(FenshiHistoryManager.get().getDatesForCode(code)).toString();
+        } catch (Exception e) {
+            Log.e(TAG, "getFenshiHistoryDates失败", e);
+            return "[]";
+        }
+    }
+
+    /**
+     * 某支股票指定历史日期的完整分时数据，JSON形状跟 getMinuteChartData() 一致
+     * （code/name/prevClose/points），前端 drawFenshiChart() 可以直接复用，不用额外区分
+     * "今天实时"还是"历史某天"两套解析逻辑。这一天没有记录（还没被监控到、当天停牌等）
+     * 时返回"{}"，前端自行展示"这天没有分时数据"，不编造数据。
+     * JS调用：Android.getFenshiHistoryByDate(code, "2026-09-20")
+     */
+    @JavascriptInterface
+    public String getFenshiHistoryByDate(String code, String date) {
+        try {
+            String json = FenshiHistoryManager.get().getDaySnapshotJson(code, date);
+            return json != null ? json : "{}";
+        } catch (Exception e) {
+            Log.e(TAG, "getFenshiHistoryByDate失败", e);
+            return "{}";
+        }
     }
 
     /** 当前跟踪中的候选池（观察中/已建底仓/已加仓，不含止损/已移除的） */

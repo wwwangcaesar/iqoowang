@@ -44,6 +44,12 @@ public class StockMasterApp extends Application {
         com.monsieurmahjong.iqoowang.util.RealtimeQuoteManager.init(this);
         Log.i(TAG, "RealtimeQuoteManager initialized");
 
+        // 【新增，用户要求"对分时图进行数据天数的缓存处理"】分时图多日历史（按日期持久化，
+        // 供"切换日期查看某天分时图"功能读取），跟上面RealtimeQuoteManager的"仅今天有效"磁盘
+        // 缓存是两回事，各自独立初始化、各自独立一张表。
+        com.monsieurmahjong.iqoowang.util.FenshiHistoryManager.init(this);
+        Log.i(TAG, "FenshiHistoryManager initialized");
+
         // 【R1】A股法定节假日日历——MarketDataManager.computeExpectedTradeDate()等处依赖它，
         // 必须在MarketDataManager之前初始化
         com.monsieurmahjong.iqoowang.util.TradingCalendar.init(this);

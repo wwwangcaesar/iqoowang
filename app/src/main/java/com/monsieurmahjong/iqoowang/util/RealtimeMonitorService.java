@@ -343,7 +343,12 @@ public class RealtimeMonitorService extends Service {
                         // fetchMinuteLine只是拉数据存缓存，不会碰规则引擎/PENDING状态本身，可以
                         // 安全地在待确认分支里也跑，不影响“待确认状态不重新判定信号”这条原则。
                         RealtimeQuoteManager.get().fetchMinuteLine(item.code, new RealtimeQuoteManager.MinuteCallback() {
-                            @Override public void onResult(String code, List<RealtimeQuoteManager.MinutePoint> points) {}
+                            @Override public void onResult(String code, List<RealtimeQuoteManager.MinutePoint> points) {
+                                // 【新增，同上】待确认状态期间一样要顺手落多日历史，不能因为挂着待确认
+                                // 就让这段时间的分时数据在历史回看里出现空档。
+                                try { FenshiHistoryManager.get().saveDaySnapshot(item.code, item.name, pendingQuote.prevClose, points); }
+                                catch (Exception ignored) {}
+                            }
                             @Override public void onError(String code, String msg) {
                                 // 【2026-09-22修复：待确认状态期间分时数据失败查不到原因】这里之前只写Log.w，
                                 // 跟非待确认路径（下面fetchMinuteLine那一处的onError处理）不一致——后者会额外写
@@ -371,6 +376,10 @@ public class RealtimeMonitorService extends Service {
                 RealtimeQuoteManager.get().fetchMinuteLine(item.code, new RealtimeQuoteManager.MinuteCallback() {
                     @Override
                     public void onResult(String code, List<RealtimeQuoteManager.MinutePoint> points) {
+                        // 【新增，用户要求"对分时图进行数据天数的缓存处理"】每次成功拉到分时数据，
+                        // 顺手落一份到多日历史表——独立try/catch，这里出问题不该影响下面的买卖判断本身。
+                        try { FenshiHistoryManager.get().saveDaySnapshot(item.code, item.name, q.prevClose, points); }
+                        catch (Exception ignored) {}
                         String line = evaluateAndAct(item, q, points);
                         if (dueForSnapshot && line != null) DecisionLogger.get().logMonitorLine(item.code, item.name, line);
                         if (pending.decrementAndGet() == 0) finishTickBatch();
