@@ -603,7 +603,14 @@ public class MarketDataManager {
                 double close = parseDouble(o.optString("close", "0"));
                 double high  = parseDouble(o.optString("high", "0"));
                 double low   = parseDouble(o.optString("low", "0"));
-                long volume  = (long) parseDouble(o.optString("volume", "0"));
+                long volume  = (long) (parseDouble(o.optString("volume", "0")) / 100.0);
+                // 【2026-09-28修复·问题10.8，已通过搜索核实）新浪 CN_MarketData.getKLineData 这个接口的volume单位是"股"，
+                // 而上面insertKlineFromTencent用的腾讯日K接口volume单位是"手"（1手=100股）——之前两边都直接存原始数值，
+                // 导致新浪兼底补齐的日K volume 比同期腾讯数据大100倍。TradingRuleEngine.checkVolume()的dayRatio=
+                // 今日实时量(来自RealtimeQuoteManager，腾讯实时行情返回的也是"手") ÷ 缓存日K均量，若均量来自新浪兼底，
+                // 分母会被抬高100倍，量比结果偏小100倍，足以把真实放量错判成缩量。这里除100对齐腾讯口径。
+                // 此处判断依据外部文档记载的该接口字段说明，未直接拿真实行情对拍验证，建议新浪兼底触发后
+                // 对比一次缓存里的volume与实时quote.volume量级是否相当。
                 double changePct = 0, changeAmt = 0, amplitude = 0;
                 if (prevClose > 0 && close > 0) {
                     changePct = (close - prevClose) / prevClose * 100;
@@ -683,8 +690,17 @@ public class MarketDataManager {
                     String name = getStockName(code);
                     if (exST && name != null && name.contains("ST")) continue;
 
-                    // 涨幅排除
-                    if (exLT && Math.abs(latest.changePct) >= 19.9) continue;
+                    // 涨幅排除 【2026-09-28修复·问题10.7】原来固定用19.9%判定"接近涨跌停"，但这是
+                    // 20%创业板/科创板的口径（前端勾选框文案也写着"涨幅≥20%"）。对10%涨跌停的
+                    // 主板/ST股票，正常行情本来就到不了19.9%，这个勾选框此前对主板股票形同虚设。
+                    // 现按板块区分：主板/ST 9.9%，创业板(300/301)/科创板(688) 19.9%，北交所(8/4开头) 29.9%
+                    // ——板块前缀判断与TradingRuleEngine.limitPctForCode一致，只是留0.1个百分点容差
+                    // （对齐原有19.9这个历史数值的设计意图：判定"已到或接近涨跌停"，不要求精确等于整数阈值）。
+                    if (exLT) {
+                        double limitPct = (code.startsWith("300") || code.startsWith("301") || code.startsWith("688")) ? 19.9
+                                : (code.startsWith("8") || code.startsWith("4")) ? 29.9 : 9.9;
+                        if (Math.abs(latest.changePct) >= limitPct) continue;
+                    }
 
                     // ── 运行通达信公式 ──
                     JSONObject r = runTDXFormula(code, name, cap, bars, volMulti, requireXianRenZhiLu);

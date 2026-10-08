@@ -978,6 +978,62 @@ public class StockBridge implements RealtimeMonitorService.Listener {
     }
 
     /**
+     * 【新增，对应用户"成交量要展示买入和卖出具体的数字，现在只展示了成交量总量"】
+     * 某支股票当天真实的买卖成交量拆分——数据来自TradeFlowManager，基于腾讯"分笔成交明细"
+     * 接口，每一笔都有交易所给出的真实方向(B买/S卖/M中性)，不是用涨跌推测的近似值。
+     * 这里立即同步返回当前已有的结果（可能是loading/上一轮的旧结果），同时触发一次后台刷新
+     * （TradeFlowManager内部自己节流，频繁调用也不会重复发请求），刷新完成后通过
+     * window.onTradeFlowReady 推给前端重新渲染。
+     * status字段：ok=可以展示；loading/pending=还没准备好；failed=拉取失败；
+     * inconsistent=跟分时曲线核对不上、为了不展示错误数据而隐藏；auction=集合竞价阶段暂不展示。
+     * message字段在非ok时给具体原因，前端直接展示给用户看，不用自己编文案。
+     * JS调用：Android.getTradeFlow(code)
+     */
+    @JavascriptInterface
+    public String getTradeFlow(String code) {
+        try {
+            List<RealtimeQuoteManager.MinutePoint> points = RealtimeQuoteManager.get().getCachedMinuteLine(code);
+            TradeFlowManager.FlowResult r = TradeFlowManager.get().computeFlow(code, points);
+            TradeFlowManager.get().requestRefresh(code, () -> pushTradeFlow(code));
+            return tradeFlowToJson(code, r);
+        } catch (Exception e) {
+            Log.e(TAG, "getTradeFlow失败", e);
+            return "{\"status\":\"failed\",\"message\":\"读取异常\"}";
+        }
+    }
+
+    private void pushTradeFlow(String code) {
+        try {
+            List<RealtimeQuoteManager.MinutePoint> points = RealtimeQuoteManager.get().getCachedMinuteLine(code);
+            TradeFlowManager.FlowResult r = TradeFlowManager.get().computeFlow(code, points);
+            String json = tradeFlowToJson(code, r);
+            String escaped = json.replace("\\", "\\\\").replace("'", "\\'");
+            evalJs("window.onTradeFlowReady && window.onTradeFlowReady('" + code + "','" + escaped + "')");
+        } catch (Exception e) {
+            Log.e(TAG, "推送买卖拆分失败", e);
+        }
+    }
+
+    private String tradeFlowToJson(String code, TradeFlowManager.FlowResult r) throws Exception {
+        JSONObject o = new JSONObject();
+        o.put("code", code);
+        o.put("status", r.status);
+        o.put("message", r.message);
+        o.put("buyTotal", r.buyTotal);
+        o.put("sellTotal", r.sellTotal);
+        o.put("neutralTotal", r.neutralTotal);
+        o.put("asOf", r.asOf);
+        JSONObject byMinute = new JSONObject();
+        for (Map.Entry<String, long[]> e : r.byMinute.entrySet()) {
+            JSONArray a = new JSONArray();
+            a.put(e.getValue()[0]); a.put(e.getValue()[1]); a.put(e.getValue()[2]);
+            byMinute.put(e.getKey(), a);
+        }
+        o.put("byMinute", byMinute);
+        return o.toString();
+    }
+
+    /**
      * 【新增，用户要求"对分时图进行数据天数的缓存处理...比如我想查看20号这只股票的分时图
      * 信息，通过切换日期进行加载对应日期的分时图数据内容"】某支股票有分时历史数据的日期列表
      * （新→旧），供前端日期切换控件只展示真正有数据可选的日期，不是任意日期都能点得动。
@@ -1008,6 +1064,38 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         } catch (Exception e) {
             Log.e(TAG, "getFenshiHistoryByDate失败", e);
             return "{}";
+        }
+    }
+
+    /**
+     * 【新增，箱体理论方案 12.3 E5-b】把某支股票的日K线缓存导出成CSV，存到App外部文件目录，
+     * 方便用Android Studio的Device Explorer或系统分享取出，喂给箱体方案做离线校准（方案第 12.3 节 E1）。
+     * 只读 MarketDataManager 已经缓存的数据，不发起新的网络请求；缓存里没有就返回失败提示（需先在K线页
+     * 手动更新一次这支股票的数据）。
+     * JS调用：Android.exportKlineCsv(code, days) → 成功返回文件的绝对路径，失败返回"ERROR:原因"
+     */
+    @JavascriptInterface
+    public String exportKlineCsv(String code, int days) {
+        try {
+            List<MarketDataManager.KlineBar> bars = MarketDataManager.get().getCachedKline(code, days);
+            if (bars == null || bars.isEmpty()) {
+                return "ERROR:本地没有缓存的日K数据，请先在K线页更新一次这支股票的数据";
+            }
+            StringBuilder sb = new StringBuilder("date,open,high,low,close,volume,amount,changePct,turnRate,amplitude\n");
+            for (MarketDataManager.KlineBar b : bars) {
+                sb.append(b.date).append(',').append(b.open).append(',').append(b.high).append(',')
+                  .append(b.low).append(',').append(b.close).append(',').append(b.volume).append(',')
+                  .append(b.amount).append(',').append(b.changePct).append(',').append(b.turnRate)
+                  .append(',').append(b.amplitude).append('\n');
+            }
+            java.io.File dir = mContext.getExternalFilesDir(null);
+            if (dir == null) return "ERROR:无法访问外部文件目录";
+            java.io.File out = new java.io.File(dir, "kline_" + code + "_" + bars.size() + "d.csv");
+            try (java.io.FileWriter w = new java.io.FileWriter(out)) { w.write(sb.toString()); }
+            return out.getAbsolutePath();
+        } catch (Exception e) {
+            Log.e(TAG, "exportKlineCsv失败", e);
+            return "ERROR:" + e.getMessage();
         }
     }
 

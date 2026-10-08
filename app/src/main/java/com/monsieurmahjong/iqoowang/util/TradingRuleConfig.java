@@ -21,8 +21,12 @@ public class TradingRuleConfig {
     private static final String OVERRIDE_FILE = "trading_rules_override.json";
     private static TradingRuleConfig sInstance;
 
+    /** 【2026-09-28注释更正·问题10.2】量比阈值。对应的"日量比"已按交易时间进度折算（即标准"量比"口径：
+     *  今日累计量 ÷ (5日均量 × 已开市时间占比)），不再是"累计量÷全天均量"，见TradingRuleEngine.checkVolume()。 */
     public double volumeRatioThreshold = 1.8;
     public int volumeMaDays = 5;
+    /** 【2026-09-28注释更正·问题10.4】底仓判断已不再使用本项（低开路径即时判定，高开/平开路径走重点监听计时）。
+     *  目前只参与满仓确认时长：requiredMinutes = max(本项, fullConfirmMinutes)。 */
     public int vwapConfirmMinutes = 5;
     public double shadowEatRatio = 0.70;
     public int stopNotifyMinutesBeforeClose = 30;
@@ -39,6 +43,8 @@ public class TradingRuleConfig {
     public int lateWindowMinutes = 20;
     public double earlyWindowVolumeMultiplier = 1.5;
     public int fullConfirmMinutes = 45;
+    /** 【2026-09-28注释更正·问题10.4】仅用于"缩量跌破分歧中点，先观察N分钟"的提示文案，
+     *  引擎里没有对应的计时逻辑（抛压预警会立即推送，下一轮tick重新评估）。 */
     public int sellObserveMinutes = 10;
     public double peakRetraceRatio = 0.50;
     /** KLINE_MID 或 RETRACE_MID */
@@ -76,6 +82,29 @@ public class TradingRuleConfig {
      *  被拉回参照价之上，而不是立刻触发止损。跟止损用的patternLowStopNotifyMinutes（收盘前确认窗口）
      *  是两个完全不同性质的窗口，不要混用。用户已确认默认3分钟。 */
     public int intradayBreakConfirmMinutes = 3;
+    /** 【2026-09-28新增·问题10.2】日量比按交易时间进度折算时，"已开市分钟数"的下限。开盘头几分钟累计量里
+     *  混着集合竞价成交，除以极小的进度会把量比放大成噪声，所以最少按这么多分钟折算。 */
+    public int volumeProgressFloorMinutes = 10;
+    /** 【2026-09-28新增·问题10.3】用户"忽略"了卖出类信号（抛压预警/止损）后，同一只股票同类信号的冷却分钟数。
+     *  买入类信号（底仓/加仓/满仓）被忽略后当日不再重复推送，不使用本项；卖出类涉及资金安全，
+     *  只冷却这么久，之后条件仍成立会再次提醒。冷却不跨交易日。 */
+    public int dismissSellCooldownMinutes = 30;
+
+    /** 【2026-10-01新增】买入前"抛压否决"总开关：1=开启，0=关闭。开启后，底仓/加仓/满仓三类买入信号命中时，
+     *  若分时盘面正处于明显抛压（见下面三项阈值），本轮不推送、只在备注里写明原因，下一轮重新评估，
+     *  抛压消退后条件仍成立会自然出信号。这是"否决项"而不是"必要条件"——不要求买入时放量，
+     *  与2026-09-13取消放量确认的要求不冲突。 */
+    public int buyPressureVetoEnabled = 1;
+    /** 抛压否决·放量门槛：近5分钟成交量 ÷ 日内每分钟均量 ≥ 该值视为"放量"（口径同放量确认里的近5分钟量比）。 */
+    public double pressureVetoVolRatio = 1.5;
+    /** 抛压否决·放量下行：放量的同时，近5分钟价格跌幅 ≥ 该比例，否决买入。 */
+    public double pressureVetoDropPct = 0.003;
+    /** 抛压否决·急跌：近10分钟自区间高点回撤 ≥ 该比例，不论是否放量，否决买入。 */
+    public double pressureVetoPlungePct = 0.015;
+    /** 【2026-10-01新增】AI复核结果回填时的价格偏离上限：买入类信号，现价较触发价下跌超过该比例，
+     *  视为AI结论已过期（AI分析用的是触发那一刻的数据，本地模型一次推理要一分多钟），
+     *  不再回填"支持"、不发"AI已确认"通知。 */
+    public double aiConfirmMaxDriftPct = 0.01;
 
     public static void init(Context context) {
         if (sInstance == null) {
@@ -146,6 +175,13 @@ public class TradingRuleConfig {
         if (o.has("focusWatchConfirmMinutes")) c.focusWatchConfirmMinutes = o.getInt("focusWatchConfirmMinutes");
         if (o.has("gapUpAddConfirmMinutesBeforeClose")) c.gapUpAddConfirmMinutesBeforeClose = o.getInt("gapUpAddConfirmMinutesBeforeClose");
         if (o.has("intradayBreakConfirmMinutes")) c.intradayBreakConfirmMinutes = o.getInt("intradayBreakConfirmMinutes");
+        if (o.has("volumeProgressFloorMinutes")) c.volumeProgressFloorMinutes = o.getInt("volumeProgressFloorMinutes");
+        if (o.has("dismissSellCooldownMinutes")) c.dismissSellCooldownMinutes = o.getInt("dismissSellCooldownMinutes");
+        if (o.has("buyPressureVetoEnabled")) c.buyPressureVetoEnabled = o.getInt("buyPressureVetoEnabled");
+        if (o.has("pressureVetoVolRatio")) c.pressureVetoVolRatio = o.getDouble("pressureVetoVolRatio");
+        if (o.has("pressureVetoDropPct")) c.pressureVetoDropPct = o.getDouble("pressureVetoDropPct");
+        if (o.has("pressureVetoPlungePct")) c.pressureVetoPlungePct = o.getDouble("pressureVetoPlungePct");
+        if (o.has("aiConfirmMaxDriftPct")) c.aiConfirmMaxDriftPct = o.getDouble("aiConfirmMaxDriftPct");
     }
 
     /** 序列化当前配置为JSON，供前端“参数配置”面板展示当前值 */
@@ -180,6 +216,13 @@ public class TradingRuleConfig {
             o.put("focusWatchConfirmMinutes", focusWatchConfirmMinutes);
             o.put("gapUpAddConfirmMinutesBeforeClose", gapUpAddConfirmMinutesBeforeClose);
             o.put("intradayBreakConfirmMinutes", intradayBreakConfirmMinutes);
+            o.put("volumeProgressFloorMinutes", volumeProgressFloorMinutes);
+            o.put("dismissSellCooldownMinutes", dismissSellCooldownMinutes);
+            o.put("buyPressureVetoEnabled", buyPressureVetoEnabled);
+            o.put("pressureVetoVolRatio", pressureVetoVolRatio);
+            o.put("pressureVetoDropPct", pressureVetoDropPct);
+            o.put("pressureVetoPlungePct", pressureVetoPlungePct);
+            o.put("aiConfirmMaxDriftPct", aiConfirmMaxDriftPct);
         } catch (Exception ignored) {}
         return o;
     }

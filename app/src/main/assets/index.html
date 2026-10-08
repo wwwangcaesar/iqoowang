@@ -705,6 +705,7 @@
           <div class="period-btn" onclick="setPeriod('5分',this)">5分</div>
           <div class="period-btn" onclick="setPeriod('15分',this)">15分</div>
           <div class="period-btn" onclick="setPeriod('60分',this)">60分</div>
+          <div class="period-btn" style="color:var(--accent-cyan);border-color:rgba(0,229,255,0.3);" onclick="exportKlineCsvForCurrentStock()">⬇导出CSV</div>
         </div>
         <div style="position:relative;">
           <canvas id="klineCanvas" height="220"></canvas>
@@ -1711,16 +1712,28 @@ const TRADING_CONFIG_FIELDS = [
   { group: '放量确认', key: 'earlyWindowVolumeMultiplier', label: '开盘/收盘窗口放量倍数', type: 'number', step: 0.1, hint: '开盘/收盘窗口内，量比阈值再乘这个倍数，门槛更高' },
   { group: '放量确认', key: 'earlyWindowMinutes', label: '开盘窗口(分钟)', type: 'int', step: 5 },
   { group: '放量确认', key: 'lateWindowMinutes', label: '收盘前窗口(分钟)', type: 'int', step: 5 },
-  { group: '买入确认', key: 'vwapConfirmMinutes', label: '站稳VWAP确认(分钟)', type: 'int', step: 1, hint: '底仓信号需要连续站上分时均价多少分钟' },
+  { group: '放量确认', key: 'volumeProgressFloorMinutes', label: '量比折算最短分钟数', type: 'int', step: 1, hint: '【2026-09-28新增】按已开市时间折算日量比时，开盘头几分钟按这个最小值算，避免分母过小放大噪声' },
+  { group: '买入确认', key: 'vwapConfirmMinutes', label: '站稳VWAP确认下限(分钟)', type: 'int', step: 1, hint: '【2026-09-28订正】不直接决定底仓（底仓走重点监听计时），只作满仓确认分钟数的下限：满仓需连续站稳VWAP达max(本项,满仓确认分钟)' },
   { group: '买入确认', key: 'fullConfirmMinutes', label: '满仓确认(分钟)', type: 'int', step: 1, hint: '满仓信号需要连续站稳VWAP多少分钟，通常比底仓更长更严格' },
   { group: '买入确认', key: 'shadowEatRatio', label: '吃影线比例', type: 'percent', step: 5, hint: '现价需回补选股当天长上影线的百分之多少才算满仓条件之一' },
   { group: '买入确认', key: 'starterPositionPct', label: '底仓建议仓位', type: 'percent', step: 5 },
   { group: '买入确认', key: 'addHalfPositionPct', label: '加仓建议比例', type: 'percent', step: 5 },
+  { group: '买入确认', key: 'vwapDualRefSwitchMinutes', label: '低开双 VWAP 切换(分钟)', type: 'int', step: 5, hint: '【2026-09-28新增】低开股票开盘后这么多分钟内用昨日VWAP作参照，之后改用昨日/今日VWAP中较低者' },
+  { group: '买入确认', key: 'focusWatchConfirmMinutes', label: '重点监听确认(分钟)', type: 'int', step: 5, hint: '【2026-09-28新增】高开/平开股票需要累计这么多分钟（中途跌破VWAP不清零）才确认底仓' },
+  { group: '买入确认', key: 'gapUpAddConfirmMinutesBeforeClose', label: '重点监听毕业加仓窗口(分钟)', type: 'int', step: 5, hint: '【2026-09-28新增】重点监听确认的底仓，收盘前这么多分钟内仍守住VWAP就可直接加仓' },
   { group: '止损止盈', key: 'peakRetraceRatio', label: '峰值回撤预警比例', type: 'percent', step: 5, hint: '当日涨幅从最高点回撤到峰值的百分之多少时触发一级预警' },
   { group: '止损止盈', key: 'divergenceBodyMaxRatio', label: '分歧K线实体占比上限', type: 'percent', step: 5, hint: 'K线实体(开收差)占振幅比例低于此值，判定为滞涨/十字星' },
   { group: '止损止盈', key: 'divergenceMidMode', label: '分歧K线中点算法', type: 'select', options: [['KLINE_MID','K线本身(高+低)/2'], ['RETRACE_MID','峰值涨幅回撤50%价位']] },
   { group: '止损止盈', key: 'sellObserveMinutes', label: '缩量跌破观察(分钟)', type: 'int', step: 1 },
   { group: '止损止盈', key: 'stopNotifyMinutesBeforeClose', label: '止损收盘前推送窗口(分钟)', type: 'int', step: 5 },
+  { group: '止损止盈', key: 'patternLowStopNotifyMinutes', label: '独立破位收盘前推送窗口(分钟)', type: 'int', step: 5, hint: '【2026-09-28新增】跌破前一交易日最低价后，需持续到收盘前这么多分钟仍未收复才推送止损，避免盘中插针误判' },
+  { group: '止损止盈', key: 'intradayBreakConfirmMinutes', label: '瞬时缩量破位确认(分钟)', type: 'int', step: 1, hint: '【2026-09-28新增】跌破止损参照价那一刻若是缩量完成的，先观察这么多分钟看是否收复，避免插针误杀' },
+  { group: '止损止盈', key: 'dismissSellCooldownMinutes', label: '忽略卖出信号冷却(分钟)', type: 'int', step: 5, hint: '【2026-09-28新增】忽略抛压预警/止损信号后，这么多分钟内不重复推送同一只股票的同类信号（不跨交易日）' },
+  { group: '买入确认', key: 'buyPressureVetoEnabled', label: '买入抛压否决(1开/0关)', type: 'int', step: 1, hint: '【2026-10-01新增】1=开启：底仓/加仓/满仓信号命中时，若盘面放量下杀或急跌，本轮不推送、下一轮重新评估；0=关闭。只是"否决项"，不要求买入时放量' },
+  { group: '买入确认', key: 'pressureVetoVolRatio', label: '抛压否决·放量倍数', type: 'number', step: 0.1, hint: '【2026-10-01新增】近5分钟量比≥该值视为放量（口径同放量确认里的5分钟量比）' },
+  { group: '买入确认', key: 'pressureVetoDropPct', label: '抛压否决·放量下行跌幅', type: 'percent', step: 0.1, hint: '【2026-10-01新增】放量的同时，近5分钟价格跌幅≥该值，否决买入' },
+  { group: '买入确认', key: 'pressureVetoPlungePct', label: '抛压否决·急跌回撤', type: 'percent', step: 0.5, hint: '【2026-10-01新增】近10分钟自区间高点回撤≥该值，不论是否放量，否决买入' },
+  { group: '买入确认', key: 'aiConfirmMaxDriftPct', label: 'AI确认价格偏离上限', type: 'percent', step: 0.5, hint: '【2026-10-01新增】买入信号触发后，AI结论回来时现价较触发价下跌超过该值，视为AI结论过期，不再发"AI已确认"通知' },
   { group: '涨跌停幅度', key: 'mainboardLimitPct', label: '主板(含ST)', type: 'percent', step: 1 },
   { group: '涨跌停幅度', key: 'gemStarLimitPct', label: '创业板/科创板', type: 'percent', step: 1 },
   { group: '涨跌停幅度', key: 'bjExchangeLimitPct', label: '北交所', type: 'percent', step: 1 },
@@ -2787,6 +2800,31 @@ const _gest = {
   animFrame: null,
 };
 
+/** 【新增，箱体理论方案 12.3 E5-b配套】导出当前正在看的这支股票的日K线CSV，用于箱体方案的
+ *  离线分析（box_lab_offline/e1_feature_match.py）。强制切到日K并重新拉取，不管点击前
+ *  正显示哪个周期——避免导出的CSV混进周K/月K/分钟线的行，破坏离线脚本"每行=一个
+ *  交易日"的假设。fetchKline是异步的，这里简单等2.5秒再导出，不是完全可靠的时序
+ *  保证，但对这种手动、偶尔用一次的调试工具来说足够——真遇到还没拉完的情况，重新
+ *  点一次就好。 */
+function exportKlineCsvForCurrentStock() {
+  if (!IS_ANDROID) { alert('仅Android版支持导出'); return; }
+  const code = STATE.currentKlineCode;
+  if (!code) { alert('请先打开一支股票'); return; }
+  const dailyBtn = document.querySelector('.period-btn[onclick*="日K"]');
+  if (dailyBtn && currentPeriod !== '日K') setPeriod('日K', dailyBtn);
+  Android.fetchKline(code, '日K', 260);
+  setTimeout(() => {
+    try {
+      const result = Android.exportKlineCsv(code, 260);
+      if (result && result.startsWith('ERROR')) {
+        alert(result);
+      } else {
+        alert('已导出：\n' + result + '\n\n在Mac上取出（USB连接+开启调试）：\nadb pull "' + result + '" ~/Desktop/');
+      }
+    } catch (e) { alert('导出失败：' + e); }
+  }, 2500);
+}
+
 function setPeriod(p, el) {
   currentPeriod = p;
   document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
@@ -2960,6 +2998,9 @@ function drawKlineFromData(data) {
   if (!data || !data.length) return;
   const canvas = document.getElementById('klineCanvas');
   if (!canvas) return;
+  // 【2026-10-01修复】页面隐藏(display:none)时 offsetWidth=0，继续往下会把画布宽度置0清空，
+  // 切回来没人重画 → 空白。隐藏时不碰画布。
+  if (!canvas.parentElement || !canvas.parentElement.offsetWidth) return;
 
   const dpr = window.devicePixelRatio || 1;
   const W   = canvas.parentElement.offsetWidth;
@@ -3098,7 +3139,7 @@ function drawKlineFromData(data) {
 // ── 成交量 ──
 function drawVolumeFromData(norm, W) {
   const canvas = document.getElementById('volCanvas');
-  if (!canvas) return;
+  if (!canvas || !W) return;
   const dpr = window.devicePixelRatio || 1;
   const H   = 60;
   canvas.style.width  = W + 'px';
@@ -3161,6 +3202,7 @@ function loadFenshiChart(code) {
     if (data.code && data.code !== STATE.currentKlineCode) return;
     STATE.currentFenshiData = data;
     drawFenshiChart(data);
+    loadTradeFlow(code);
   } catch (e) { console.error('loadFenshiChart', e); }
 }
 
@@ -3185,6 +3227,33 @@ window.onMinuteChartError = function(code, msg) {
   if (STATE.fenshiViewDate && STATE.fenshiViewDate !== 'today') return; // 历史日期查看模式下，今日实时补拉失败跟当前画面无关
   const upd = document.getElementById('fenshiUpdatedAt');
   if (upd) upd.textContent = '分时数据获取失败：' + msg;
+};
+
+/** 【新增，对应用户"成交量要展示买入和卖出具体的数字"】拉取当天真实买卖成交量拆分——只在
+ *  查看"今日"实时分时图时调用（腾讯分笔接口只覆盖当天，历史日期没有这份数据，
+ *  loadFenshiHistoryForDate不会调用这个）。跟getMinuteChartData一样是"立即返回当前已有
+ *  结果+后台触发刷新"的模式，Android端TradeFlowManager自己会做节流，这里不用管调用
+ *  频率。拿到新数据后重新调一次drawFenshiChart保证量能柱图跟着重绘，不单独抽出一套
+ *  坐标计算。 */
+function loadTradeFlow(code) {
+  if (!IS_ANDROID) return;
+  try {
+    const json = Android.getTradeFlow(code);
+    const data = JSON.parse(json || '{}');
+    if (data.code && data.code !== code) return;
+    STATE.currentTradeFlow = data;
+    if (STATE.currentFenshiData && STATE.currentFenshiData.code === code) drawFenshiChart(STATE.currentFenshiData);
+  } catch (e) { console.error('loadTradeFlow', e); }
+}
+
+window.onTradeFlowReady = function(code, jsonStr) {
+  if (STATE.fenshiViewDate && STATE.fenshiViewDate !== 'today') return;
+  if (code !== STATE.currentKlineCode) return;
+  try {
+    const data = JSON.parse(jsonStr || '{}');
+    STATE.currentTradeFlow = data;
+    if (STATE.currentFenshiData && STATE.currentFenshiData.code === code) drawFenshiChart(STATE.currentFenshiData);
+  } catch (e) { console.error('onTradeFlowReady', e); }
 };
 
 /** 【新增，用户要求"对分时图进行数据天数的缓存处理...通过切换日期进行加载对应日期的分时图
@@ -3235,9 +3304,10 @@ function loadFenshiHistoryForDate(code, date) {
     const upd = document.getElementById('fenshiUpdatedAt');
     if (!data.points || !data.points.length) {
       STATE.currentFenshiData = null;
+      STATE.currentTradeFlow = null;
       drawFenshiChart({points: []});
       if (upd) upd.textContent = date + ' 无分时数据记录';
-      return;
+    return;
     }
     STATE.currentFenshiData = data;
     drawFenshiChart(data);
@@ -3248,6 +3318,10 @@ function loadFenshiHistoryForDate(code, date) {
 function drawFenshiChart(data) {
   const canvas = document.getElementById('fenshiCanvas');
   if (!canvas) return;
+  // 【2026-10-01修复，切页后分时图空白】首页被隐藏(display:none)时 offsetWidth=0，下面的
+  // canvas.width=W*dpr 会把画布清成0宽；监控tick/30秒定时重绘/成交流回调都可能在你停留在选股页时触发，
+  // 切回首页没人重画 → 空白，直到下一次重绘或切换股票。隐藏时直接跳过，不碰画布。
+  if (!canvas.parentElement || !canvas.parentElement.offsetWidth) return;
   if (!data.points || !data.points.length) {
     // 【修复：分时图无数据时完全空白，看不出是没数据还是没画】之前这里直接return，画布
     // 保持上一次渲染的内容（或者从来没画过就是一片空白），用户完全分不清是“数据没拿到”
@@ -3339,7 +3413,7 @@ function drawFenshiChart(data) {
 
 function drawFenshiVolume(data, prevClose, W, toX) {
   const canvas = document.getElementById('fenshiVolCanvas');
-  if (!canvas) return;
+  if (!canvas || !W) return;
   const dpr = window.devicePixelRatio || 1;
   const H = 50;
   canvas.style.width = W+'px'; canvas.style.height = H+'px';
@@ -3350,13 +3424,32 @@ function drawFenshiVolume(data, prevClose, W, toX) {
   const ch = H - pad.t - pad.b;
   const maxV = Math.max(...data.points.map(p=>p.volume||0), 1);
   const barW = Math.max(1, (W-pad.l-pad.r)/240);
+
+  // 【新增，对应用户"成交量要展示买入和卖出具体的数字"】优先用TradeFlowManager算出的真实
+  // 买卖拆分画堆叠柱（买在下、卖在上、中性盘在最上面，配色跟大盘涨跌一致：买=红，卖=绿）；
+  // 这份数据还没准备好/核对不上时（status非ok），退回原来"整根柱子按这一分钟涨跌方向单色"
+  // 的近似画法，保证分时图不会因为买卖拆分还未就绪就整块空白。
+  const flow = STATE.currentTradeFlow;
+  const useReal = flow && flow.status === 'ok' && flow.byMinute;
   data.points.forEach((p,i)=>{
-    const prevP = i>0 ? data.points[i-1].price : prevClose;
-    const isUp = p.price >= prevP;
     const x = toX(p.time);
-    const barH = ((p.volume||0)/maxV)*ch;
-    ctx.fillStyle = isUp ? 'rgba(255,61,87,0.55)' : 'rgba(0,200,83,0.55)';
-    ctx.fillRect(x, pad.t+ch-barH, barW, barH);
+    const real = useReal ? flow.byMinute[p.time] : null;
+    if (real) {
+      const buy = real[0]||0, sell = real[1]||0, neutral = real[2]||0;
+      let base = 0;
+      const buyH = (buy/maxV)*ch;
+      if (buyH > 0) { ctx.fillStyle = 'rgba(255,61,87,0.55)'; ctx.fillRect(x, pad.t+ch-buyH, barW, buyH); base += buyH; }
+      const sellH = (sell/maxV)*ch;
+      if (sellH > 0) { ctx.fillStyle = 'rgba(0,200,83,0.55)'; ctx.fillRect(x, pad.t+ch-base-sellH, barW, sellH); base += sellH; }
+      const neuH = (neutral/maxV)*ch;
+      if (neuH > 0.5) { ctx.fillStyle = 'rgba(160,160,170,0.45)'; ctx.fillRect(x, pad.t+ch-base-neuH, barW, neuH); }
+    } else {
+      const prevP = i>0 ? data.points[i-1].price : prevClose;
+      const isUp = p.price >= prevP;
+      const barH = ((p.volume||0)/maxV)*ch;
+      ctx.fillStyle = isUp ? 'rgba(255,61,87,0.55)' : 'rgba(0,200,83,0.55)';
+      ctx.fillRect(x, pad.t+ch-barH, barW, barH);
+    }
   });
 }
 
@@ -3435,13 +3528,25 @@ function showFenshiCrosshair(clientX) {
   const tooltip = document.getElementById('fenshiTooltip');
   if (!tooltip) return;
   tooltip.className = 'kline-tooltip visible';
-  // 成交量字段在Java端（RealtimeQuoteManager.MinutePoint.volume注释）明确是"本分钟成交量增量（手）"，
-  // 不需要再除以100或万手转换。
+  // 【新增，对应用户"成交量要展示买入和卖出具体的数字，现在只展示了成交量总量"】优先展示
+  // TradeFlowManager算出的真实买卖拆分；这份数据还没就绪/核对不上时，退回展示成交量
+  // 总量+具体原因，不假装有拆分数据。
+  const flow = STATE.currentTradeFlow;
+  const realFlow = flow && flow.status === 'ok' && flow.byMinute ? flow.byMinute[nearest.time] : null;
+  let volLine;
+  if (realFlow) {
+    const buy = realFlow[0]||0, sell = realFlow[1]||0;
+    volLine = `买入 <span class="c-up">${buy.toLocaleString()}手</span>　卖出 <span class="c-down">${sell.toLocaleString()}手</span>`;
+  } else {
+    const reason = flow && flow.status && flow.status !== 'ok' ? flow.message : '买卖拆分加载中';
+    volLine = `成交量 <span style="color:var(--accent-gold)">${Math.round(nearest.volume||0).toLocaleString()}手</span>` +
+      (reason ? `<br><span style="font-size:9px;color:var(--text-dim)">${reason}</span>` : '');
+  }
   tooltip.innerHTML = `<b>${nearest.time || '--'}</b><br>` +
     `现价 <span class="${pct>=0?'c-up':'c-down'}">${nearest.price.toFixed(2)}</span>　` +
     `${pct>=0?'+':''}${pct.toFixed(2)}%<br>` +
     `均价 <span style="color:#f0b429">${(nearest.avgPrice||0).toFixed(2)}</span><br>` +
-    `成交量 <span style="color:var(--accent-gold)">${Math.round(nearest.volume||0).toLocaleString()}手</span>`;
+    volLine;
 }
 
 function hideFenshiCrosshair() {
@@ -3462,131 +3567,9 @@ function drawVolume(data) {
   drawVolumeFromData(data, W);
 }
 
-function drawKline() {
-  const canvas = document.getElementById('klineCanvas');
-  const dpr = window.devicePixelRatio || 1;
-  const W = canvas.parentElement.offsetWidth;
-  const H = 220;
-  canvas.style.width = W + 'px';
-  canvas.style.height = H + 'px';
-  canvas.width = W * dpr;
-  canvas.height = H * dpr;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
-
-  const data = KLINE_DATA.slice(-50 + klineOffset, klineOffset > 0 ? undefined : undefined).slice(-50);
-
-  const pad = { t:10, b:6, l:8, r:42 };
-  const cw = W - pad.l - pad.r;
-  const ch = H - pad.t - pad.b;
-
-  const prices = data.flatMap(d => [d.h, d.l]);
-  const minP = Math.min(...prices) * 0.998;
-  const maxP = Math.max(...prices) * 1.002;
-
-  const px = (val) => pad.t + (1 - (val - minP) / (maxP - minP)) * ch;
-  const bw = cw / data.length;
-  const bpad = Math.max(1, bw * 0.15);
-
-  // 背景格线
-  ctx.strokeStyle = 'rgba(26,45,74,0.5)';
-  ctx.lineWidth = 0.5;
-  for (let i = 0; i <= 4; i++) {
-    const y = pad.t + (ch / 4) * i;
-    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
-    const val = maxP - (maxP - minP) * (i / 4);
-    ctx.fillStyle = 'rgba(122,148,184,0.7)';
-    ctx.font = '9px monospace';
-    ctx.textAlign = 'right';
-    ctx.fillText(val.toFixed(1), W - 2, y + 3);
-  }
-
-  // 蜡烛
-  data.forEach((d, i) => {
-    const x = pad.l + i * bw;
-    const isUp = d.c >= d.o;
-    const color = isUp ? '#ff3d57' : '#00c853';
-
-    // 影线
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(x + bw/2, px(d.h));
-    ctx.lineTo(x + bw/2, px(d.l));
-    ctx.stroke();
-
-    // 实体
-    const top = px(Math.max(d.o, d.c));
-    const bot = px(Math.min(d.o, d.c));
-    const bodyH = Math.max(1, bot - top);
-    ctx.fillStyle = color;
-    ctx.fillRect(x + bpad, top, bw - bpad*2, bodyH);
-  });
-
-  // EMA线
-  const closes = data.map(d => d.c);
-  const ema5 = ema(closes, 5);
-  const ema10 = ema(closes, 10);
-  const ema20 = ema(closes, 20);
-
-  [[ema5, '#f0b429', '5'], [ema10, '#00e5ff', '10'], [ema20, '#e040fb', '20']].forEach(([vals, color, label]) => {
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    vals.forEach((v, i) => {
-      const x = pad.l + i * bw + bw/2;
-      const y = px(v);
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    });
-    ctx.stroke();
-  });
-
-  // 图例
-  [['EMA5','#f0b429'],['EMA10','#00e5ff'],['EMA20','#e040fb']].forEach(([l,c],i) => {
-    ctx.fillStyle = c; ctx.fillRect(pad.l + i*50, H-4, 12, 2);
-    ctx.fillStyle = 'rgba(122,148,184,0.8)'; ctx.font = '9px monospace'; ctx.textAlign = 'left';
-    ctx.fillText(l, pad.l + i*50 + 14, H-1);
-  });
-
-  drawVolume(data);
-}
-
-function drawVolume(data) {
-  const canvas = document.getElementById('volCanvas');
-  const dpr = window.devicePixelRatio || 1;
-  const W = canvas.parentElement?.offsetWidth || document.getElementById('klineCanvas').parentElement.offsetWidth;
-  const H = 60;
-  canvas.style.width = W + 'px';
-  canvas.style.height = H + 'px';
-  canvas.width = W * dpr;
-  canvas.height = H * dpr;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
-
-  const pad = { t:4, b:2, l:8, r:42 };
-  const cw = W - pad.l - pad.r;
-  const ch = H - pad.t - pad.b;
-  const maxV = Math.max(...data.map(d => d.v));
-  const bw = cw / data.length;
-  const bpad = Math.max(1, bw * 0.15);
-
-  ctx.fillStyle = 'rgba(26,45,74,0.3)';
-  ctx.fillRect(pad.l, pad.t, cw, ch);
-
-  data.forEach((d, i) => {
-    const x = pad.l + i * bw;
-    const isUp = d.c >= d.o;
-    const barH = (d.v / maxV) * ch;
-    ctx.fillStyle = isUp ? 'rgba(255,61,87,0.6)' : 'rgba(0,200,83,0.6)';
-    ctx.fillRect(x + bpad, pad.t + ch - barH, bw - bpad*2, barH);
-  });
-
-  ctx.fillStyle = 'rgba(122,148,184,0.5)';
-  ctx.font = '8px monospace';
-  ctx.textAlign = 'right';
-  ctx.fillText((maxV/1e8).toFixed(1)+'亿', W-2, pad.t+8);
-  ctx.fillText('VOL', pad.l+18, pad.t+8);
-}
+// 【2026-10-01修复】此处原有 drawKline/drawVolume 的旧版重复定义：引用了从未声明的 klineOffset，
+// 每次调用都会先清空K线画布再抛 ReferenceError，并覆盖上面的新版 → switchTab('home') 中途中断，
+// 分时图/最近交易不刷新。已删除，统一使用上面的 drawKline（走 drawKlineFromData）。
 
 // ═══════════════════════════════════════
 // 盈亏曲线
@@ -3888,12 +3871,16 @@ function switchTab(tab) {
   requestAnimationFrame(() => {
     try {
       if (tab === 'home') {
-        refreshAccountSummary();
-        drawKline(); drawPnlChart();
+        // 【2026-10-01修复】各步骤独立容错：之前 drawKline 抛异常会让后面的分时图/最近交易整段被跳过。
+        // 分时图放第一位，任何一步失败都不影响其余步骤。
+        const _step = (name, fn) => { try { fn(); } catch (e) { console.error('[Tab] home/' + name + ' 失败', e); } };
         // 【D新增】切回主页时重拉一次分时图——监控tick每2分钟会把候选池/持仓的分时数据
         // 刷新到缓存里，这里只管重新读一遍缓存重画，不额外发网络请求。
-        if (IS_ANDROID && STATE.currentKlineCode) loadFenshiChart(STATE.currentKlineCode);
-        loadRecentTrades();
+        _step('fenshi', () => { if (IS_ANDROID && STATE.currentKlineCode) loadFenshiChart(STATE.currentKlineCode); });
+        _step('account', refreshAccountSummary);
+        _step('kline', drawKline);
+        _step('pnl', drawPnlChart);
+        _step('trades', loadRecentTrades);
       }
       if (tab === 'position') {
         if (IS_ANDROID) {

@@ -11,12 +11,19 @@ import java.util.Locale;
 /**
  * TradingRuleEngine — 操盘手方法论规则引擎（Layer 1）
  *
- * 依据《操盘手经验终版.md》实现：
- *   · 水下+站上VWAP → 建议底仓（1.3/3.2）
- *   · 突破水线/回踩VWAP → 建议增加50%仓位
- *   · 吃掉上影线≥阈值+放量 → 建议满仓（当日满足全部条件即可）
- *   · 三级止损：抛压预警 / 分歧K线中点 / 最低点 / 前阳破位
- *   · 全触发条件含放量验证（6.3）
+ * 【以下摘要于2026-09-28按代码实际逻辑重写·问题10.4】旧摘要仍是最初版本，与2026-09-13
+ * "取消买入侧放量门槛"等多次后续改造脱节，当时满仓note文案仍写着"+放量"就是它遗留的病疵之一。
+ * 摘要以外的历史注释未改。
+ *
+ * 当前实际逻辑：
+ *   · 底仓：低开路径——现价站上昨日全天VWAP即触发；高开/平开路径——"重点监听"满
+ *     focusWatchConfirmMinutes(默认60)分钟且当前仍守住VWAP才触发。买入侧不要求放量。
+ *   · 加仓：突破水线，或回踩max(昨日VWAP,当日VWAP)不破，或重点监听毕业票收盘前仍守住VWAP。
+ *   · 满仓：吃掉形态日上影线≥阈值 + 突破水线 + 站上VWAP + 连续站稳VWAP达
+ *     max(vwapConfirmMinutes, fullConfirmMinutes)分钟。同样不要求放量。
+ *   · 止损：独立破位(前一交易日最低价，缩量降级+3分钟确认+收盘前确认窗口) → 分歧K线最低点(立即)
+ *     → 分歧K线中点(缩量降级为抛压预警，否则仅收盘前窗口推送) → 峰值回撤50%(抛压预警) →
+ *     涨停放巨量(抛压预警)。放量/缩量仍用于止损侧的降级判断与分歧K线识别，不用于买入侧。
  *
  * 所有阈值从 TradingRuleConfig 读取，AI 复核在 RealtimeMonitorService 层完成。
  */
@@ -41,7 +48,11 @@ public class TradingRuleEngine {
         public String note = "";
         public double triggerPrice;
         public StopLevel stopLevel = StopLevel.NONE;
-        /** true=可立即推送（破位/三级）；false=仅收盘前30分钟内推送（二级中点） */
+        /** 该字段本身只是"现在要不要推送"的布尔开关，具体推送窗口因止损级别而不同（见2026-09-28订正·问题10.4）：
+         *  独立破位(YANG_BREAK)——仅收盘前patternLowStopNotifyMinutes(默认15)分钟内为true；
+         *  三级(LEVEL3_LOW，分歧K线最低点)——恒为true，立即推送，无量能限制；
+         *  二级(LEVEL2_MID，分歧K线中点)——缩量时降级为WARN_PRESSURE(恒true)，否则仅收盘前
+         *  stopNotifyMinutesBeforeClose(默认30)分钟内为true。原注释把破位和三级混为一谈，已订正。 */
         public boolean notifyImmediate = true;
         public String metrics = "";
         /** 供持久化：更新后的分歧K线/峰值涨幅等 */
@@ -125,6 +136,16 @@ public class TradingRuleEngine {
         public boolean confirmed;
         public boolean shrinkBreak;
         public String detail;
+    }
+
+    /** 【2026-09-27新增·Claude】computeMetricsOnly()的结构化返回值——原来只返回给决策日志用的
+     *  格式化字符串，PENDING分支因此没法把新鲜算出来的waterLine/vwap/volRatio回写到
+     *  WatchlistManager.updateLiveMetrics()，导致候选池卡片/AI复核/排行榜三处消费方读到的
+     *  都是信号最初触发那一刻就冻结住的旧值。这里把内部已经算出来的三个数值也一并吐出来，
+     *  summaryText保留给日志文案用，字段含义、计算方式跟evaluate()里同名局部变量完全一致。 */
+    public static class MetricsSnapshot {
+        public String summaryText = "";
+        public double waterLine, vwap, volRatio;
     }
 
     /** 涨跌停价位与疑似封板检测结果（T+1可卖状态 + 涨跌停检测，对应操盘手经验终版.md 8.5节） */
@@ -275,6 +296,12 @@ public class TradingRuleEngine {
         IntradayPatternAnalyzer.VolumeSpikeReversal volumeSpike = checkVolumeSpikeSignal(code, status, quote, minutePoints, state);
         result.volumeSpikeSignal = volumeSpike;
 
+        // 【2026-09-28新增·问题10.5】下面止损判定可能返回action=NONE但note非空的"待确认破位"中间状态
+        // （见evaluateStopLoss里"确认窗口中：已等N秒…"）——以前这条note会被下面STARTER/ADDED/FULL分支
+        // 拼的通用文案整个覆盖掉，只有刚进入窗口那一次写过logBuyLogicTrace，之后每轮tick在快照/
+        // UI上都看不到"还在等第几秒"。先存起来，稍后拼进最终note。
+        String stopPendingNote = null;
+
         // ── 持仓：止损优先 ──
         if (isHolding(status)) {
             RuleResult stop = evaluateStopLoss(quote, prevDay, minutePoints, vol, state, pattern, hour, minute);
@@ -286,6 +313,7 @@ public class TradingRuleEngine {
                 annotateLimitAndHoldingPeriod(stop, limitInfo);
                 return stop;
             }
+            if (stop.note != null && !stop.note.isEmpty()) stopPendingNote = stop.note;
             // 【B认领步骤（6）】止损未触发时，额外检查涨停放巨量出货
             RuleResult surge = checkLimitUpVolumeSurge(code, quote, limitInfo);
             if (surge.action != Action.NONE) {
@@ -304,6 +332,7 @@ public class TradingRuleEngine {
         if (WatchlistManager.STATUS_STARTER.equals(status)
                 || WatchlistManager.STATUS_ADDED.equals(status)) {
             RuleResult full = evaluateFullPosition(quote, pattern, minutePoints, vol, vwap, waterLine, hour, minute);
+            applyBuyPressureVeto(full, quote, minutePoints, state, vol, false); // 【2026-10-01】抛压否决
             if (full.action != Action.NONE) {
                 full.metrics = result.metrics;
                 full.stateUpdate = state;
@@ -318,6 +347,7 @@ public class TradingRuleEngine {
         // ── 加仓：突破水线 或 底仓后回踩VWAP不破 ──
         if (WatchlistManager.STATUS_STARTER.equals(status)) {
             RuleResult add = evaluateAddHalf(quote, prevDay, minutePoints, vol, vwap, waterLine, state);
+            applyBuyPressureVeto(add, quote, minutePoints, state, vol, false); // 【2026-10-01】抛压否决
             if (add.action != Action.NONE) {
                 add.metrics = result.metrics;
                 add.stateUpdate = state;
@@ -333,6 +363,7 @@ public class TradingRuleEngine {
             StringBuilder sb = new StringBuilder();
             sb.append(String.format(Locale.CHINA, "已持底仓，现价¥%.2f 水线¥%.2f VWAP¥%.2f，继续观察。",
                     quote.price, waterLine, vwap));
+            if (stopPendingNote != null) sb.append(" [止损]").append(stopPendingNote).append("。");
             if (fullSkipNote != null && !fullSkipNote.isEmpty()) sb.append(" [满仓]").append(fullSkipNote).append("。");
             if (add.note != null && !add.note.isEmpty()) sb.append(" [加仓]").append(add.note).append("。");
             result.note = sb.toString();
@@ -345,6 +376,7 @@ public class TradingRuleEngine {
             sb.append(String.format(Locale.CHINA, "已%s，现价¥%.2f VWAP¥%.2f，持续监控止损位。",
                     WatchlistManager.STATUS_FULL.equals(status) ? "满仓" : "加仓",
                     quote.price, vwap));
+            if (stopPendingNote != null) sb.append(" [止损]").append(stopPendingNote).append("。");
             // 【R8】ADDED状态下，满仓评估的具体差距一并带出；FULL已是终态，不再需要
             if (WatchlistManager.STATUS_ADDED.equals(status) && fullSkipNote != null && !fullSkipNote.isEmpty()) {
                 sb.append(" [满仓]").append(fullSkipNote).append("。");
@@ -360,7 +392,11 @@ public class TradingRuleEngine {
             // 只是额外检查一下，检测到了就在result里带出去，RealtimeMonitorService据此推送信息
             checkUnderwaterReversal(quote, waterLine, minutePoints, state, result);
 
+            // 【2026-10-01新增】记录进入本轮前"重点监听"是否已经是CONFIRMED：抛压否决底仓时，
+            // 据此决定要不要把本轮刚写入的CONFIRMED退回WATCHING
+            boolean focusConfirmedBefore = state != null && "CONFIRMED".equals(state.focusWatchStatus);
             RuleResult starter = evaluateStarter(quote, prevDay, minutePoints, vol, vwap, waterLine, result.metrics, hour, minute, state);
+            applyBuyPressureVeto(starter, quote, minutePoints, state, vol, !focusConfirmedBefore); // 【2026-10-01】抛压否决
             starter.stateUpdate = state; // 持久化观察期已累计的峰值涨幅/重点监听计时状态，避免转入底仓后状态从零重算
             starter.waterLine = waterLine; starter.vwap = vwap; starter.volRatio = vol.dayRatio;
             starter.underwaterReversal = result.underwaterReversal; // 把上面的检测结果带到最终返回的result上
@@ -370,6 +406,61 @@ public class TradingRuleEngine {
         }
 
         return result;
+    }
+
+    /**
+     * 【2026-10-01新增·问题：候选池出现"建议底仓"，但盘面已经明显抛压】
+     * 买入类信号（底仓/加仓/满仓）命中后，若分时盘面正处于明显抛压，就"否决"这次买入：
+     * action改回NONE，只在note里写明原因，下一轮tick重新评估——抛压消退、条件仍成立时会自然出信号。
+     * 这是"否决项"而不是"必要条件"：买入信号本身仍然不要求放量（2026-09-13用户明确取消了放量确认），
+     * 只是在盘面放量下杀/急跌时不去接。总开关 TradingRuleConfig.buyPressureVetoEnabled。
+     * 判定只读分时与量能数据，毫秒级，不依赖AI（AI一次推理要一分多钟，追不上行情）。
+     *
+     * @param revertFocusConfirm 底仓路径专用：高开/平开的重点监听在evaluateStarter里命中时会把
+     *        state.focusWatchStatus写成"CONFIRMED"，被否决后要退回"WATCHING"（计时起点保留），
+     *        否则状态机会误以为底仓已经确认过。进入本轮前本来就是CONFIRMED的不退。
+     */
+    private void applyBuyPressureVeto(RuleResult r, RealtimeQuoteManager.Quote quote,
+                                      List<RealtimeQuoteManager.MinutePoint> pts, DivergenceState state,
+                                      VolumeCheck vol, boolean revertFocusConfirm) {
+        if (r == null || mCfg.buyPressureVetoEnabled == 0) return;
+        if (r.action != Action.BUY_STARTER && r.action != Action.ADD_HALF && r.action != Action.BUY_FULL) return;
+        String reason = sellPressureReason(quote, pts, vol);
+        if (reason == null) return;
+        String origLabel = r.actionLabel;
+        String origNote = r.note;
+        r.action = Action.NONE;
+        r.actionLabel = "";
+        r.triggerPrice = 0;
+        r.note = "【买入否决·抛压】" + reason + "，原信号「" + origLabel + "」暂不推送，下一轮重新评估。"
+                + (origNote != null && !origNote.isEmpty() ? " 原判断：" + origNote : "");
+        if (revertFocusConfirm && state != null && "CONFIRMED".equals(state.focusWatchStatus)) {
+            state.focusWatchStatus = "WATCHING";
+        }
+        DecisionLogger.get().logBuyLogicTrace("", quote.code, "抛压否决买入「" + origLabel + "」：" + reason);
+    }
+
+    /** 抛压判定：返回null＝没有明显抛压；否则返回一句带具体数字的原因。只读，不改任何状态。
+     *  (1) 放量下行：近5分钟量比≥pressureVetoVolRatio 且 近5分钟价格跌幅≥pressureVetoDropPct；
+     *  (2) 急跌：近10分钟自区间高点回撤≥pressureVetoPlungePct（不看量）。
+     *  分时不足6个点时不否决（开盘头几分钟数据太少，保持原有行为）。 */
+    private String sellPressureReason(RealtimeQuoteManager.Quote quote,
+                                      List<RealtimeQuoteManager.MinutePoint> pts, VolumeCheck vol) {
+        if (quote == null || quote.price <= 0 || pts == null || pts.size() < 6) return null;
+        int n = pts.size();
+        double p5ago = pts.get(n - 6).price;
+        double chg5 = p5ago > 0 ? (quote.price - p5ago) / p5ago : 0;
+        double hi = 0;
+        for (int i = Math.max(0, n - 10); i < n; i++) hi = Math.max(hi, pts.get(i).price);
+        double retrace = hi > 0 ? (hi - quote.price) / hi : 0;
+        double r5 = vol != null ? vol.recent5Ratio : 0;
+        if (r5 >= mCfg.pressureVetoVolRatio && chg5 <= -mCfg.pressureVetoDropPct) {
+            return String.format(Locale.CHINA, "近5分钟放量%.1f倍且价格下行%.2f%%", r5, -chg5 * 100);
+        }
+        if (retrace >= mCfg.pressureVetoPlungePct) {
+            return String.format(Locale.CHINA, "近10分钟自高点¥%.2f回撤%.2f%%", hi, retrace * 100);
+        }
+        return null;
     }
 
     /**
@@ -383,26 +474,35 @@ public class TradingRuleEngine {
      * 保证"不重新判定信号"和"指标信息不丢"两者都满足。传入的minutePoints允许用缓存（不强制
      * 发起新请求），拿不到分时数据时vol/intradaySummary会退化成"数据不足"，不会抛异常。
      */
-    public String computeMetricsOnly(String code, RealtimeQuoteManager.Quote quote,
+    public MetricsSnapshot computeMetricsOnly(String code, RealtimeQuoteManager.Quote quote,
                                       List<RealtimeQuoteManager.MinutePoint> minutePoints,
                                       PrevDayRef prevDay) {
-        if (quote == null || prevDay == null || !prevDay.hasData) return "";
-        double waterLine = prevDay.prevClose;
-        double vwap = computeVwap(minutePoints, quote);
+        MetricsSnapshot snap = new MetricsSnapshot();
+        if (quote == null || prevDay == null || !prevDay.hasData) return snap;
+        snap.waterLine = prevDay.prevClose;
+        snap.vwap = computeVwap(minutePoints, quote);
         Calendar cal = Calendar.getInstance();
         int hour = cal.get(Calendar.HOUR_OF_DAY);
         int minute = cal.get(Calendar.MINUTE);
         VolumeCheck vol = checkVolume(code, quote, minutePoints, hour, minute);
+        snap.volRatio = vol.dayRatio;
         IntradayPatternAnalyzer.IntradayTechnicalSummary intradaySummary =
                 IntradayPatternAnalyzer.get().summarize(minutePoints);
         // 【2026-09-25新增·Claude】待确认状态期间的监控快照也同样应该能看到全天走势摘要，跟上面
         // evaluate()那边保持同步。
         IntradayPatternAnalyzer.FullDaySummary fullDaySummary =
                 IntradayPatternAnalyzer.get().summarizeFullDay(minutePoints);
-        return String.format(Locale.CHINA,
+        snap.summaryText = String.format(Locale.CHINA,
                 "水线¥%.2f VWAP¥%.2f 量比%.2fx(阈值%.2fx) 5分钟量比%.2fx %s ｜ %s ｜ %s",
-                waterLine, vwap, vol.dayRatio, vol.threshold, vol.recent5Ratio, vol.detail,
+                snap.waterLine, snap.vwap, vol.dayRatio, vol.threshold, vol.recent5Ratio, vol.detail,
                 intradaySummary.summaryText, fullDaySummary.summaryText);
+        // 【2026-09-27新增·Claude，修复"PENDING状态期间VWAP/水线/量比冻结导致排行榜引用旧数据"
+        // bug】这三个数值原来只被拼进上面的summaryText给日志用，从不对外暴露——调用方
+        // （RealtimeMonitorService的PENDING分支）因此没法把这次新算出来的值回写到
+        // WatchlistManager.updateLiveMetrics()，候选池卡片/AI复核/排行榜三处消费方读到的
+        // 一直是信号最初触发那一刻就冻结住的旧值。返回类型改成MetricsSnapshot后，
+        // 调用方就能把snap.waterLine/vwap/volRatio也一并回写，不再冻结。
+        return snap;
     }
 
     // ══════════════════════════════════════════
@@ -814,8 +914,10 @@ public class TradingRuleEngine {
         int aboveMinutes = countConsecutiveAboveVwap(minutePoints);
         int requiredMinutes = Math.max(mCfg.vwapConfirmMinutes, mCfg.fullConfirmMinutes);
         if (aboveMinutes < requiredMinutes) {
+            // 【2026-09-28修正·问题10.4】原文案写"放量"，但826行已取消放量门槛，这里从未检查过放量；
+            // 修正为准确描述已通过的三项条件，避免误导后续AI复核。
             result.note = String.format(Locale.CHINA,
-                    "技术条件（吃影线%.0f%%/水线/VWAP/放量）均已达标，正在累计站稳VWAP时长：已持续%d分钟，需满%d分钟才确认满仓",
+                    "已吃影线%.0f%%/已破水线/已站上VWAP（买入侧不要求放量），正在累计站稳VWAP时长：已持续%d分钟，需满%d分钟才确认满仓",
                     eaten * 100, aboveMinutes, requiredMinutes);
             return result;
         }
@@ -824,9 +926,11 @@ public class TradingRuleEngine {
         result.actionLabel = "建议满仓";
         result.triggerPrice = quote.price;
         result.notifyImmediate = true;
+        // 【2026-09-28修正·问题10.4】原文案写"+放量(...)"，但满仓早已不检查放量（见上方26行注释）；
+        // 改为标注实际检查过的"连续站稳VWAP分钟数"，量比只作背景保留在括号里，不再表述为已满足的条件。
         result.note = String.format(Locale.CHINA,
-                "【%s】当日吃掉上影线%.0f%%(阈值%.0f%%，形态日%s)+突破水线¥%.2f+站上VWAP¥%.2f+放量(%s)，全部技术条件满足",
-                result.actionLabel, eaten * 100, mCfg.shadowEatRatio * 100, pattern.date, waterLine, vwap, vol.detail);
+                "【%s】当日吃掉上影线%.0f%%(阈值%.0f%%，形态日%s)+突破水线¥%.2f+连续站稳VWAP¥%.2f达%d分钟，条件全部满足（不要求放量，量比背景：%s）",
+                result.actionLabel, eaten * 100, mCfg.shadowEatRatio * 100, pattern.date, waterLine, vwap, aboveMinutes, vol.detail);
         return result;
     }
 
@@ -1120,7 +1224,14 @@ public class TradingRuleEngine {
             }
             long avgVol = cnt > 0 ? sum / cnt : 0;
             long todayVol = quote.volume > 0 ? quote.volume : 0;
-            v.dayRatio = avgVol > 0 ? (double) todayVol / avgVol : 0;
+            // 【2026-09-28修复·问题10.2】标准"量比"口径的分母是"已开市时间"，之前直接用全天均量当分母，
+            // 导致开盘头一小时的日量比系统性偏低——独立破位（4.2节全天量能闸门）因此更容易被误判成
+            // 缩量破位而降级。现改为按交易时间进度折算（全天240分钟，即两个交易时段各120分钟），
+            // 下限取TradingRuleConfig.volumeProgressFloorMinutes，避免集合竞价刚开盘那几分钟把分母放得过小，
+            // 把噪声放大成"看似放量"。不影响 near5Ratio（本身就是瞬时口径，无需折算）。
+            int elapsedMinutes = Math.max(elapsedTradingMinutes(hour, minute), mCfg.volumeProgressFloorMinutes);
+            double fullDayMinutes = 240.0;
+            v.dayRatio = avgVol > 0 ? (todayVol * fullDayMinutes) / (avgVol * elapsedMinutes) : 0;
 
             if (points != null && points.size() >= 5) {
                 long recent5 = 0;
@@ -1136,6 +1247,19 @@ public class TradingRuleEngine {
             v.detail = "量比计算失败";
         }
         return v;
+    }
+
+    /** 【2026-09-28新增·问题10.2配套】根据当前时分算出今天已经过去多少个"交易分钟"，上午场(9:30-11:30)
+     *  + 下午场(13:00-15:00)合计240分钟。午休期间固定在120（上午场收盘时的进度），收盘后固定在240。 */
+    static int elapsedTradingMinutes(int hour, int minute) {
+        int t = hour * 60 + minute;
+        int morningOpen = 9 * 60 + 30, morningClose = 11 * 60 + 30;
+        int afternoonOpen = 13 * 60, afternoonClose = 15 * 60;
+        if (t < morningOpen) return 0;
+        if (t <= morningClose) return t - morningOpen;
+        if (t < afternoonOpen) return morningClose - morningOpen;
+        if (t <= afternoonClose) return (morningClose - morningOpen) + (t - afternoonOpen);
+        return (morningClose - morningOpen) + (afternoonClose - afternoonOpen);
     }
 
     /**

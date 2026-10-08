@@ -37,6 +37,8 @@ public class WisdomManager {
     private static final int MAX_INJECT_CHARS = 1200;
     /** 【D新增】分时形态经验种子话术的 summary 固定前缀，用于判断这一批是否已经种过 */
     private static final String INTRADAY_SEED_PREFIX = "【分时形态】";
+    /** 【2026-09-27新增·Claude】排行榜对比方法论种子话术的 summary 固定前缀 */
+    private static final String RANKING_SEED_PREFIX = "【排行对比】";
 
     private static WisdomManager sInstance;
     private final SQLiteDatabase mDb;
@@ -59,6 +61,7 @@ public class WisdomManager {
         mDb = new DbHelper(context).getWritableDatabase();
         ensureDefaultWisdom();
         ensureIntradayPatternWisdomSeeded();
+        ensureRankingWisdomSeeded();
         Log.i(TAG, "WisdomManager initialized");
     }
 
@@ -113,6 +116,25 @@ public class WisdomManager {
                 "持仓股涨停时放出巨量要警惕：成交量达到近期日均量3倍以上，往往意味着高位派发出货，不是好事；" +
                         "2-3倍更可能是洗盘。同样是放量，位置不同含义完全相反，低位放量是吸筹，高位放量是出货。",
                 INTRADAY_SEED_PREFIX + "涨停巨量看位置定性质", "WARN_PRESSURE");
+    }
+
+    /**
+     * 【2026-09-27新增·Claude，对应用户"排行榜要有深度对比方法论，不是随便两句话术"的要求】
+     * 补种2条排行榜横向对比相关的经验话术，分类留空（通用），确保排行榜/放量尖角解读等
+     * 走GENERAL的场景都能吃到。判断方式跟ensureIntradayPatternWisdomSeeded()一样，按summary
+     * 固定前缀查是否已种过，不用hasAny()（避免老安装吃不到新知识）。
+     */
+    private void ensureRankingWisdomSeeded() {
+        if (hasSummaryPrefix(RANKING_SEED_PREFIX)) return;
+        Log.i(TAG, "补种排行榜对比方法论话术");
+        addEntry(
+                "横向比较候选股时，全天走势形态比单一时点的涨跌幅更可靠——先抑后扬、低位震荡后企稳的股票，" +
+                        "即使当前涨幅不如单边冲高的股票，往往更值得留意；单边冲高但尾盘缩量的，要警惕获利盘出逃。",
+                RANKING_SEED_PREFIX + "全天形态比单点涨幅可靠", "");
+        addEntry(
+                "候选股如果处于'待确认'挂起状态较久，参考它的水线/VWAP数字时要留意数字新鲜度；" +
+                        "判断时应更倾向相信现价和最近分时形态，而不是单独一个可能滞后的VWAP数字。",
+                RANKING_SEED_PREFIX + "待确认股的指标新鲜度提醒", "");
     }
 
     /** 查是否已经存在以某个前缀开头的话术摘要，用于判断某一批种子话术是否已经种过 */
@@ -217,7 +239,14 @@ public class WisdomManager {
     public String buildInjectBlock(String actionKey) {
         List<WisdomEntry> all = getAll(); // 已按时间倒序
         if (all.isEmpty()) return "";
-        boolean filterByType = actionKey != null && !actionKey.isEmpty();
+        // 【2026-09-27新增·Claude，修复"GENERAL类actionKey导致话术被静默过滤"bug】排行榜/放量
+        // 尖角解读/水下反转解读/分时矛盾校验这几处调用传的actionKey字面量都是"GENERAL"，但教
+        // 话术时AI把某条分类为"通用"，写入端(parseCategoryOrGuess，见LocalAIAgent)会存成空
+        // 字符串而非"GENERAL"这个字面量——库里没有一条话术的分类真的是"GENERAL"，导致这几处
+        // 一直只能命中空分类的那几条，其余按具体判断类型分类的话术全部被静默跳过。这里让
+        // "GENERAL"跟null/空字符串一样视为"不过滤"，四处调用点不用改。
+        boolean filterByType = actionKey != null && !actionKey.isEmpty()
+                && !"GENERAL".equalsIgnoreCase(actionKey);
 
         StringBuilder sb = new StringBuilder("\n【你之前学过的操盘手补充话术（务必参考）】\n");
         int used = sb.length();

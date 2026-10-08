@@ -85,8 +85,12 @@ public class RealtimeMonitorService extends Service {
     // 证明监控确实在跑，不能靠“通知栏还在”来判断
     private static final long SNAPSHOT_INTERVAL_MS = 10 * 60_000; // 10分钟一次（2026-08-30从15分钟调整而来）
     private volatile long mLastSnapshotAt = 0;
-    // 【R10】收盘前排行榜一天只触发一次——用日期字符串去重，跨天自然重置，与R1年底提醒同一模式
+    // 【R10】收盘前排行榜——只有真正成功生成+推送通知后才写入，日期字符串去重，跨天自然重置，
+    // 与R1年底提醒同一模式（2026-09-30起失败不再直接判定"今天已处理过"，见maybeFireCandidateRanking）
     private volatile String mLastRankDate = "";
+    // 【2026-09-30新增·Claude，配合下面的重试修复】防止tick间隔配置得比单次AI推理耗时（实测约90秒）
+    // 还短时，上一次排行榜尝试还没返回结果，就被下一轮tick重复触发一次新的重建快照+抢锁尝试
+    private volatile boolean mRankAttemptInFlight = false;
 
     // 行情双源全部失败时的日志节流：断网期间避免每个tick都刷一条，最多10分钟记一次
     private static final long FETCH_FAIL_LOG_THROTTLE_MS = 10 * 60_000;
@@ -97,6 +101,12 @@ public class RealtimeMonitorService extends Service {
      *  彻底卡死（既不触发onToken也不触发onFinish），这次信号评估也会有明确的“超时不推送”
      *  结论写进决策日志，而不是静默消失。 */
     private static final long AI_VERIFY_TIMEOUT_MS = 180_000; // 3分钟
+    // 【2026-09-30新增·Claude】修复“AI补充分析经常显示‘未能完成补充分析’”问题：
+    // 根因跟R10排行榜那个修复同一类——LocalAIAgent只有一把全局推理锁，用户刚打开
+    // App时往往会触发一批UI驱动的AI调用，比后台静置时更容易撞上锁被占用。之前只
+    // 要撞上一次锁占用就直接判失败、写一句没有具体信息的占位文字，此后不会重试。
+    // 现在遇到锁占用会按这个间隔重试，直到外层AI_VERIFY_TIMEOUT_MS超时为止。
+    private static final long VERIFY_RETRY_DELAY_MS = 2_000;
 
     /** 待AI复核队列的一条记录——规则引擎命中后不直接抢锁，而是先进这个队列，
      *  由下面的单流水线处理器按实际推理速度持续消费，不再跟tick的60秒周期绑定。 */
@@ -227,6 +237,9 @@ public class RealtimeMonitorService extends Service {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
                 .putLong(KEY_LAST_TICK_AT, System.currentTimeMillis()).apply();
 
+        // 【2026-09-28新增·问题10.1配套】每轮tick开头（不分交易时段）先修复历史遗留的"孤儿待确认"状态。
+        repairOrphanPendingItems();
+
         if (!isWithinTradingHours()) {
             // 非交易时段（晚上/凌晨/周末）：不拉行情、不跑规则评估、不发通知。行情根本没变，
             // 拉了也只是重复收盘那一刻的旧快照，白白消耗网络和电量。只更新一下监控面板
@@ -312,9 +325,9 @@ public class RealtimeMonitorService extends Service {
                         // computeMetricsOnly()注释。
                         List<RealtimeQuoteManager.MinutePoint> pendingCachedPoints =
                                 RealtimeQuoteManager.get().getCachedMinuteLine(item.code);
-                        String pendingMetrics = mEngine.computeMetricsOnly(
+                        TradingRuleEngine.MetricsSnapshot pendingSnap = mEngine.computeMetricsOnly(
                                 item.code, pendingQuote, pendingCachedPoints, mEngine.getPrevDayRef(item.code));
-                        String line = buildSnapshotLine(item, pendingQuote, pendingHolding, pendingHoldCost, judgment, pendingMetrics);
+                        String line = buildSnapshotLine(item, pendingQuote, pendingHolding, pendingHoldCost, judgment, pendingSnap.summaryText);
                         if (line != null) DecisionLogger.get().logMonitorLine(item.code, item.name, line);
                     }
                     // 【2026-09-16修复：持仓页待确认信号期间止损价消失、分时图不刷新】待确认状态下
@@ -330,11 +343,31 @@ public class RealtimeMonitorService extends Service {
                         try {
                             TradingRuleEngine.PrevDayRef pendingPrevDay = mEngine.getPrevDayRef(item.code);
                             if (pendingPrevDay.hasData) {
-                                double[] prevMetrics = WatchlistManager.get().getLiveMetrics(item.code);
-                                double keepWaterLine = prevMetrics != null && prevMetrics.length > 0 ? prevMetrics[0] : 0;
-                                double keepVwap = prevMetrics != null && prevMetrics.length > 1 ? prevMetrics[1] : 0;
-                                double keepVolRatio = prevMetrics != null && prevMetrics.length > 2 ? prevMetrics[2] : 0;
-                                WatchlistManager.get().updateLiveMetrics(item.code, keepWaterLine, keepVwap, keepVolRatio, pendingPrevDay.prevLow);
+                                // 【2026-09-27修复·Claude，修复"PENDING状态期间VWAP/水线/量比冻结导致
+                                // 排行榜引用旧数据"bug】之前这里读旧缓存原样回填(keepWaterLine/keepVwap/
+                                // keepVolRatio)，只有prevLow真正刷新——候选池卡片/AI复核/排行榜三处消费方
+                                // 读到的水线/VWAP/量比因此一直冻结在信号最初触发那一刻，可能是几小时
+                                // 前。现改用computeMetricsOnly()（只读、不涉及状态判定，PENDING场景下可
+                                // 放心调用，就是下面dueForSnapshot那段日志用的同一个方法）现算一份
+                                // 新鲜快照，每轮tick（约2分钟）都会刷新，而不是只在10分钟一次的快照
+                                // 周期才有机会更新。这不会让PENDING提前"确认"或触发新买卖信号——
+                                // 本分支仍然不会重新调用完整evaluate()，状态机判定完全不受影响，只是
+                                // 展示用的数字更新了。
+                                List<RealtimeQuoteManager.MinutePoint> freshPoints =
+                                        RealtimeQuoteManager.get().getCachedMinuteLine(item.code);
+                                TradingRuleEngine.MetricsSnapshot freshSnap =
+                                        mEngine.computeMetricsOnly(item.code, pendingQuote, freshPoints, pendingPrevDay);
+                                // 兜底：新算出来的值取不到(=0，比如分时缓存暂时为空且成交额/量也为0、或量比历史数据不足)时，
+                                // 保留上一次已知值，不无谓地清零——这也是原来这段代码注释里写明的初衷。
+                                double[] oldMetrics = WatchlistManager.get().getLiveMetrics(item.code);
+                                double oldWaterLine = oldMetrics != null && oldMetrics.length > 0 ? oldMetrics[0] : 0;
+                                double oldVwap = oldMetrics != null && oldMetrics.length > 1 ? oldMetrics[1] : 0;
+                                double oldVolRatio = oldMetrics != null && oldMetrics.length > 2 ? oldMetrics[2] : 0;
+                                WatchlistManager.get().updateLiveMetrics(item.code,
+                                        freshSnap.waterLine > 0 ? freshSnap.waterLine : oldWaterLine,
+                                        freshSnap.vwap > 0 ? freshSnap.vwap : oldVwap,
+                                        freshSnap.volRatio > 0 ? freshSnap.volRatio : oldVolRatio,
+                                        pendingPrevDay.prevLow);
                             }
                         } catch (Exception e) {
                             Log.w(TAG, "待确认状态刷新止损价失败: " + item.code, e);
@@ -348,6 +381,10 @@ public class RealtimeMonitorService extends Service {
                                 // 就让这段时间的分时数据在历史回看里出现空档。
                                 try { FenshiHistoryManager.get().saveDaySnapshot(item.code, item.name, pendingQuote.prevClose, points); }
                                 catch (Exception ignored) {}
+                                // 【2026-10-01新增】用刚拉到的最新分时，把这条待确认的买入信号重新验证一遍，
+                                // 条件已不成立（含被抛压否决）就自动撤回，不让候选池一直挂着触发时刻的旧结论。
+                                try { revalidatePendingBuy(item, pendingQuote, points); }
+                                catch (Exception e) { Log.w(TAG, "待确认买入信号复验失败: " + item.code, e); }
                             }
                             @Override public void onError(String code, String msg) {
                                 // 【2026-09-22修复：待确认状态期间分时数据失败查不到原因】这里之前只写Log.w，
@@ -443,10 +480,19 @@ public class RealtimeMonitorService extends Service {
                 || WatchlistManager.STATUS_PENDING_STOP.equals(status);
     }
 
-    /** 【R10】每个交易日收盘前20分钟（14:40-14:41窗口）触发一次候选池AI排行榜，一天
-     *  只触发一次（用日期字符串去重，跨天自然重置，与R1年底提醒同一模式）。模型未就绪或
-     *  候选池为空时LocalAIAgent/buildCandidateSnapshotText会直接报错或返回null，这里只静静跳过，
-     *  不影响主流程。 */
+    /** 【R10】每个交易日收盘前20分钟到收盘前，每轮tick检查一次是否需要生成候选池AI排行榜，
+     *  成功生成并推送通知后才算"今天完成"（用日期字符串去重，跨天自然重置，与R1年底提醒
+     *  同一模式）；候选池为空、模型未就绪、AI推理锁被占用等失败情形都不消耗当天名额，
+     *  窗口内下一轮tick会自动重试——不再是"试一次不管成不成都不会再试第二次"。
+     *  【2026-09-30修复·Claude，对应"App一直在前台使用时排行榜不弹通知"的排查结果】之前
+     *  mLastRankDate在调用AI之前就写入，只要第一次尝试撞上LocalAIAgent那把全局唯一的推理锁
+     *  被占用（聊天/AI分析审核队列/分时形态校验/逐支信号复核都会抢这把锁），就会永久跳过
+     *  当天剩下所有tick，失败原因原来只打了一行Log，用户完全看不到。这恰好和"人正在操作App"
+     *  强相关——前台操作本身就会触发更多抢锁的AI调用，比后台静置时更容易撞上，导致排行榜
+     *  和它唯一的通知机会一起消失。现在只有onComplete里真正落库成功后才写mLastRankDate，
+     *  onError会把失败原因也记一条到DecisionLogger（原来只有Logcat能看到）；另加
+     *  mRankAttemptInFlight防止tick间隔小于单次推理耗时（实测约90秒）时，上一次还没返回
+     *  结果就被下一轮tick重复触发。 */
     private void maybeFireCandidateRanking() {
         java.util.Calendar cal = java.util.Calendar.getInstance();
         int minutesNow = cal.get(java.util.Calendar.HOUR_OF_DAY) * 60 + cal.get(java.util.Calendar.MINUTE);
@@ -459,19 +505,22 @@ public class RealtimeMonitorService extends Service {
         if (minutesNow < 14 * 60 + 40 || minutesNow >= closeMinutes) return;
         String today = new java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.CHINA).format(new java.util.Date());
         if (today.equals(mLastRankDate)) return;
-        mLastRankDate = today;
+        if (mRankAttemptInFlight) return; // 上一轮tick触发的尝试还没返回，避免重复重建快照、重复抢锁
 
         final java.util.Map<String, CandidateIndicators> indicators = new java.util.HashMap<>();
         String snapshot = buildCandidateSnapshotText(indicators);
         if (snapshot == null) {
-            Log.i(TAG, "候选池排行榜：候选池为空，今日跳过");
+            Log.i(TAG, "候选池排行榜：候选池当前为空，本轮跳过（不消耗当天名额，下一轮tick再看）");
             return;
         }
+        mRankAttemptInFlight = true;
         final String rankDate = today;
         LocalAIAgent.get(getApplicationContext()).rankCandidatesBeforeClose(snapshot, new LocalAIAgent.AICallback() {
             @Override public void onToken(String token) {}
             @Override
             public void onComplete(String fullText) {
+                mRankAttemptInFlight = false;
+                mLastRankDate = rankDate; // 只有真正成功之后才标记"今天处理过"，避免占用当天唯一名额却没产出结果
                 try {
                     String toSave = buildRankingJson(fullText, indicators);
                     DatabaseManager.get().saveCandidateRanking(rankDate, toSave != null ? toSave : fullText);
@@ -483,7 +532,11 @@ public class RealtimeMonitorService extends Service {
             }
             @Override
             public void onError(String msg) {
-                Log.w(TAG, "候选池排行榜生成失败: " + msg);
+                mRankAttemptInFlight = false;
+                Log.w(TAG, "候选池排行榜本轮生成失败: " + msg + "，不消耗当天名额，下一轮tick自动重试");
+                try {
+                    DecisionLogger.get().logNote("候选池排行榜本轮生成失败（" + msg + "），下一轮tick自动重试，非最终结果");
+                } catch (Exception ignored) {}
             }
         });
     }
@@ -501,12 +554,22 @@ public class RealtimeMonitorService extends Service {
      *  做排序判断的一方），价格/涨跌幅/技术指标摘要/持仓状态来自程序实时计算（不依赖AI“记得住”
      *  数字），JSON存库后前端就能分“股票信息/技术指标/AI分析”三栏渲染，不用再整段甩给用户读。
      *  任何一块解析失败不影响其他块，最后解析不出任何一条时返回null，调用方回退成保存AI原始
-     *  文本，不会让排行榜彻底显示空白。 */
+     *  文本，不会让排行榜彻底显示空白。
+     *  【2026-09-30放宽·Claude，对应用户实测发现“排行榜展示的是一整段没有分栏的原始文字”的
+     *  问题】原正则要求“股票：”这个字面前缀必须存在、且字段之间必须是真实换行——但实测中4B
+     *  模型输出十几支股票时经常把“股票：”这个label省略掉，字段间的换行也会被压缩成空格，变成
+     *  “贵州茅台(600519) 评分：78 理由：xxx 五粮液(000858) 评分：…”这种连成一片的自然语言。
+     *  旧正则遇到这种情况一条都解析不出来，只能整段兜底展示，用户完全看不到分栏卡片。这里把
+     *  “股票：”前缀改成可选，字段之间的分隔从“必须换行”放宽成“换行或空格都行”，只要“名称
+     *  (代码)…评分：数字…理由：…”这个核心结构还在，不管有没有换行、有没有“股票：”前缀都能
+     *  解析出来；找“下一块从哪开始”也不再依赖“股票：”这个前缀，改成直接找“名称(代码)…评分：”
+     *  这个更稳定、不容易在理由正文里意外出现的组合。 */
     private String buildRankingJson(String aiText, java.util.Map<String, CandidateIndicators> indicators) {
         if (aiText == null) return null;
         org.json.JSONArray arr = new org.json.JSONArray();
         java.util.regex.Pattern blockPattern = java.util.regex.Pattern.compile(
-                "股票[：:]\\s*(.+?)\\(([0-9A-Za-z]+)\\)\\s*[\\r\\n]+评分[：:]\\s*(\\d+)\\s*[\\r\\n]+理由[：:]\\s*(.+?)(?=股票[：:]|$)",
+                "(?:股票[：:]\\s*)?([^()（）\\n]{1,24}?)[\\(（]\\s*([0-9A-Za-z]{5,8})\\s*[\\)）]\\s*评分[：:]\\s*(\\d+)\\s*理由[：:]\\s*(.+?)" +
+                        "(?=[^()（）\\n]{1,24}?[\\(（]\\s*[0-9A-Za-z]{5,8}\\s*[\\)）]\\s*评分[：:]|$)",
                 java.util.regex.Pattern.DOTALL);
         java.util.regex.Matcher m = blockPattern.matcher(aiText);
         while (m.find()) {
@@ -564,18 +627,52 @@ public class RealtimeMonitorService extends Service {
     /** 【R10】把当前具备买入条件或持仓中的候选股拼成AI能直接读懂的文本快照，全部取自
      *  WatchlistManager已经落库的最新状态（lastNote字段本身就是上一轮evaluate()算好的人话），
      *  不重新发网络请求、不重新跑一遍规则引擎，与tick节奏解耦。返回null表示候选池为空，
-     *  调用方不应该再去调AI。 */
+     *  调用方不应该再去调AI。
+     *  【2026-09-30修复·Claude，对应用户实测发现"排行榜展示不全，理由从中间被截断"的问题】
+     *  之前候选股数量不设上限，全部塞进同一次AI调用——本地 4B 模型单次推理的长度预算有限，
+     *  候选池一多（持仓+待确认+观察中带理由的，加起来经常十几支），每支还要带现价/涨跌幅/
+     *  水线/双重VWAP/量比/近期形态摘要/全天走势摘要好几项数据，prompt本身已经不短，
+     *  加上要求AI对每支都完整输出三行评分理由，合计很容易超出单次推理实际能稳定生成完的
+     *  长度，导致输出讲到中间某一支时戛然而止（比如"现价19."后面就没有了）。这里按重要性
+     *  分两级选取：持仓中/已有待确认信号的股票是今天真正要做决策的，不设上限全部保留；
+     *  只是"观察中"、还没触发任何信号的候选，按RANK_CANDIDATE_CAP截取最靠前的若干支，
+     *  超出部分不参与这一次排行（不是丢弃，明天该怎么触发规则还是怎么触发，只是不占用
+     *  这次的篇幅）。 */
+    private static final int RANK_CANDIDATE_CAP = 10;
+
     private String buildCandidateSnapshotText(java.util.Map<String, CandidateIndicators> indicatorsOut) {
-        List<WatchlistManager.WatchlistItem> items = WatchlistManager.get().getActiveWatchlist();
+        List<WatchlistManager.WatchlistItem> allItems = WatchlistManager.get().getActiveWatchlist();
+        List<WatchlistManager.WatchlistItem> priorityItems = new java.util.ArrayList<>();
+        List<WatchlistManager.WatchlistItem> watchOnlyItems = new java.util.ArrayList<>();
+        for (WatchlistManager.WatchlistItem it : allItems) {
+            Position p0 = DatabaseManager.get().getPositionByCode(it.code);
+            boolean holding0 = p0 != null && p0.getQuantity() > 0;
+            if (holding0 || isPendingStatus(it.status)) {
+                priorityItems.add(it);
+            } else if (WatchlistManager.STATUS_WATCHING.equals(it.status)
+                    && it.lastNote != null && !it.lastNote.isEmpty()) {
+                watchOnlyItems.add(it);
+            }
+        }
+        List<WatchlistManager.WatchlistItem> items = new java.util.ArrayList<>(priorityItems);
+        int remainSlots = RANK_CANDIDATE_CAP - items.size();
+        int excludedCount = 0;
+        for (WatchlistManager.WatchlistItem w : watchOnlyItems) {
+            if (remainSlots > 0 && items.size() - priorityItems.size() < remainSlots) {
+                items.add(w);
+            } else {
+                excludedCount++;
+            }
+        }
+        if (excludedCount > 0) {
+            Log.i(TAG, "候选池排行榜：候选股共" + allItems.size() + "支，仅观察未持仓/未触发信号的超出篇幅上限，"
+                    + excludedCount + "支本次未参与排行（明日仍会正常参与规则评估）");
+        }
         StringBuilder sb = new StringBuilder();
         int n = 0;
         for (WatchlistManager.WatchlistItem item : items) {
             Position pos = DatabaseManager.get().getPositionByCode(item.code);
             boolean holding = pos != null && pos.getQuantity() > 0;
-            boolean relevant = holding || isPendingStatus(item.status)
-                    || (WatchlistManager.STATUS_WATCHING.equals(item.status)
-                        && item.lastNote != null && !item.lastNote.isEmpty());
-            if (!relevant) continue;
 
             // 【核心修复】持仓/T+1状态：明确写成一句话交给AI，不能让AI从status枚举自己猜——之前
             // “已买入、T+1不可卖”这个事实完全没有出现在给AI的文本里，规则引擎的旧理由文案
@@ -791,6 +888,22 @@ public class RealtimeMonitorService extends Service {
         }
 
         String actionKey = TradingRuleEngine.actionToKey(result.action);
+        // 【2026-09-28新增·问题10.3】用户此前"忽略"过同类信号且仍在冷却期 → 不再标记待确认/推送/入AI队列。
+        // 之前忽略只回退状态，条件仍成立的话下一轮tick（2分钟后）就会再推一次。
+        if (isDismissCooldownActive(item, actionKey)) {
+            WatchlistManager.get().updateNote(item.code, result.note + "（此前已被你忽略，冷却中，暂不重复推送）");
+            Log.i(TAG, "规则命中但用户已忽略且在冷却期，不重复推送: " + item.code + " " + result.actionLabel);
+            return buildSnapshotLine(item, quote, holding, holdCost,
+                    result.actionLabel + "（已忽略，冷却中，暂不重复推送）", result.metrics);
+        }
+        // 【2026-10-01新增】刚因"条件失效"被系统撤回过的同类买入信号，短时间内不重复推送，
+        // 防止条件在阈值附近来回抖动时反复弹出（与用户的"忽略"无关）。
+        if (isWithdrawCooldownActive(item.code, actionKey)) {
+            WatchlistManager.get().updateNote(item.code, result.note + "（刚因条件失效撤回过同类信号，冷却中，暂不重复推送）");
+            Log.i(TAG, "规则命中但刚撤回过同类买入信号，冷却中: " + item.code + " " + result.actionLabel);
+            return buildSnapshotLine(item, quote, holding, holdCost,
+                    result.actionLabel + "（刚撤回过，冷却中，暂不重复推送）", result.metrics);
+        }
         Log.i(TAG, "【规则命中·立即推送】" + item.name + "(" + item.code + ") " + result.actionLabel);
 
         WatchlistManager.get().markPending(item.code, actionKey, result.triggerPrice, result.note);
@@ -1001,6 +1114,12 @@ public class RealtimeMonitorService extends Service {
         PendingVerify pv = new PendingVerify();
         pv.item = item; pv.actionKey = actionKey; pv.result = result; pv.quote = quote; pv.pos = pos;
         pv.queuedAt = System.currentTimeMillis();
+        // 【2026-10-01新增】把markPending刚写入的pending_at记到这条信号的快照上，AI复核/结果回填时
+        // 据此判断"这还是不是当初那一条待确认信号"（被忽略/撤回后又冒出的新信号不能被旧结论覆盖）。
+        try {
+            WatchlistManager.WatchlistItem curPending = WatchlistManager.get().getByCode(item.code);
+            if (curPending != null) item.pendingAt = curPending.pendingAt;
+        } catch (Exception ignored) {}
         mVerifyQueue.put(item.code, pv);
         processQueueIfIdle();
     }
@@ -1029,13 +1148,11 @@ public class RealtimeMonitorService extends Service {
     }
 
     /** 实际发起一次AI复核调用——逻辑与之前直接内联在evaluateAndAct里的一样，只是改为从队列取数据，
-     *  并在所有完成分支都改调onVerifyDone()推进队列，而不是直接return。 */
+     *  并在所有完成分支都改调onVerifyDone()推进队列，而不是直接return。实际请求发起交给
+     *  attemptVerify()，这里只建立3分钟外层超时。 */
     private void doVerify(PendingVerify pv) {
         WatchlistManager.WatchlistItem item = pv.item;
-        String actionKey = pv.actionKey;
         TradingRuleEngine.RuleResult result = pv.result;
-        RealtimeQuoteManager.Quote quote = pv.quote;
-        Position pos = pv.pos;
 
         final boolean[] handled = {false};
         Runnable timeoutRunnable = () -> {
@@ -1050,6 +1167,31 @@ public class RealtimeMonitorService extends Service {
             onVerifyDone();
         };
         mHandler.postDelayed(timeoutRunnable, AI_VERIFY_TIMEOUT_MS);
+
+        attemptVerify(pv, handled, timeoutRunnable, System.currentTimeMillis());
+    }
+
+    // 【2026-09-30新增·Claude】真正发起verifySignal的一次尝试。遇到锁被占用这种瞬时
+    // 错误时不直接认输，隔VERIFY_RETRY_DELAY_MS重试，直到外层超时为止——抢锁失败
+    // 大多是瞬时争用，等一下通常就能轮到。真放弃时不再只写一句没信息量的
+    // 占位文字，改成把result.note（规则引擎自己的具体数字依据）一并带出。
+    private void attemptVerify(PendingVerify pv, boolean[] handled, Runnable timeoutRunnable, long firstAttemptAt) {
+        WatchlistManager.WatchlistItem item = pv.item;
+        String actionKey = pv.actionKey;
+        TradingRuleEngine.RuleResult result = pv.result;
+        RealtimeQuoteManager.Quote quote = pv.quote;
+        Position pos = pv.pos;
+
+        // 【2026-10-01新增】每次尝试前（含锁占用后的重试）先确认这条信号还在待确认：排队/重试期间它可能已被你
+        // 忽略/确认，或被系统因条件失效撤回——再花一分多钟推理毫无意义，还会占着单流水线让后面的信号排得更久。
+        if (!isSignalStillPending(item.code, actionKey, item.pendingAt)) {
+            if (handled[0]) return;
+            handled[0] = true;
+            mHandler.removeCallbacks(timeoutRunnable);
+            Log.i(TAG, "AI复核跳过（信号已被处理或失效撤回）: " + item.code + " " + result.actionLabel);
+            onVerifyDone();
+            return;
+        }
 
         LocalAIAgent.get(getApplicationContext()).verifySignal(
                 item.code, item.name, actionKey, result.actionLabel, result.note, result.metrics, quote, pos,
@@ -1069,12 +1211,20 @@ public class RealtimeMonitorService extends Service {
                     @Override
                     public void onError(String msg) {
                         if (handled[0]) return;
+                        boolean lockBusy = msg != null && msg.contains("AI正在思考中");
+                        long elapsed = System.currentTimeMillis() - firstAttemptAt;
+                        if (lockBusy && elapsed < AI_VERIFY_TIMEOUT_MS - VERIFY_RETRY_DELAY_MS) {
+                            mHandler.postDelayed(
+                                    () -> attemptVerify(pv, handled, timeoutRunnable, firstAttemptAt),
+                                    VERIFY_RETRY_DELAY_MS);
+                            return;
+                        }
                         handled[0] = true;
                         mHandler.removeCallbacks(timeoutRunnable);
                         Log.w(TAG, "AI补充分析不可用: " + msg);
                         LocalAIAgent.VerifyResult vr = new LocalAIAgent.VerifyResult();
                         vr.confirmed = false;
-                        vr.reason = "AI未能完成补充分析（" + msg + "），规则推送仍然有效，请自行判断";
+                        vr.reason = "AI未能完成补充分析（" + msg + "），规则依据：" + result.note;
                         vr.fullText = "AI_ERROR: " + msg;
                         handleAiAnalysisComplete(item, result, vr, vr.fullText);
                         onVerifyDone();
@@ -1091,27 +1241,219 @@ public class RealtimeMonitorService extends Service {
     private void handleAiAnalysisComplete(WatchlistManager.WatchlistItem item,
                                            TradingRuleEngine.RuleResult result,
                                            LocalAIAgent.VerifyResult vr, String aiFullText) {
-        WatchlistManager.get().updatePendingAiResult(
-                item.code, vr.confirmed, vr.reason, aiFullText);
+        String actionKey = TradingRuleEngine.actionToKey(result.action);
+        // 【2026-10-01新增·问题：忽略后又弹出"AI已确认"】AI回来时（本地模型一次推理要一分多钟，排队更久），
+        // 这条信号可能早已被你忽略/确认、被系统因条件失效撤回，甚至被一条新信号取代。之前这里不做任何检查，
+        // AI结论照样回填，并照发"AI已确认"通知——对一条你早已处理掉的信号，用的还是触发那一刻的旧价格。
+        // 现在先校验：已不在待确认的，只存档，不回填卡片、不发通知。
+        if (!isSignalStillPending(item.code, actionKey, item.pendingAt)) {
+            try {
+                DecisionLogger.get().logAiSupplement(
+                        item.name, item.code, result.actionLabel + "（信号已处理/失效，AI结论仅存档）",
+                        vr.confirmed, vr.reason, aiFullText);
+            } catch (Exception e) {
+                Log.e(TAG, "写AI补充日志失败", e);
+            }
+            Log.i(TAG, "AI结论到达时信号已不在待确认，仅存档不回填不通知: " + item.code + " " + result.actionLabel);
+            return;
+        }
+
+        // 价格偏离校验（仅买入类）：AI用的是触发那一刻的数据，现价已明显低于触发价时，"支持"就是过期结论。
+        boolean confirmed = vr.confirmed;
+        String reason = vr.reason;
+        if (confirmed && buyRank(actionKey) > 0 && result.triggerPrice > 0) {
+            RealtimeQuoteManager.Quote nowQuote = RealtimeQuoteManager.get().getCachedQuote(item.code);
+            double maxDrift = TradingRuleConfig.get().aiConfirmMaxDriftPct;
+            if (nowQuote != null && nowQuote.price > 0) {
+                double drift = (nowQuote.price - result.triggerPrice) / result.triggerPrice;
+                if (drift <= -maxDrift) {
+                    confirmed = false;
+                    reason = String.format(java.util.Locale.CHINA,
+                            "【AI结论已过期】AI基于触发时的数据给出支持，但现价¥%.2f已较触发价¥%.2f下跌%.2f%%（超过%.1f%%），不再视为确认。原结论：%s",
+                            nowQuote.price, result.triggerPrice, -drift * 100, maxDrift * 100, vr.reason);
+                }
+            }
+        }
+
+        WatchlistManager.get().updatePendingAiResult(item.code, confirmed, reason, aiFullText);
 
         try {
             DecisionLogger.get().logAiSupplement(
                     item.name, item.code, result.actionLabel,
-                    vr.confirmed, vr.reason, aiFullText);
+                    confirmed, reason, aiFullText);
         } catch (Exception e) {
             Log.e(TAG, "写AI补充日志失败", e);
         }
 
-        if (vr.confirmed) {
+        if (confirmed) {
             try {
-                fireConfirmedAlert(this, item.code, item.name, result.actionLabel, vr.reason, result.triggerPrice);
+                fireConfirmedAlert(this, item.code, item.name, result.actionLabel, reason, result.triggerPrice);
             } catch (Exception e) {
                 Log.e(TAG, "发送AI确认通知失败", e);
             }
         }
 
         Log.i(TAG, "AI补充分析完成: " + item.code + " "
-                + result.actionLabel + " " + (vr.confirmed ? "支持" : "存疑"));
+                + result.actionLabel + " " + (confirmed ? "支持" : "存疑"));
+    }
+
+    /**
+     * 【2026-09-28新增·问题10.1配套】修复历史遗留的"孤儿待确认"行（status是PENDING_*但pending_action为空）。
+     * 这类行只会由修复前"确认抛压预警"产生（见WatchlistManager.confirmPending），这只票会永久被
+     * isPendingStatus当成"待确认"而跳过规则引擎，完全失去止损监控。
+     * 还原规则（prev_status已被清空，只能推断）：没有持仓→WATCHING；有持仓→按已记录的成交价推断最高阶段
+     * （满仓价>0→FULL，加仓价>0→ADDED，否则STARTER）。阶段推断可能高估（比如上一轮周期的加仓价残留），
+     * 只影响后续还会不会推加仓/满仓信号，不影响止损监控（三个持仓态的止损评估一样）。幂等：修复后不再命中。
+     */
+    private void repairOrphanPendingItems() {
+        try {
+            List<WatchlistManager.WatchlistItem> orphans = WatchlistManager.get().getOrphanPendingItems();
+            for (WatchlistManager.WatchlistItem it : orphans) {
+                Position pos = DatabaseManager.get().getPositionByCode(it.code);
+                boolean holding = pos != null && pos.getQuantity() > 0;
+                String restore;
+                if (!holding) restore = WatchlistManager.STATUS_WATCHING;
+                else if (it.fullPrice > 0) restore = WatchlistManager.STATUS_FULL;
+                else if (it.addedPrice > 0) restore = WatchlistManager.STATUS_ADDED;
+                else restore = WatchlistManager.STATUS_STARTER;
+                String note = "【自动修复·2026-09-28】检测到状态卡在" + it.status
+                        + "（待确认信号已处理但状态未还原，监控一直被跳过），已还原为" + restore + "并恢复止损/加仓评估";
+                WatchlistManager.get().restoreStatus(it.code, restore, note);
+                Log.w(TAG, it.name + "(" + it.code + ") " + note);
+                DecisionLogger.get().logNote(it.code, it.name, note);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "修复孤儿待确认状态失败", e);
+        }
+    }
+
+    /**
+     * 【2026-09-28新增·问题10.3】用户此前"忽略"过同类信号时，本次命中是否仍在冷却期。
+     * · 仅比对同一动作（ADD_POSITION视为ADD_HALF）：忽略了抛压预警，不影响之后的止损信号；
+     * · 冷却不跨交易日，次日重新计算；
+     * · 买入类（底仓/加仓/满仓）：当日不再重复推送（用户已定了今天不买）；
+     * · 卖出类（抛压预警/止损）涉及资金安全，只冷却dismissSellCooldownMinutes分钟，之后条件仍成立就再提醒。
+     */
+    private boolean isDismissCooldownActive(WatchlistManager.WatchlistItem item, String actionKey) {
+        if (item.dismissedAction == null || item.dismissedAt <= 0) return false;
+        if (!normalizeActionKey(item.dismissedAction).equals(normalizeActionKey(actionKey))) return false;
+        long now = System.currentTimeMillis();
+        if (!isSameCalendarDay(item.dismissedAt, now)) return false;
+        boolean sellSide = "WARN_PRESSURE".equals(actionKey) || "STOP_LOSS".equals(actionKey);
+        if (!sellSide) return true;
+        long cooldownMs = TradingRuleConfig.get().dismissSellCooldownMinutes * 60_000L;
+        return now - item.dismissedAt < cooldownMs;
+    }
+
+    // ════════════════════════════════════════════════
+    // 【2026-10-01新增】信号时效：待确认买入信号每轮复验/失效撤回，AI结果落地前校验
+    // ════════════════════════════════════════════════
+
+    /** 因条件失效被系统撤回的买入信号，同一动作的短暂冷却，防止条件在阈值附近来回抖动时反复弹出。
+     *  与用户的"忽略"无关；只存内存，进程重启即清零。 */
+    private static final long BUY_WITHDRAW_COOLDOWN_MS = 10 * 60_000L;
+    private final java.util.Map<String, Long> mBuyWithdrawnAt = new java.util.concurrent.ConcurrentHashMap<>();
+
+    // 买入类动作的强弱：底仓1 → 加仓2 → 满仓3；非买入类（NONE/止损/抛压预警）返回0。
+    private static int buyRank(String key) {
+        if ("BUY_STARTER".equals(key)) return 1;
+        if ("ADD_HALF".equals(key) || "ADD_POSITION".equals(key)) return 2;
+        if ("BUY_FULL".equals(key)) return 3;
+        return 0;
+    }
+
+    private boolean isWithdrawCooldownActive(String code, String actionKey) {
+        if (buyRank(actionKey) == 0) return false;
+        Long t = mBuyWithdrawnAt.get(code + ":" + normalizeActionKey(actionKey));
+        return t != null && System.currentTimeMillis() - t < BUY_WITHDRAW_COOLDOWN_MS;
+    }
+
+    /** 这条信号此刻是否仍处于"待确认"，且还是当初那一条（没被你忽略/确认、没被系统撤回、
+     *  没被同一只票的新信号取代）。pendingAt<=0时不校验时间戳。 */
+    private boolean isSignalStillPending(String code, String actionKey, long pendingAt) {
+        WatchlistManager.WatchlistItem cur = WatchlistManager.get().getByCode(code);
+        if (cur == null || cur.pendingAction == null || !isPendingStatus(cur.status)) return false;
+        if (!normalizeActionKey(cur.pendingAction).equals(normalizeActionKey(actionKey))) return false;
+        return pendingAt <= 0 || cur.pendingAt == pendingAt;
+    }
+
+    /**
+     * 【2026-10-01新增·问题：候选池里的买入决策挂着不动，盘面早已变了】
+     * 待确认的买入类信号（底仓/加仓/满仓）原先触发后就不再重新判定，卡片会一直挂着触发那一刻的结论，
+     * 直到你手动点掉——这期间盘面可能已经放量下杀。现在每轮tick用最新行情+最新分时，把"触发前状态"
+     * 重新跑一遍完整规则（含抛压否决）：买入条件不再成立（或降级）→ 自动撤回（还原状态、撤掉通知、
+     * 备注写明原因），不记为你的"忽略"。跨交易日的待确认买入信号直接失效。
+     * 只读复验：evaluate()内部对状态是拷贝，结果不落库；复验期间买入逻辑追踪日志被抑制，
+     * 避免一条挂着的信号每轮在日志里重复"命中"。卖出类信号（止损/抛压预警）涉及资金安全，不自动撤销。
+     * 刻意保守：行情/分时/昨日参考数据任一缺失，一律不撤回（宁可挂着，也不因数据缺口误撤）。
+     */
+    private void revalidatePendingBuy(WatchlistManager.WatchlistItem snap, RealtimeQuoteManager.Quote quote,
+                                      List<RealtimeQuoteManager.MinutePoint> points) {
+        if (snap == null || quote == null || quote.price <= 0) return;
+        WatchlistManager.WatchlistItem cur = WatchlistManager.get().getByCode(snap.code);
+        if (cur == null || cur.pendingAction == null || !isPendingStatus(cur.status)) return;
+        int pendingRank = buyRank(cur.pendingAction);
+        if (pendingRank == 0) return; // 卖出类不自动撤销
+        if (snap.pendingAt > 0 && cur.pendingAt != snap.pendingAt) return; // 期间已换成新信号
+        if (cur.pendingAt > 0 && !isSameCalendarDay(cur.pendingAt, System.currentTimeMillis())) {
+            withdrawBuySignal(cur, "信号触发于前一个交易日，今天的价位和量能已不是当时的盘面", false);
+            return;
+        }
+        if (points == null || points.size() < 6) return; // 分时数据不足，不判断
+        TradingRuleEngine.PrevDayRef prevDay = mEngine.getPrevDayRef(cur.code);
+        if (prevDay == null || !prevDay.hasData || prevDay.isStale) return;
+        String baseStatus = (cur.prevStatus != null && !isPendingStatus(cur.prevStatus))
+                ? cur.prevStatus : WatchlistManager.STATUS_WATCHING;
+        TradingRuleEngine.DivergenceState trackState = WatchlistManager.get().loadTrackState(cur);
+        TradingRuleEngine.PatternRef pattern = WatchlistManager.get().loadPatternRef(cur);
+        TradingRuleEngine.RuleResult r;
+        DecisionLogger.suppressTraceOnThisThread(true);
+        try {
+            r = mEngine.evaluate(cur.code, baseStatus, quote, points, prevDay, trackState, pattern);
+        } finally {
+            DecisionLogger.suppressTraceOnThisThread(false);
+        }
+        if (r == null || (r.note != null && r.note.contains("安全拦截"))) return;
+        int nowRank = buyRank(TradingRuleEngine.actionToKey(r.action));
+        if (nowRank >= pendingRank) return; // 买入条件仍然成立
+        String why;
+        if (nowRank > 0) {
+            why = "买入条件已降级：当前仅满足「" + r.actionLabel + "」，不再满足原信号";
+        } else {
+            why = (r.note != null && !r.note.isEmpty()) ? r.note : "买入条件已不再成立";
+        }
+        withdrawBuySignal(cur, why, true);
+    }
+
+    /** 撤回一条待确认的买入信号：还原状态、出队、撤掉通知、写决策日志。cooldown=true时登记防抖动冷却。 */
+    private void withdrawBuySignal(WatchlistManager.WatchlistItem cur, String why, boolean cooldown) {
+        String shortWhy = why != null && why.length() > 160 ? why.substring(0, 160) + "…" : why;
+        if (!WatchlistManager.get().withdrawPending(cur.code, cur.pendingAt, shortWhy)) return;
+        if (cooldown) {
+            mBuyWithdrawnAt.put(cur.code + ":" + normalizeActionKey(cur.pendingAction), System.currentTimeMillis());
+        }
+        synchronized (this) { mVerifyQueue.remove(cur.code); }
+        try {
+            getSystemService(NotificationManager.class).cancel(cur.code.hashCode());
+        } catch (Exception ignored) {}
+        try {
+            DecisionLogger.get().logNote(cur.code, cur.name, String.format(java.util.Locale.CHINA,
+                    "【信号失效·系统撤回】原信号%s（触发价¥%.2f）：%s", cur.pendingAction, cur.pendingPrice, why));
+        } catch (Exception ignored) {}
+        Log.i(TAG, "待确认买入信号失效撤回: " + cur.name + "(" + cur.code + ") " + cur.pendingAction + " 原因=" + why);
+    }
+
+    private static String normalizeActionKey(String key) {
+        return "ADD_POSITION".equals(key) ? "ADD_HALF" : key;
+    }
+
+    private static boolean isSameCalendarDay(long t1, long t2) {
+        java.util.Calendar c1 = java.util.Calendar.getInstance();
+        c1.setTimeInMillis(t1);
+        java.util.Calendar c2 = java.util.Calendar.getInstance();
+        c2.setTimeInMillis(t2);
+        return c1.get(java.util.Calendar.YEAR) == c2.get(java.util.Calendar.YEAR)
+                && c1.get(java.util.Calendar.DAY_OF_YEAR) == c2.get(java.util.Calendar.DAY_OF_YEAR);
     }
 
     private boolean shouldNotifyNow(TradingRuleEngine.RuleResult result) {

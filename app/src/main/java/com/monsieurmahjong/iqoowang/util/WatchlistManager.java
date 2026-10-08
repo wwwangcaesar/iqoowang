@@ -29,7 +29,7 @@ public class WatchlistManager {
 
     private static final String TAG = "WatchlistManager";
     private static final String DB_NAME = "watchlist.db";
-    private static final int DB_VERSION = 9;
+    private static final int DB_VERSION = 10; // 【2026-09-28】9→10：新增 dismissed_action / dismissed_at（问题10.3忽略信号冷却）
 
     public static final String STATUS_WATCHING = "WATCHING";
     public static final String STATUS_STARTER = "STARTER";
@@ -161,6 +161,8 @@ public class WatchlistManager {
                     "pending_break_start_time INTEGER," +
                     "pending_break_ref REAL," +
                     "underwater_reversal_notified_key TEXT," +
+                    "dismissed_action TEXT," +
+                    "dismissed_at INTEGER," +
                     "updated_at INTEGER)");
         }
 
@@ -232,6 +234,13 @@ public class WatchlistManager {
                 // 都弹。不用反转点在分时数据里的下标去重，因为下标每个tick都会变。
                 try { db.execSQL("ALTER TABLE watchlist ADD COLUMN underwater_reversal_notified_key TEXT"); } catch (Exception ignored) {}
             }
+            if (o < 10) {
+                // dismissed_action／dismissed_at：【2026-09-28新增·问题10.3】用户"忽略"一条待确认信号时记录被忽略的动作和时间，
+                // 监控服务据此在冷却期内不再重复推送同类信号（买入类当日不再推，卖出类按dismissSellCooldownMinutes冷却）。
+                // 落库而不是内存Map，是因为后台服务进程被系统回收重启是常态，内存状态一重启就丢。
+                try { db.execSQL("ALTER TABLE watchlist ADD COLUMN dismissed_action TEXT"); } catch (Exception ignored) {}
+                try { db.execSQL("ALTER TABLE watchlist ADD COLUMN dismissed_at INTEGER"); } catch (Exception ignored) {}
+            }
         }
     }
 
@@ -266,6 +275,17 @@ public class WatchlistManager {
         Log.i(TAG, "入池: " + name + "(" + code + ") score=" + score + " signal=" + signal
                 + (patternHigh > 0 ? String.format(Locale.CHINA, " 形态日OHLC=%.2f/%.2f/%.2f/%.2f(%s)",
                         patternOpen, patternHigh, patternClose, patternLow, patternDate) : " 无形态日OHLC"));
+        // 【新增，箱体理论方案 12.3 E5-a】之前形态日OHLC只写Logcat，决策日志和候选池页面都看不到，
+        // 想核对"箱体压力／支撑是不是形态日高低点"（H-B0）时只能翻源码。现在有形态日数据就补一条
+        // 决策日志，以后每次入池都能直接在App里核对，不用像这次一样专门去查。只加日志，
+        // 不改买卖判断。
+        if (patternHigh > 0) {
+            try {
+                DecisionLogger.get().logNote(code, name, String.format(Locale.CHINA,
+                        "【入池】信号=%s 评分=%d ｜ 形态日(%s)OHLC：开%.2f 高%.2f 低%.2f 收%.2f",
+                        signal, score, patternDate, patternOpen, patternHigh, patternLow, patternClose));
+            } catch (Exception ignored) {}
+        }
     }
 
     /**
@@ -382,11 +402,57 @@ public class WatchlistManager {
             case "ADD_POSITION": markAdded(code, cur.pendingPrice, cur.pendingReason); break;
             case "BUY_FULL": markFull(code, cur.pendingPrice, cur.pendingReason); break;
             case "WARN_PRESSURE":
-                updateNote(code, "已确认抛压预警：" + cur.pendingReason);
+                // 【2026-09-28修复·问题10.1】之前这里只写备注、不动status，而下面的clearPendingFields也不碰status，
+                // 结果这只票的status永远停在PENDING_WARN（pendingAction已空）→ RealtimeMonitorService把它当成
+                // "待确认"而跳过规则引擎，此后不再评估止损/加仓/满仓。抛压预警本来就没有"状态跃迁"可言，
+                // 确认就应该把状态还原到触发前（prev_status），继续监控。
+                restoreStatus(code, resolveStatusAfterWarn(cur), "已确认抛压预警：" + cur.pendingReason);
                 break;
             case "STOP_LOSS": markStopped(code, cur.pendingReason); break;
         }
         clearPendingFields(code);
+        // 【2026-09-28新增·问题10.3配套】用户已经对这条信号采取处理（确认），此前的"忽略"记录作废。
+        ContentValues cvClear = new ContentValues();
+        cvClear.putNull("dismissed_action");
+        cvClear.putNull("dismissed_at");
+        mDb.update("watchlist", cvClear, "code=?", new String[]{code});
+    }
+
+    /** 【2026-09-28新增·问题10.1】抛压预警确认后要还原到的状态：prev_status（markPending时记录的触发前状态），
+     *  没有或异常地仍是PENDING_*就回到WATCHING——与 dismissPending 的兜底一致，持仓会被
+     *  RealtimeMonitorService.syncPositionsIntoWatchlist 自动拉回持仓态。 */
+    private String resolveStatusAfterWarn(WatchlistItem cur) {
+        String prev = cur.prevStatus;
+        if (prev != null && !isPendingStatusName(prev)) return prev;
+        return STATUS_WATCHING;
+    }
+
+    private static boolean isPendingStatusName(String s) {
+        return STATUS_PENDING_STARTER.equals(s) || STATUS_PENDING_ADD.equals(s) || STATUS_PENDING_FULL.equals(s)
+                || STATUS_PENDING_WARN.equals(s) || STATUS_PENDING_STOP.equals(s);
+    }
+
+    /** 【2026-09-28新增·问题10.1】直接把某只票的status设回指定值并更新备注（不动价格/日期字段，
+     *  区别于markStarter/markAdded/markFull这些会写入成交价的跃迁方法）。 */
+    public void restoreStatus(String code, String status, String note) {
+        ContentValues cv = new ContentValues();
+        cv.put("status", status);
+        if (note != null) cv.put("last_note", note);
+        cv.put("updated_at", System.currentTimeMillis());
+        mDb.update("watchlist", cv, "code=?", new String[]{code});
+    }
+
+    /** 【2026-09-28新增·问题10.1配套】历史遗留"孤儿待确认"行：status是PENDING_*但pending_action为空。
+     *  正常的待确认信号一定两者同时存在（markPending同时写，confirm/dismiss同时改），只有修复前确认抛压预警
+     *  才会产生这种行。RealtimeMonitorService.repairOrphanPendingItems() 用它把已经卡死的票恢复监控。 */
+    public List<WatchlistItem> getOrphanPendingItems() {
+        List<WatchlistItem> list = new ArrayList<>();
+        Cursor c = mDb.rawQuery(
+                "SELECT * FROM watchlist WHERE status IN (?,?,?,?,?) AND pending_action IS NULL",
+                new String[]{STATUS_PENDING_STARTER, STATUS_PENDING_ADD, STATUS_PENDING_FULL,
+                        STATUS_PENDING_WARN, STATUS_PENDING_STOP});
+        try { while (c.moveToNext()) list.add(fromCursor(c)); } finally { c.close(); }
+        return list;
     }
 
     public void dismissPending(String code) {
@@ -395,10 +461,41 @@ public class WatchlistManager {
         ContentValues cv = new ContentValues();
         cv.put("status", cur.prevStatus != null ? cur.prevStatus : STATUS_WATCHING);
         cv.put("last_note", "已忽略该信号（" + (cur.pendingReason != null ? cur.pendingReason : "") + "），继续观察");
+        // 【2026-09-28修复·问题10.3】记录被忽略的动作和时间，RealtimeMonitorService.isDismissCooldownActive()
+        // 据此在冷却期内不再重复推送同类信号。之前忽略只回退状态，条件仍成立的话下一轮tick就会再推一次。
+        if (cur.pendingAction != null) {
+            cv.put("dismissed_action", cur.pendingAction);
+            cv.put("dismissed_at", System.currentTimeMillis());
+        }
         cv.put("updated_at", System.currentTimeMillis());
         mDb.update("watchlist", cv, "code=?", new String[]{code});
         clearPendingFields(code);
         Log.i(TAG, "忽略信号: " + code);
+    }
+
+    /**
+     * 【2026-10-01新增】待确认的买入类信号因条件失效（或被抛压否决）被系统自动撤回。
+     * 与 dismissPending 的区别：这是系统撤回，不是用户的决定——不写 dismissed_action/dismissed_at，
+     * 因此不触发"忽略后当日不再推送"的冷却；条件重新成立时可以正常再出信号（防抖动的短暂冷却由
+     * RealtimeMonitorService 自己管）。状态还原到触发前（prev_status），备注写明撤回原因，
+     * 候选池卡片据此不再挂着触发时刻的旧结论。
+     * 只在信号仍是待确认、且 pending_at 与传入值一致时才撤回（expectPendingAt<=0 表示不校验），
+     * 避免误撤用户刚刚处理过、或已经换成新信号的记录。返回是否真的撤回了。
+     */
+    public boolean withdrawPending(String code, long expectPendingAt, String reason) {
+        WatchlistItem cur = getByCode(code);
+        if (cur == null || cur.pendingAction == null || !isPendingStatusName(cur.status)) return false;
+        if (expectPendingAt > 0 && cur.pendingAt != expectPendingAt) return false;
+        ContentValues cv = new ContentValues();
+        cv.put("status", resolveStatusAfterWarn(cur));
+        cv.put("last_note", "【信号已失效·系统撤回】" + (reason != null ? reason : "")
+                + "（原信号：" + cur.pendingAction + "，触发价¥"
+                + String.format(java.util.Locale.CHINA, "%.2f", cur.pendingPrice) + "）");
+        cv.put("updated_at", System.currentTimeMillis());
+        mDb.update("watchlist", cv, "code=?", new String[]{code});
+        clearPendingFields(code);
+        Log.i(TAG, "待确认信号失效撤回: " + code + " " + cur.pendingAction + " 原因=" + reason);
+        return true;
     }
 
     private void clearPendingFields(String code) {
@@ -511,6 +608,10 @@ public class WatchlistManager {
         /** 【分时经验规则步骤4】最近一次已推送过"水下反转"通知的反转点标识（日期_时间），
          *  用于去重，见 TradingRuleEngine.DivergenceState 同名字段注释 */
         public String underwaterReversalNotifiedKey;
+        /** 【2026-09-28新增·问题10.3】最近一次被用户"忽略"的信号动作（如BUY_STARTER）与忽略时间戳，
+         *  用于忽略后的冷却判断，见RealtimeMonitorService.isDismissCooldownActive() */
+        public String dismissedAction;
+        public long dismissedAt;
     }
 
     private static final String[] ACTIVE_STATUSES = {
@@ -597,6 +698,8 @@ public class WatchlistManager {
         it.pendingBreakStartTime = getLongOrZero(c, "pending_break_start_time");
         it.pendingBreakRef = getDoubleOrZero(c, "pending_break_ref");
         it.underwaterReversalNotifiedKey = getStringOrNull(c, "underwater_reversal_notified_key");
+        it.dismissedAction = getStringOrNull(c, "dismissed_action");
+        it.dismissedAt = getLongOrZero(c, "dismissed_at");
         return it;
     }
 

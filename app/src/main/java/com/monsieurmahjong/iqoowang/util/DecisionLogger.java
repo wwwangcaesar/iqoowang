@@ -270,8 +270,18 @@ public class DecisionLogger {
         appendStockLog(code, null, "决策", sb.toString());
     }
 
+    /** 【2026-10-01新增】只读复验（待确认买入信号每轮重验）会走一遍完整的 evaluate()，其中的买入逻辑追踪日志
+     *  不应该每轮重复写——否则一条挂着的待确认信号会在日志里反复出现"命中底仓"，看起来像重复触发。
+     *  仅对当前线程生效，必须在 try/finally 中成对调用。 */
+    private static final ThreadLocal<Boolean> sSuppressTrace = new ThreadLocal<>();
+
+    public static void suppressTraceOnThisThread(boolean on) {
+        if (on) sSuppressTrace.set(Boolean.TRUE); else sSuppressTrace.remove();
+    }
+
     /** 【2026-08-20买入逻辑改造】记录一次底仓路径判定的分支选择过程。 */
     public void logBuyLogicTrace(String name, String code, String traceDetail) {
+        if (Boolean.TRUE.equals(sSuppressTrace.get())) return;
         appendStockLog(code, name, "决策", "买入逻辑追踪：" + traceDetail);
     }
 
