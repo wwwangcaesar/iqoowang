@@ -1,11 +1,338 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_cyber_gradient"
+    android:orientation="vertical"
+    android:fitsSystemWindows="true">
 
-    <WebView
-        android:id="@+id/web_kid_music"
+    <!-- 顶部状态与雷达仪表盘 (Dashboard Deck) -->
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="wrap_content"
+        android:background="#0C101A"
+        android:orientation="vertical"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp">
+
+        <!-- 标题行与系统状态 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:fontFamily="sans-serif-black"
+                android:text="⚡ ADB 局域网雷达"
+                android:textColor="@color/cyber_text_primary"
+                android:textSize="18sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tv_sys_state_pill"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_cyber_badge_cyan"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:paddingTop="2dp"
+                android:paddingBottom="2dp"
+                android:text="● RADAR READY"
+                android:textColor="@color/cyber_neon_cyan"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- 网络与网段信息卡片 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_cyber_card"
+            android:orientation="vertical"
+            android:padding="10dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tv_network_desc"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="📶 网络: 正在检测..."
+                    android:textColor="@color/cyber_neon_cyan"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_local_ip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="本机: 127.0.0.1"
+                    android:textColor="@color/cyber_text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/tv_subnet_prefix"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:fontFamily="monospace"
+                android:text="扫描子网: 192.168.1.0/24 (共254个IP)"
+                android:textColor="@color/cyber_text_muted"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <!-- 扫描进度条与状态展示 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ProgressBar
+                android:id="@+id/pb_scan_progress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_height="6dp"
+                android:layout_weight="1"
+                android:max="254"
+                android:progress="0"
+                android:progressTint="@color/cyber_neon_cyan" />
+
+            <TextView
+                android:id="@+id/tv_progress_text"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:fontFamily="monospace"
+                android:text="0/254"
+                android:textColor="@color/cyber_text_muted"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <!-- 统计指标芯片行 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tv_count_total"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@drawable/bg_cyber_card"
+                android:gravity="center"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:text="总发现: 0"
+                android:textColor="@color/cyber_text_secondary"
+                android:textSize="11sp" />
+
+            <View
+                android:layout_width="6dp"
+                android:layout_height="1dp" />
+
+            <TextView
+                android:id="@+id/tv_count_adb"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@drawable/bg_cyber_card"
+                android:gravity="center"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:text="ADB就绪: 0"
+                android:textColor="@color/cyber_neon_green"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <View
+                android:layout_width="6dp"
+                android:layout_height="1dp" />
+
+            <TextView
+                android:id="@+id/tv_count_tv"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@drawable/bg_cyber_card"
+                android:gravity="center"
+                android:paddingTop="6dp"
+                android:paddingBottom="6dp"
+                android:text="疑似电视: 0"
+                android:textColor="@color/cyber_amber"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+    </LinearLayout>
+
+    <!-- 过滤器与控制栏 (Control Deck) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#0A0E17"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp">
+
+        <TextView
+            android:id="@+id/tab_all_devices"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_cyber_btn_solid_cyan"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:text="全部设备"
+            android:textColor="#090D14"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tab_adb_only"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/bg_cyber_btn_dark"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:text="仅看 ADB 就绪"
+            android:textColor="@color/cyber_text_secondary"
+            android:textSize="12sp" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/btn_manual_connect"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_cyber_btn_dark"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:text="＋ 手动直连"
+            android:textColor="@color/cyber_neon_cyan"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- 列表容器与空数据占位 -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <ListView
+            android:id="@+id/lv_devices"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:cacheColorHint="@android:color/transparent"
+            android:divider="@null"
+            android:dividerHeight="0dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="12dp"
+            android:scrollbars="none" />
+
+        <!-- 空态提示面板 -->
+        <LinearLayout
+            android:id="@+id/layout_empty_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="sans-serif-black"
+                android:text="⚡ RADAR STANDBY"
+                android:textColor="@color/cyber_text_muted"
+                android:textSize="18sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:lineSpacingExtra="3dp"
+                android:text="点击下方「雷达并发扫描」\n高速嗅探当前局域网下的 Android 设备与 ADB 端口"
+                android:textColor="@color/cyber_text_secondary"
+                android:textSize="13sp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/bg_cyber_card"
+                android:lineSpacingExtra="2dp"
+                android:padding="12dp"
+                android:text="💡 提示：\n1. 支持普通 Wi-Fi 与本机自身热点\n2. 自动捕获 5555 端口及 Android 11+ 无线调试\n3. 遇到未开 ADB 的电视可一键查看破解激活秘籍"
+                android:textColor="@color/cyber_text_muted"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- 底部操作底座 (Bottom Action Dock) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#0C101A"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="14dp">
+
+        <TextView
+            android:id="@+id/btn_tv_installer"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_cyber_btn_outline_amber"
+            android:gravity="center"
+            android:text="🚀 传装电视 (免ADB)"
+            android:textColor="@color/cyber_amber"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btn_scan_toggle"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1.4"
+            android:background="@drawable/bg_cyber_btn_solid_cyan"
+            android:gravity="center"
+            android:text="⚡ 启动雷达扫描"
+            android:textColor="#090D14"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+    </LinearLayout>
 
 </LinearLayout>

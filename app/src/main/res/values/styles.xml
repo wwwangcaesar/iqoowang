@@ -1,7 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.KidMusicPlayer.NoTitle" parent="Theme.MaterialComponents.Light.NoActionBar">
-        <item name="windowNoTitle">true</item>
-        <item name="android:windowTranslucentNavigation">true</item>
+    <!-- 全屏沉浸式机械硬核风格主题 -->
+    <style name="Theme.CyberAdb.Fullscreen" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/cyber_bg</item>
+        <item name="android:statusBarColor">@color/cyber_bg</item>
+        <item name="android:navigationBarColor">@color/cyber_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="colorPrimary">@color/cyber_neon_cyan</item>
+        <item name="colorPrimaryVariant">@color/cyber_bg</item>
+        <item name="colorSecondary">@color/cyber_neon_green</item>
     </style>
+
+    <!-- 兼容旧样式引用 -->
+    <style name="Theme.KidMusicPlayer.NoTitle" parent="Theme.CyberAdb.Fullscreen" />
 </resources>

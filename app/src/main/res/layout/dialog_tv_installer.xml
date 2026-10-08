@@ -1,0 +1,324 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_cyber_dialog"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- 弹窗顶栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:fontFamily="monospace"
+            android:text="[ 🚀 手机远程传装电视 (免电脑) ]"
+            android:textColor="@color/cyber_neon_cyan"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btn_installer_close"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="@drawable/bg_cyber_btn_dark"
+            android:gravity="center"
+            android:text="✕"
+            android:textColor="@color/cyber_text_secondary"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:maxHeight="540dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- 步骤 1：挑选手机上的待传应用 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_cyber_card"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="1. 选择手机上要安装到电视的 App:"
+                    android:textColor="@color/cyber_text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <Spinner
+                    android:id="@+id/spinner_installed_apps"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_cyber_btn_dark"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp" />
+
+                <TextView
+                    android:id="@+id/tv_selected_app_info"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:fontFamily="monospace"
+                    android:text="已选择: 正在加载手机已安装应用..."
+                    android:textColor="@color/cyber_neon_green"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <!-- 核心通道 A：⚡ 手机直接 ADB 远程安装到电视 (免电脑 / 免浏览器) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_cyber_card_highlight"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="⚡ 方案一：手机 ADB 远程直装 (免电脑/免浏览器)"
+                        android:textColor="@color/cyber_neon_cyan"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_cyber_badge_green"
+                        android:paddingStart="6dp"
+                        android:paddingEnd="6dp"
+                        android:paddingTop="2dp"
+                        android:paddingBottom="2dp"
+                        android:text="强烈推荐"
+                        android:textColor="@color/cyber_neon_green"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="手机化身 ADB 调试终端，直接通过 IP 向电视静默安装 (彻底替代电脑)："
+                    android:textColor="@color/cyber_text_secondary"
+                    android:textSize="12sp" />
+
+                <!-- IP 与 端口输入行 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <EditText
+                        android:id="@+id/et_adb_tv_ip"
+                        android:layout_width="0dp"
+                        android:layout_height="40dp"
+                        android:layout_weight="1.6"
+                        android:background="@drawable/bg_cyber_edittext"
+                        android:fontFamily="monospace"
+                        android:hint="电视 IP (如 192.168.43.120)"
+                        android:inputType="textUri"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:textColor="@color/cyber_neon_cyan"
+                        android:textColorHint="@color/cyber_text_muted"
+                        android:textSize="13sp" />
+
+                    <EditText
+                        android:id="@+id/et_adb_tv_port"
+                        android:layout_width="0dp"
+                        android:layout_height="40dp"
+                        android:layout_marginStart="6dp"
+                        android:layout_weight="0.8"
+                        android:background="@drawable/bg_cyber_edittext"
+                        android:fontFamily="monospace"
+                        android:hint="5555"
+                        android:inputType="number"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:text="5555"
+                        android:textColor="@color/cyber_neon_cyan"
+                        android:textColorHint="@color/cyber_text_muted"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <!-- 进度条 -->
+                <ProgressBar
+                    android:id="@+id/pb_adb_install"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="6dp"
+                    android:layout_marginTop="8dp"
+                    android:max="100"
+                    android:progress="0"
+                    android:progressTint="@color/cyber_neon_cyan" />
+
+                <!-- 手机直接 ADB 安装大按钮 -->
+                <TextView
+                    android:id="@+id/btn_adb_direct_install"
+                    android:layout_width="match_parent"
+                    android:layout_height="42dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_cyber_btn_solid_cyan"
+                    android:gravity="center"
+                    android:text="⚡ 启动手机 ADB 远程直装 (START INSTALL)"
+                    android:textColor="#090D14"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <!-- 实时终端日志控制台 -->
+                <TextView
+                    android:id="@+id/tv_adb_terminal_log"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:background="#0A0E17"
+                    android:fontFamily="monospace"
+                    android:lineSpacingExtra="2dp"
+                    android:padding="8dp"
+                    android:text="&gt; 待命：点击上方按钮，手机将直接通过 ADB 协议将所选 App 远程安装至电视。"
+                    android:textColor="@color/cyber_text_secondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <!-- 核心通道 B：电视大屏 Web 局域网短链 (有浏览器/媒体中心时) -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_cyber_card"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="🌐 方案二：电视浏览器直装短链 (备选)"
+                    android:textColor="@color/cyber_amber"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="若电视带有浏览器，可在电视输入此网址大屏按遥控器下载："
+                    android:textColor="@color/cyber_text_secondary"
+                    android:textSize="12sp" />
+
+                <!-- 网址展示卡片与复制 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:background="#0A0E17"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="8dp">
+
+                    <TextView
+                        android:id="@+id/tv_server_url"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:fontFamily="monospace"
+                        android:text="http://192.168.1.100:8888"
+                        android:textColor="@color/cyber_neon_cyan"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/btn_copy_server_url"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_cyber_btn_outline_cyan"
+                        android:paddingStart="10dp"
+                        android:paddingEnd="10dp"
+                        android:paddingTop="4dp"
+                        android:paddingBottom="4dp"
+                        android:text="复制网址"
+                        android:textColor="@color/cyber_neon_cyan"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tv_download_client_log"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="> 局域网 Web 服务器已运行在 8888 端口"
+                    android:textColor="@color/cyber_text_muted"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <!-- 核心通道 C：各大电视品牌电视无浏览器救砖指南 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_cyber_card"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="💡 电视无浏览器·热点与局域网安装秘籍:"
+                    android:textColor="@color/cyber_text_primary"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:lineSpacingExtra="3dp"
+                    android:text="1. 【手机开热点连接】：手机开启热点，让电视连接。此时两者处于直连局域网 (192.168.43.x)，彻底规避路由器 AP 隔离，传输延迟极低。\n2. 【电视已开 ADB 但无提示】：绝大多数电视其实默认在后台跑着 5555 守护进程，直接使用上方「方案一」即可秒速安装！\n3. 【电视自带文件管理/媒体中心】：无浏览器的电视必有「媒体中心/文件管理」，点击「添加局域网共享」输入手机 IP 也可浏览安装。"
+                    android:textColor="@color/cyber_text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- 底部关闭按钮 -->
+    <TextView
+        android:id="@+id/btn_installer_done"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:layout_marginTop="12dp"
+        android:background="@drawable/bg_cyber_btn_dark"
+        android:gravity="center"
+        android:text="完成 / 返回"
+        android:textColor="@color/cyber_text_primary"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+</LinearLayout>

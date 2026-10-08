@@ -1,0 +1,286 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_cyber_dialog"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <!-- 弹窗顶栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:fontFamily="monospace"
+            android:text="[ DEVICE DIAGNOSTICS &amp; ACTIVATE ]"
+            android:textColor="@color/cyber_neon_cyan"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btn_dialog_close"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="@drawable/bg_cyber_btn_dark"
+            android:gravity="center"
+            android:text="✕"
+            android:textColor="@color/cyber_text_secondary"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:maxHeight="520dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- 卡片 1：设备硬件参数概览 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_cyber_card"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:id="@+id/tv_dialog_device_name"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Xiaomi TV 4A"
+                    android:textColor="@color/cyber_text_primary"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tv_dialog_ip_port"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:fontFamily="monospace"
+                    android:text="IP: 192.168.1.108 | 默认端口: 5555"
+                    android:textColor="@color/cyber_neon_cyan"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/tv_dialog_status_desc"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="状态: 探测到投屏端口(8008)，5555端口暂未开放"
+                    android:textColor="@color/cyber_amber"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <!-- 卡片 2：现场握手测试与深度端口探测 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_cyber_card"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="[ 连通性测试与端口探测 ]"
+                    android:textColor="@color/cyber_text_secondary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/btn_test_ping"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="6dp"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_cyber_btn_outline_cyan"
+                        android:gravity="center"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:text="⚡ 握手测通"
+                        android:textColor="@color/cyber_neon_cyan"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/btn_deep_scan"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:background="@drawable/bg_cyber_btn_outline_amber"
+                        android:gravity="center"
+                        android:paddingTop="8dp"
+                        android:paddingBottom="8dp"
+                        android:text="🔍 深度端口探测"
+                        android:textColor="@color/cyber_amber"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tv_test_result_log"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:background="#0A0E17"
+                    android:fontFamily="monospace"
+                    android:padding="8dp"
+                    android:text="&gt; 点击「握手测通」测试当前端口连通性\n&gt; 或点击「深度端口探测」寻找隐藏的 ADB 端口"
+                    android:textColor="@color/cyber_text_secondary"
+                    android:textSize="11sp" />
+            </LinearLayout>
+
+            <!-- 卡片 3：各大品牌强制激活 ADB 秘籍库 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_cyber_card"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:text="[ 品牌强制开启 ADB 秘籍库 ]"
+                    android:textColor="@color/cyber_text_secondary"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <!-- 品牌选择切换 Spinner -->
+                <Spinner
+                    android:id="@+id/spinner_brands"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/bg_cyber_btn_dark"
+                    android:paddingStart="8dp"
+                    android:paddingEnd="8dp" />
+
+                <!-- 秘籍快捷暗码 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:background="#16221A"
+                    android:padding="8dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="🔑 暗码/触发点: "
+                        android:textColor="@color/cyber_neon_green"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tv_guide_shortcut"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:fontFamily="monospace"
+                        android:text="设置->关于->型号连按5次"
+                        android:textColor="@color/cyber_neon_green"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <!-- 详细图文步骤说明 -->
+                <TextView
+                    android:id="@+id/tv_guide_steps"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:lineSpacingExtra="3dp"
+                    android:text="详细操作步骤加载中..."
+                    android:textColor="@color/cyber_text_primary"
+                    android:textSize="12sp" />
+
+                <!-- 终端命令提示 -->
+                <TextView
+                    android:id="@+id/tv_guide_command"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:background="#0A0E17"
+                    android:fontFamily="monospace"
+                    android:padding="8dp"
+                    android:text="adb connect 192.168.1.108:5555"
+                    android:textColor="@color/cyber_neon_cyan"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- 免ADB传装按钮 -->
+    <TextView
+        android:id="@+id/btn_direct_install_app"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:layout_marginTop="10dp"
+        android:background="@drawable/bg_cyber_btn_outline_amber"
+        android:gravity="center"
+        android:text="🚀 免ADB传装App到此设备 (短链/直推)"
+        android:textColor="@color/cyber_amber"
+        android:textSize="13sp"
+        android:textStyle="bold" />
+
+    <!-- 底部按钮操作栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/btn_copy_command_bottom"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="8dp"
+            android:layout_weight="1"
+            android:background="@drawable/bg_cyber_btn_solid_cyan"
+            android:gravity="center"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp"
+            android:text="📋 复制 ADB 连接命令"
+            android:textColor="#090D14"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btn_close_bottom"
+            android:layout_width="80dp"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_cyber_btn_dark"
+            android:gravity="center"
+            android:paddingTop="12dp"
+            android:paddingBottom="12dp"
+            android:text="关闭"
+            android:textColor="@color/cyber_text_secondary"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+</LinearLayout>

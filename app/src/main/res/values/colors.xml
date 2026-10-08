@@ -1,10 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- 机械硬核科技配色 (Cyber Dark & Neon Palette) -->
+    <color name="cyber_bg">#090D14</color>
+    <color name="cyber_card">#121722</color>
+    <color name="cyber_card_inner">#181F2E</color>
+    <color name="cyber_card_stroke">#28344A</color>
+    <color name="cyber_card_stroke_active">#00E5FF</color>
+
+    <!-- 赛博荧光强调色 -->
+    <color name="cyber_neon_cyan">#00E5FF</color>
+    <color name="cyber_neon_cyan_glow">#2600E5FF</color>
+    <color name="cyber_neon_green">#00E676</color>
+    <color name="cyber_neon_green_glow">#2600E676</color>
+    <color name="cyber_amber">#FFAB00</color>
+    <color name="cyber_amber_glow">#26FFAB00</color>
+    <color name="cyber_crimson">#FF3366</color>
+    <color name="cyber_purple">#7C4DFF</color>
+
+    <!-- 文字与前景色 -->
+    <color name="cyber_text_primary">#F0F6FC</color>
+    <color name="cyber_text_secondary">#8B949E</color>
+    <color name="cyber_text_muted">#535F73</color>
+
+    <!-- 基础黑白兼容 -->
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
     <color name="purple_200">#FFBB86FC</color>
     <color name="purple_500">#FF6200EE</color>
     <color name="purple_700">#FF3700B3</color>
     <color name="teal_200">#FF03DAC5</color>
     <color name="teal_700">#FF018786</color>
-    <color name="black">#FF000000</color>
-    <color name="white">#FFFFFFFF</color>
 </resources>
