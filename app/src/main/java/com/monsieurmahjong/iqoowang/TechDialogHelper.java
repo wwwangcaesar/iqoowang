@@ -13,10 +13,12 @@ import android.view.Window;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.EditText;
+import android.widget.ProgressBar;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -270,22 +272,29 @@ public class TechDialogHelper {
         TextView tvAppInfo = view.findViewById(R.id.tv_selected_app_info);
         TextView tvServerUrl = view.findViewById(R.id.tv_server_url);
         TextView btnCopyUrl = view.findViewById(R.id.btn_copy_server_url);
-        TextView tvDownloadLog = view.findViewById(R.id.tv_download_client_log);
-        EditText etTvIp = view.findViewById(R.id.et_target_tv_ip);
-        TextView btnPushXiaomi = view.findViewById(R.id.btn_push_xiaomi);
-        TextView tvPushLog = view.findViewById(R.id.tv_xiaomi_push_log);
+
+        EditText etAdbIp = view.findViewById(R.id.et_adb_tv_ip);
+        EditText etAdbPort = view.findViewById(R.id.et_adb_tv_port);
+        ProgressBar pbAdb = view.findViewById(R.id.pb_adb_install);
+        TextView btnAdbInstall = view.findViewById(R.id.btn_adb_direct_install);
+        TextView tvAdbLog = view.findViewById(R.id.tv_adb_terminal_log);
+
         TextView btnDone = view.findViewById(R.id.btn_installer_done);
         TextView btnClose = view.findViewById(R.id.btn_installer_close);
-
-        if (prefilledTvIp != null && !prefilledTvIp.isEmpty()) {
-            etTvIp.setText(prefilledTvIp);
-        }
 
         String localIp = NetworkUtils.getLocalIpAddress();
         String initialUrl = "http://" + localIp + ":8888/";
         tvServerUrl.setText(initialUrl);
 
-        // 启动本地 HTTP 服务
+        if (prefilledTvIp != null && !prefilledTvIp.isEmpty()) {
+            etAdbIp.setText(prefilledTvIp);
+        } else {
+            String prefix = NetworkUtils.getSubnetPrefix(activity);
+            etAdbIp.setText(prefix);
+            etAdbIp.setSelection(prefix.length());
+        }
+
+        // 启动本地 HTTP 服务 (备选)
         apkHttpServer.start(localIp, new ApkHttpServer.OnServerStatusListener() {
             @Override
             public void onServerStarted(String serverUrl) {
@@ -294,13 +303,15 @@ public class TechDialogHelper {
 
             @Override
             public void onDownloadProgress(String clientIp, String appName) {
-                tvDownloadLog.setText("✔ 电视客户端 [" + clientIp + "] 正在拉取 " + appName + " 并自动触发安装...");
             }
 
             @Override
             public void onServerStopped() {
             }
         });
+
+        final List<InstalledAppItem> appListHolder = new ArrayList<>();
+        final int[] selectedIndexHolder = {0};
 
         // 异步提取手机已安装应用
         new Thread(() -> {
@@ -310,6 +321,8 @@ public class TechDialogHelper {
                     tvAppInfo.setText("未发现可分享的应用");
                     return;
                 }
+                appListHolder.clear();
+                appListHolder.addAll(apps);
                 apkHttpServer.setSharedApps(apps);
 
                 List<String> names = new ArrayList<>();
@@ -324,6 +337,7 @@ public class TechDialogHelper {
                 spinnerApps.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
                     @Override
                     public void onItemSelected(AdapterView<?> parent, View v, int position, long id) {
+                        selectedIndexHolder[0] = position;
                         InstalledAppItem selected = apps.get(position);
                         List<InstalledAppItem> singleList = new ArrayList<>();
                         singleList.add(selected);
@@ -339,33 +353,73 @@ public class TechDialogHelper {
             });
         }).start();
 
+        // 核心功能：手机直接 ADB 远程安装到电视 (彻底免电脑)
+        btnAdbInstall.setOnClickListener(v -> {
+            if (appListHolder.isEmpty()) {
+                Toast.makeText(activity, "正在加载应用列表，请稍候", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            String tvIp = etAdbIp.getText().toString().trim();
+            String portStr = etAdbPort.getText().toString().trim();
+            if (tvIp.isEmpty()) {
+                Toast.makeText(activity, "请输入目标电视的 IP 地址", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            int port = 5555;
+            try {
+                if (!portStr.isEmpty()) port = Integer.parseInt(portStr);
+            } catch (Exception ignored) {}
+
+            InstalledAppItem selectedApp = appListHolder.get(selectedIndexHolder[0]);
+            File apkFile = new File(selectedApp.getApkPath());
+
+            if (!apkFile.exists()) {
+                Toast.makeText(activity, "APK 文件不存在或无法读取", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            btnAdbInstall.setEnabled(false);
+            pbAdb.setProgress(0);
+            tvAdbLog.setText("> 准备向电视 " + tvIp + ":" + port + " 执行 ADB 流式直装...");
+
+            AdbClientEngine adbEngine = new AdbClientEngine(activity);
+            adbEngine.installApk(tvIp, port, apkFile, new AdbClientEngine.AdbInstallListener() {
+                @Override
+                public void onLog(String message) {
+                    tvAdbLog.setText(message);
+                }
+
+                @Override
+                public void onProgress(long transferredBytes, long totalBytes) {
+                    if (totalBytes > 0) {
+                        int progress = (int) ((transferredBytes * 100) / totalBytes);
+                        pbAdb.setProgress(progress);
+                        tvAdbLog.setText("> 正在向电视传输: " + progress + "% (" +
+                                (transferredBytes / (1024 * 1024)) + "/" + (totalBytes / (1024 * 1024)) + " MB)");
+                    }
+                }
+
+                @Override
+                public void onSuccess(String message) {
+                    btnAdbInstall.setEnabled(true);
+                    pbAdb.setProgress(100);
+                    tvAdbLog.setText(message);
+                    Toast.makeText(activity, message, Toast.LENGTH_LONG).show();
+                }
+
+                @Override
+                public void onError(String error) {
+                    btnAdbInstall.setEnabled(true);
+                    tvAdbLog.setText("✖ " + error);
+                    Toast.makeText(activity, "安装未完成: " + error, Toast.LENGTH_LONG).show();
+                }
+            });
+        });
+
         // 复制网页直装地址
         btnCopyUrl.setOnClickListener(v -> {
             copyText(activity, tvServerUrl.getText().toString());
             Toast.makeText(activity, "已复制电视直装网址！请在电视浏览器中打开", Toast.LENGTH_SHORT).show();
-        });
-
-        // 小米电视直推按钮
-        btnPushXiaomi.setOnClickListener(v -> {
-            String tvIp = etTvIp.getText().toString().trim();
-            if (tvIp.isEmpty()) {
-                Toast.makeText(activity, "请输入小米电视的 IP 地址", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            tvPushLog.setText("> 正在向小米电视 " + tvIp + ":6095 发送远程安装指令...");
-            String downloadUrl = tvServerUrl.getText().toString() + "download?idx=0";
-            XiaomiTvPusher.pushInstallCommand(tvIp, downloadUrl, new XiaomiTvPusher.PushCallback() {
-                @Override
-                public void onSuccess(String message) {
-                    tvPushLog.setText(message);
-                    Toast.makeText(activity, "指令已下发！请看电视屏幕弹窗", Toast.LENGTH_SHORT).show();
-                }
-
-                @Override
-                public void onFailed(String error) {
-                    tvPushLog.setText("✖ " + error);
-                }
-            });
         });
 
         btnDone.setOnClickListener(v -> dialog.dismiss());
