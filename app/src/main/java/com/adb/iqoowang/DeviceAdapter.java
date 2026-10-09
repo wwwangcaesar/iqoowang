@@ -1,4 +1,4 @@
-package com.monsieurmahjong.iqoowang;
+package com.adb.iqoowang;
 
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -12,6 +12,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.core.content.ContextCompat;
+
+import com.adb.iqoowang.R;
 
 import java.util.ArrayList;
 import java.util.List;

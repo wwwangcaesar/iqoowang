@@ -1,4 +1,4 @@
-package com.monsieurmahjong.iqoowang;
+package com.adb.iqoowang;
 
 import android.app.Activity;
 import android.app.Dialog;
@@ -17,6 +17,8 @@ import android.widget.ProgressBar;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import com.adb.iqoowang.R;
 
 import java.io.File;
 import java.util.ArrayList;

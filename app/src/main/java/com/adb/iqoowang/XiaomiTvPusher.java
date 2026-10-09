@@ -1,4 +1,4 @@
-package com.monsieurmahjong.iqoowang;
+package com.adb.iqoowang;
 
 import android.os.Handler;
 import android.os.Looper;

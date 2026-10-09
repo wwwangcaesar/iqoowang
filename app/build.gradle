@@ -3,11 +3,11 @@ plugins {
 }
 
 android {
-    namespace 'com.monsieurmahjong.iqoowang'
+    namespace 'com.adb.iqoowang'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.monsieurmahjong.iqoowang"
+        applicationId "com.adb.iqoowang"
         minSdk 24
         targetSdk 34
         versionCode 1
