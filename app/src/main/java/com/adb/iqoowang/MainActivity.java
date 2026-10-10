@@ -259,12 +259,24 @@ public class MainActivity extends AppCompatActivity {
         updateStatsUI();
     }
 
+    public static final int REQ_CODE_PICK_APK = 3001;
+
     private void checkPermissions() {
-        String[] perms = new String[]{
-                Manifest.permission.ACCESS_NETWORK_STATE,
-                Manifest.permission.ACCESS_WIFI_STATE,
-                Manifest.permission.CHANGE_WIFI_MULTICAST_STATE
-        };
+        String[] perms;
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S_V2) {
+            perms = new String[]{
+                    Manifest.permission.ACCESS_NETWORK_STATE,
+                    Manifest.permission.ACCESS_WIFI_STATE,
+                    Manifest.permission.CHANGE_WIFI_MULTICAST_STATE,
+                    Manifest.permission.READ_EXTERNAL_STORAGE
+            };
+        } else {
+            perms = new String[]{
+                    Manifest.permission.ACCESS_NETWORK_STATE,
+                    Manifest.permission.ACCESS_WIFI_STATE,
+                    Manifest.permission.CHANGE_WIFI_MULTICAST_STATE
+            };
+        }
 
         boolean needReq = false;
         for (String p : perms) {
@@ -275,6 +287,17 @@ public class MainActivity extends AppCompatActivity {
         }
         if (needReq) {
             ActivityCompat.requestPermissions(this, perms, PERMISSION_REQ_CODE);
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, android.content.Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_CODE_PICK_APK && resultCode == RESULT_OK && data != null) {
+            android.net.Uri uri = data.getData();
+            if (uri != null) {
+                TechDialogHelper.onApkFilePicked(this, uri);
+            }
         }
     }
 

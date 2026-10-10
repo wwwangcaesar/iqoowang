@@ -5,6 +5,7 @@ import android.app.Dialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.view.LayoutInflater;
@@ -17,8 +18,6 @@ import android.widget.ProgressBar;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
-
-import com.adb.iqoowang.R;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -43,7 +42,6 @@ public class TechDialogHelper {
                     android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
         }
 
-        // 绑定组件
         TextView tvName = view.findViewById(R.id.tv_dialog_device_name);
         TextView tvIpPort = view.findViewById(R.id.tv_dialog_ip_port);
         TextView tvStatus = view.findViewById(R.id.tv_dialog_status_desc);
@@ -61,7 +59,6 @@ public class TechDialogHelper {
         TextView btnClose = view.findViewById(R.id.btn_close_bottom);
         TextView btnXClose = view.findViewById(R.id.btn_dialog_close);
 
-        // 绑定免ADB传装按钮
         if (btnDirectInstall != null) {
             btnDirectInstall.setOnClickListener(v -> {
                 dialog.dismiss();
@@ -69,7 +66,6 @@ public class TechDialogHelper {
             });
         }
 
-        // 填充基本信息
         tvName.setText(device.getDeviceName());
         tvIpPort.setText("目标 IP: " + device.getIp() + "  |  端口: " + device.getPort());
 
@@ -84,7 +80,6 @@ public class TechDialogHelper {
             tvStatus.setTextColor(activity.getResources().getColor(R.color.cyber_amber));
         }
 
-        // 连通性测试
         btnTestPing.setOnClickListener(v -> {
             tvLog.setText("> 正在向 " + device.getIp() + ":" + device.getPort() + " 发送 TCP 握手包...");
             new Thread(() -> {
@@ -99,7 +94,6 @@ public class TechDialogHelper {
             }).start();
         });
 
-        // 深度端口探测
         btnDeepScan.setOnClickListener(v -> {
             btnDeepScan.setEnabled(false);
             tvLog.setText("> 正在深度探测 IP [" + device.getIp() + "] 的隐蔽端口 (ADB/投屏/Web/管理服务)...");
@@ -113,9 +107,7 @@ public class TechDialogHelper {
                 }
 
                 @Override
-                public void onDeepScanProgress(int current, int total) {
-                    // 可以更新进度
-                }
+                public void onDeepScanProgress(int current, int total) {}
 
                 @Override
                 public void onDeepScanFinished(List<Integer> openPorts) {
@@ -130,7 +122,6 @@ public class TechDialogHelper {
             });
         });
 
-        // 品牌秘籍库设置
         List<DeviceActivationGuides.GuideItem> guides = DeviceActivationGuides.getAllGuides();
         List<String> brandNames = new ArrayList<>();
         int selectedIndex = 0;
@@ -158,20 +149,16 @@ public class TechDialogHelper {
                 String cmd = item.commandHint.replace("<IP>", device.getIp());
                 tvCommand.setText(cmd);
             }
-
             @Override public void onNothingSelected(AdapterView<?> parent) {}
         });
 
-        // 复制命令
         btnCopy.setOnClickListener(v -> {
             copyText(activity, device.getAdbCommand());
             Toast.makeText(activity, "已复制连接命令:\n" + device.getAdbCommand(), Toast.LENGTH_SHORT).show();
         });
 
-        // 关闭弹窗
         btnClose.setOnClickListener(v -> dialog.dismiss());
         btnXClose.setOnClickListener(v -> dialog.dismiss());
-
         dialog.show();
     }
 
@@ -254,7 +241,7 @@ public class TechDialogHelper {
     }
 
     /**
-     * 弹出免 ADB 手机传装电视 App 弹窗
+     * 弹出手机传装电视 App 弹窗（核心功能）
      */
     public static void showTvInstallerDialog(Activity activity, String prefilledTvIp, ApkHttpServer apkHttpServer) {
         Dialog dialog = new Dialog(activity);
@@ -274,6 +261,7 @@ public class TechDialogHelper {
         TextView tvAppInfo = view.findViewById(R.id.tv_selected_app_info);
         TextView tvServerUrl = view.findViewById(R.id.tv_server_url);
         TextView btnCopyUrl = view.findViewById(R.id.btn_copy_server_url);
+        TextView btnBrowseApk = view.findViewById(R.id.btn_browse_local_apk);
 
         EditText etAdbIp = view.findViewById(R.id.et_adb_tv_ip);
         EditText etAdbPort = view.findViewById(R.id.et_adb_tv_port);
@@ -285,8 +273,7 @@ public class TechDialogHelper {
         TextView btnClose = view.findViewById(R.id.btn_installer_close);
 
         String localIp = NetworkUtils.getLocalIpAddress();
-        String initialUrl = "http://" + localIp + ":8888/";
-        tvServerUrl.setText(initialUrl);
+        tvServerUrl.setText("http://" + localIp + ":8888/");
 
         if (prefilledTvIp != null && !prefilledTvIp.isEmpty()) {
             etAdbIp.setText(prefilledTvIp);
@@ -296,66 +283,83 @@ public class TechDialogHelper {
             etAdbIp.setSelection(prefix.length());
         }
 
-        // 启动本地 HTTP 服务 (备选)
+        // 启动本地 HTTP 备用服务
         apkHttpServer.start(localIp, new ApkHttpServer.OnServerStatusListener() {
-            @Override
-            public void onServerStarted(String serverUrl) {
-                tvServerUrl.setText(serverUrl);
-            }
-
-            @Override
-            public void onDownloadProgress(String clientIp, String appName) {
-            }
-
-            @Override
-            public void onServerStopped() {
-            }
+            @Override public void onServerStarted(String serverUrl) { tvServerUrl.setText(serverUrl); }
+            @Override public void onDownloadProgress(String clientIp, String appName) {}
+            @Override public void onServerStopped() {}
         });
 
         final List<InstalledAppItem> appListHolder = new ArrayList<>();
         final int[] selectedIndexHolder = {0};
 
-        // 异步提取手机已安装应用
+        // 浏览本地 APK 文件
+        if (btnBrowseApk != null) {
+            btnBrowseApk.setOnClickListener(v -> {
+                activeApkPickerCallback = item -> {
+                    appListHolder.add(0, item);
+                    selectedIndexHolder[0] = 0;
+                    List<String> names = new ArrayList<>();
+                    for (InstalledAppItem app : appListHolder) {
+                        names.add(app.getAppName() + " (" + app.getFormattedSize() + ")");
+                    }
+                    spinnerApps.setAdapter(new ArrayAdapter<>(activity,
+                            android.R.layout.simple_spinner_dropdown_item, names));
+                    spinnerApps.setSelection(0);
+                    tvAppInfo.setText("已选: " + item.getAppName() + " | 大小: " + item.getFormattedSize()
+                            + "\n路径: " + item.getApkPath());
+                };
+                Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+                intent.setType("*/*");
+                intent.putExtra(Intent.EXTRA_MIME_TYPES,
+                        new String[]{"application/vnd.android.package-archive", "application/octet-stream"});
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                activity.startActivityForResult(Intent.createChooser(intent, "选择本地 APK 安装包"),
+                        MainActivity.REQ_CODE_PICK_APK);
+            });
+        }
+
+        // 异步加载已安装应用 + 本地 APK
         new Thread(() -> {
-            List<InstalledAppItem> apps = AppExtractHelper.getInstalledApps(activity);
+            List<InstalledAppItem> localApks = AppExtractHelper.scanLocalDownloadApks(activity);
+            List<InstalledAppItem> userApps = AppExtractHelper.getInstalledUserApps(activity);
+            List<InstalledAppItem> combined = new ArrayList<>();
+            combined.addAll(localApks);
+            combined.addAll(userApps);
+
             activity.runOnUiThread(() -> {
-                if (apps.isEmpty()) {
-                    tvAppInfo.setText("未发现可分享的应用");
+                if (combined.isEmpty()) {
+                    tvAppInfo.setText("未发现用户安装应用或本地 APK，可点击右上角浏览文件");
                     return;
                 }
                 appListHolder.clear();
-                appListHolder.addAll(apps);
-                apkHttpServer.setSharedApps(apps);
+                appListHolder.addAll(combined);
+                apkHttpServer.setSharedApps(combined);
 
                 List<String> names = new ArrayList<>();
-                for (InstalledAppItem app : apps) {
+                for (InstalledAppItem app : combined) {
                     names.add(app.getAppName() + " (" + app.getFormattedSize() + ")");
                 }
-
-                ArrayAdapter<String> appAdapter = new ArrayAdapter<>(activity,
-                        android.R.layout.simple_spinner_dropdown_item, names);
-                spinnerApps.setAdapter(appAdapter);
+                spinnerApps.setAdapter(new ArrayAdapter<>(activity,
+                        android.R.layout.simple_spinner_dropdown_item, names));
 
                 spinnerApps.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
                     @Override
                     public void onItemSelected(AdapterView<?> parent, View v, int position, long id) {
                         selectedIndexHolder[0] = position;
-                        InstalledAppItem selected = apps.get(position);
-                        List<InstalledAppItem> singleList = new ArrayList<>();
-                        singleList.add(selected);
-                        apkHttpServer.setSharedApps(singleList);
-
+                        InstalledAppItem selected = appListHolder.get(position);
+                        List<InstalledAppItem> single = new ArrayList<>();
+                        single.add(selected);
+                        apkHttpServer.setSharedApps(single);
                         tvAppInfo.setText("已选: " + selected.getAppName() + " | 大小: " + selected.getFormattedSize()
-                                + "\n包名: " + selected.getPackageName());
+                                + "\n路径: " + selected.getApkPath());
                     }
-
-                    @Override
-                    public void onNothingSelected(AdapterView<?> parent) {}
+                    @Override public void onNothingSelected(AdapterView<?> parent) {}
                 });
             });
         }).start();
 
-        // 核心功能：手机直接 ADB 远程安装到电视 (彻底免电脑)
+        // ⚡ 核心：手机直接 ADB 远程安装到电视
         btnAdbInstall.setOnClickListener(v -> {
             if (appListHolder.isEmpty()) {
                 Toast.makeText(activity, "正在加载应用列表，请稍候", Toast.LENGTH_SHORT).show();
@@ -374,7 +378,6 @@ public class TechDialogHelper {
 
             InstalledAppItem selectedApp = appListHolder.get(selectedIndexHolder[0]);
             File apkFile = new File(selectedApp.getApkPath());
-
             if (!apkFile.exists()) {
                 Toast.makeText(activity, "APK 文件不存在或无法读取", Toast.LENGTH_SHORT).show();
                 return;
@@ -382,46 +385,52 @@ public class TechDialogHelper {
 
             btnAdbInstall.setEnabled(false);
             pbAdb.setProgress(0);
-            tvAdbLog.setText("> 准备向电视 " + tvIp + ":" + port + " 执行 ADB 流式直装...");
+            tvAdbLog.setText("> 正在建立 ADB 调试会话 [" + tvIp + ":" + port + "] ...");
 
+            final int finalPort = port;
             AdbClientEngine adbEngine = new AdbClientEngine(activity);
-            adbEngine.installApk(tvIp, port, apkFile, new AdbClientEngine.AdbInstallListener() {
+            adbEngine.installApk(tvIp, finalPort, apkFile, new AdbClientEngine.AdbInstallListener() {
                 @Override
                 public void onLog(String message) {
-                    tvAdbLog.setText(message);
+                    activity.runOnUiThread(() -> tvAdbLog.append("\n" + message));
                 }
 
                 @Override
                 public void onProgress(long transferredBytes, long totalBytes) {
                     if (totalBytes > 0) {
                         int progress = (int) ((transferredBytes * 100) / totalBytes);
-                        pbAdb.setProgress(progress);
-                        tvAdbLog.setText("> 正在向电视传输: " + progress + "% (" +
-                                (transferredBytes / (1024 * 1024)) + "/" + (totalBytes / (1024 * 1024)) + " MB)");
+                        activity.runOnUiThread(() -> {
+                            pbAdb.setProgress(progress);
+                        });
                     }
                 }
 
                 @Override
                 public void onSuccess(String message) {
-                    btnAdbInstall.setEnabled(true);
-                    pbAdb.setProgress(100);
-                    tvAdbLog.setText(message);
-                    Toast.makeText(activity, message, Toast.LENGTH_LONG).show();
+                    activity.runOnUiThread(() -> {
+                        btnAdbInstall.setEnabled(true);
+                        pbAdb.setProgress(100);
+                        tvAdbLog.append("\n\n" + message);
+                        Toast.makeText(activity, message, Toast.LENGTH_LONG).show();
+                    });
                 }
 
                 @Override
                 public void onError(String error) {
-                    btnAdbInstall.setEnabled(true);
-                    tvAdbLog.setText("✖ " + error);
-                    Toast.makeText(activity, "安装未完成: " + error, Toast.LENGTH_LONG).show();
+                    activity.runOnUiThread(() -> {
+                        btnAdbInstall.setEnabled(true);
+                        tvAdbLog.append("\n\n✖ " + error);
+                        Toast.makeText(activity, "安装未完成: " + error, Toast.LENGTH_LONG).show();
+                    });
                 }
             });
+
         });
 
-        // 复制网页直装地址
+        // 复制 Web 局域网直装地址（电视有浏览器时备用）
         btnCopyUrl.setOnClickListener(v -> {
             copyText(activity, tvServerUrl.getText().toString());
-            Toast.makeText(activity, "已复制电视直装网址！请在电视浏览器中打开", Toast.LENGTH_SHORT).show();
+            Toast.makeText(activity, "已复制！请在电视浏览器中打开该网址", Toast.LENGTH_SHORT).show();
         });
 
         btnDone.setOnClickListener(v -> dialog.dismiss());
@@ -440,5 +449,26 @@ public class TechDialogHelper {
     public interface OnManualConfirmedListener {
         void onDeviceAdded(DeviceItem item);
     }
-}
 
+    public interface OnApkSelectedCallback {
+        void onApkSelected(InstalledAppItem item);
+    }
+
+    public static OnApkSelectedCallback activeApkPickerCallback;
+
+    public static void onApkFilePicked(Activity activity, android.net.Uri uri) {
+        new Thread(() -> {
+            InstalledAppItem item = AppExtractHelper.parseApkUri(activity, uri);
+            if (item != null) {
+                activity.runOnUiThread(() -> {
+                    if (activeApkPickerCallback != null) {
+                        activeApkPickerCallback.onApkSelected(item);
+                        Toast.makeText(activity, "已载入本地 APK: " + item.getAppName(), Toast.LENGTH_SHORT).show();
+                    }
+                });
+            } else {
+                activity.runOnUiThread(() -> Toast.makeText(activity, "未能成功解析该 APK 文件", Toast.LENGTH_SHORT).show());
+            }
+        }).start();
+    }
+}

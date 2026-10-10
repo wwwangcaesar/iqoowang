@@ -3,7 +3,7 @@ package com.adb.iqoowang;
 import android.graphics.drawable.Drawable;
 
 /**
- * 手机本地已安装的待传输应用实体
+ * 手机本地已安装或本地 APK 文件的待传输实体
  */
 public class InstalledAppItem {
     private String appName;
@@ -12,14 +12,20 @@ public class InstalledAppItem {
     private String apkPath;
     private long fileSize;
     private Drawable icon;
+    private boolean isLocalFile;
 
     public InstalledAppItem(String appName, String packageName, String versionName, String apkPath, long fileSize, Drawable icon) {
+        this(appName, packageName, versionName, apkPath, fileSize, icon, false);
+    }
+
+    public InstalledAppItem(String appName, String packageName, String versionName, String apkPath, long fileSize, Drawable icon, boolean isLocalFile) {
         this.appName = appName;
         this.packageName = packageName;
         this.versionName = versionName;
         this.apkPath = apkPath;
         this.fileSize = fileSize;
         this.icon = icon;
+        this.isLocalFile = isLocalFile;
     }
 
     public String getAppName() {
@@ -44,6 +50,10 @@ public class InstalledAppItem {
 
     public Drawable getIcon() {
         return icon;
+    }
+
+    public boolean isLocalFile() {
+        return isLocalFile;
     }
 
     public String getFormattedSize() {

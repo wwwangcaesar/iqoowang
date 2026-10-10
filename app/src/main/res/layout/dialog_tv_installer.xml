@@ -46,7 +46,7 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <!-- 步骤 1：挑选手机上的待传应用 -->
+            <!-- 步骤 1：挑选手机上的待传应用 / 本地 APK -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -54,13 +54,35 @@
                 android:orientation="vertical"
                 android:padding="12dp">
 
-                <TextView
+                <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="1. 选择手机上要安装到电视的 App:"
-                    android:textColor="@color/cyber_text_primary"
-                    android:textSize="13sp"
-                    android:textStyle="bold" />
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="1. 选择手机应用或本地 APK:"
+                        android:textColor="@color/cyber_text_primary"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/btn_browse_local_apk"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/bg_cyber_btn_outline_cyan"
+                        android:paddingStart="8dp"
+                        android:paddingEnd="8dp"
+                        android:paddingTop="3dp"
+                        android:paddingBottom="3dp"
+                        android:text="📁 浏览本地APK"
+                        android:textColor="@color/cyber_neon_cyan"
+                        android:textSize="11sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
 
                 <Spinner
                     android:id="@+id/spinner_installed_apps"
@@ -77,7 +99,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
                     android:fontFamily="monospace"
-                    android:text="已选择: 正在加载手机已安装应用..."
+                    android:text="已选择: 正在加载用户应用与本地 APK..."
                     android:textColor="@color/cyber_neon_green"
                     android:textSize="11sp" />
             </LinearLayout>
@@ -180,7 +202,10 @@
                     android:progress="0"
                     android:progressTint="@color/cyber_neon_cyan" />
 
+
+
                 <!-- 手机直接 ADB 安装大按钮 -->
+
                 <TextView
                     android:id="@+id/btn_adb_direct_install"
                     android:layout_width="match_parent"
