@@ -658,6 +658,46 @@ public class RealtimeQuoteManager {
         fetchPrevDayVwapAttempt(code, expectedDate, cb, 0);
     }
 
+    // ─── 昨日VWAP"日K估算兜底"的标记与自愈 ───
+    private static final String KEY_VWAP_APPROX_PREFIX = "vwap_approx_";
+    private static final long APPROX_RETRY_GAP_MS = 10 * 60_000L;
+    private final java.util.Map<String, Long> mApproxRetryAt = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 记录/清除某支股票当前缓存的昨日VWAP是否来自日K估算（非精确成交加权）。存的值是估算所对应的日期。 */
+    private void markPrevVwapApprox(String code, String date, boolean approx) {
+        if (sAppContext == null || code == null) return;
+        try {
+            android.content.SharedPreferences.Editor ed = sAppContext
+                    .getSharedPreferences(PREFS_DISK_CACHE, android.content.Context.MODE_PRIVATE).edit();
+            if (approx && date != null) ed.putString(KEY_VWAP_APPROX_PREFIX + code, date);
+            else ed.remove(KEY_VWAP_APPROX_PREFIX + code);
+            ed.apply();
+        } catch (Exception e) {
+            Log.w(TAG, "markPrevVwapApprox失败 " + code, e);
+        }
+    }
+
+    /** 该股票在date这一天缓存的昨日VWAP是否是日K估算值（跨重启有效）。 */
+    public boolean isPrevDayVwapApprox(String code, String date) {
+        if (sAppContext == null || code == null || date == null) return false;
+        try {
+            String v = sAppContext.getSharedPreferences(PREFS_DISK_CACHE, android.content.Context.MODE_PRIVATE)
+                    .getString(KEY_VWAP_APPROX_PREFIX + code, null);
+            return date.equals(v);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** 估算值只是兜底：每隔一段时间允许重试一次精确接口（节流，避免每轮tick都去请求）。 */
+    public boolean shouldRetryPreciseVwap(String code) {
+        long now = System.currentTimeMillis();
+        Long last = mApproxRetryAt.get(code);
+        if (last != null && now - last < APPROX_RETRY_GAP_MS) return false;
+        mApproxRetryAt.put(code, now);
+        return true;
+    }
+
     private static final int PREV_VWAP_MAX_RETRY = 2; // 首次+最多2次重试，共最多3次尝试
 
     private void fetchPrevDayVwapAttempt(String code, String expectedDate, PrevDayVwapCallback cb, int attempt) {
@@ -684,6 +724,7 @@ public class RealtimeQuoteManager {
                     double vwap = (Double) parsed[0];
                     String date = (String) parsed[1];
                     if (vwap > 0 && date != null) {
+                        markPrevVwapApprox(code, date, false); // 精确值到手，清掉可能残留的"估算"标记
                         MAIN.post(() -> cb.onResult(code, vwap, date));
                     } else {
                         retryOrFallbackVwap(code, expectedDate, cb, attempt, "响应中未找到日期匹配" + expectedDate + "的已收盘交易日分时数据");
@@ -741,6 +782,7 @@ public class RealtimeQuoteManager {
             String useDate = match.date;
             Log.i(TAG, "已用日K估算" + code + "昨日(" + useDate + ")VWAP≈" + String.format(Locale.CHINA, "%.4f", approx)
                     + "（精确值失败原因：" + preciseFailReason + "）");
+            markPrevVwapApprox(code, useDate, true); // 标记这是估算值，使用方在备注/日志里必须看得见
             MAIN.post(() -> cb.onResult(code, approx, useDate));
         } catch (Exception e) {
             Log.w(TAG, "日K估算兜底也失败(" + code + ")", e);

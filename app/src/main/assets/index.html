@@ -2345,7 +2345,7 @@ function runTDXFilter(stock, params) {
     latestClose: closes[i],
     change: changePct,
     vol: vols[i],
-    volMultiActual: (vols[i] / vols[i-2]).toFixed(1),
+    volMultiActual: (vols[i] / vols[i-1]).toFixed(1),
     sarOk: closes[i] >= sarLatest,
     condA, condB,
     score,

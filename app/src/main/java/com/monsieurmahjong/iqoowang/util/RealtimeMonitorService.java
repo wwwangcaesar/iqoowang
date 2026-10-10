@@ -720,6 +720,9 @@ public class RealtimeMonitorService extends Service {
             }
             if (item.prevDayVwap > 0 && item.prevDayVwapDate != null) {
                 keyMetrics.append(String.format(java.util.Locale.CHINA, " 昨日VWAP¥%.2f(%s)", item.prevDayVwap, item.prevDayVwapDate));
+                if (RealtimeQuoteManager.get().isPrevDayVwapApprox(item.code, item.prevDayVwapDate)) {
+                    keyMetrics.append("[日K估算值·非精确]"); // 估算兜底的昨日VWAP必须在指标里看得见
+                }
             }
 
             // 【核心修复】优先用pendingReason（当前这一刻真正待确认信号的理由，加仓信号触发时就是它，

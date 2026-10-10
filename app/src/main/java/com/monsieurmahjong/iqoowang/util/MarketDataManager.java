@@ -824,7 +824,9 @@ public class MarketDataManager {
         double changePct = closes[i - 1] > 0
                 ? (closes[i] - closes[i - 1]) / closes[i - 1] * 100 : 0;
         // 量比
-        double volRatio = vols[i - 2] > 0 ? (double) vols[i] / vols[i - 2] : 1.0;
+        // 量比口径跟筛选条件保持一致：今日量 ÷ 前一日量（条件A的放量阈值volMulti就是跟前一日比的）。
+        // 之前这里除的是前天的量，展示出来的数字跟入选依据对不上。
+        double volRatio = vols[i - 1] > 0 ? (double) vols[i] / vols[i - 1] : 1.0;
 
         try {
             JSONObject obj = new JSONObject();

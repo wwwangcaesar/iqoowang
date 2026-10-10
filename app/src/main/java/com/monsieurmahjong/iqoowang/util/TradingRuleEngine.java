@@ -123,6 +123,9 @@ public class TradingRuleEngine {
          *  fetchPrevDayVwap()异步获取），不是近似值。<=0表示还没抓到（App刚重启或刚换新的一天，
          *  异步请求还在路上），调用方（低开底仓路径）此时应跳过本轮判断，等下一轮tick自动重试。 */
         public double prevAvgPrice;
+        /** 【新增】prevAvgPrice是否来自日K估算值(开+2×收+高+低)/5（精确的day/query接口失败后的兜底），
+         *  而不是成交量加权的真实VWAP。估算值只用来保证低开路径不被接口问题卡死，必须让使用方看得见。 */
+        public boolean prevAvgPriceApprox;
         public String prevDate;
         public boolean hasData;
         public boolean isStale;
@@ -201,6 +204,17 @@ public class TradingRuleEngine {
             Double cachedAvg = WatchlistManager.get().getPrevDayVwapIfMatches(code, ref.prevDate);
             if (cachedAvg != null) {
                 ref.prevAvgPrice = cachedAvg;
+                // 缓存里的可能是日K估算值（精确接口当时失败时的兜底）：打上标记，并按节流间隔重试精确接口，
+                // 拿到精确值就自动覆盖估算值，不让一次接口抖动让这一天的低开参照价一直是近似值
+                ref.prevAvgPriceApprox = RealtimeQuoteManager.get().isPrevDayVwapApprox(code, ref.prevDate);
+                if (ref.prevAvgPriceApprox && RealtimeQuoteManager.get().shouldRetryPreciseVwap(code)) {
+                    RealtimeQuoteManager.get().fetchPrevDayVwap(code, ref.prevDate, (c, vwap, date) -> {
+                        if (vwap > 0 && date != null && !RealtimeQuoteManager.get().isPrevDayVwapApprox(c, date)) {
+                            WatchlistManager.get().savePrevDayVwap(c, vwap, date);
+                            Log.i(TAG, "已用精确值替换" + c + "昨日(" + date + ")的日K估算VWAP=" + String.format(Locale.CHINA, "%.4f", vwap));
+                        }
+                    });
+                }
             } else {
                 ref.prevAvgPrice = 0;
                 // 【2026-09-16修复：昨日VWAP用了过期日期】把上面已经校验过陈旧性的ref.prevDate作为
@@ -603,6 +617,11 @@ public class TradingRuleEngine {
         } else {
             ref = vwap;
             refLabel = String.format(Locale.CHINA, "当日VWAP¥%.2f（低于昨日均价¥%.2f，取较松的一个）", ref, prevDay.prevAvgPrice);
+        }
+
+        if (prevDay.prevAvgPriceApprox) {
+            // 昨日均价是日K估算值（精确接口失败后的兜底），不是成交加权的真实VWAP，备注里必须看得见
+            refLabel = refLabel + "【注意：昨日均价为日K估算值(开+2×收+高+低)/5，非精确成交加权，系统会定期重试精确接口】";
         }
 
         if (quote.price < ref) {
