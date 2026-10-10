@@ -162,6 +162,8 @@ public class TradeFlowManager {
         volatile long lastDataAt;
         volatile String lastError;
         String page0Sig;
+        /** 这份分笔缓存所属的交易日（yyyy-MM-dd）。买卖拆分必须跟展示的那一天严格对应：null表示日期不明（集合竞价阶段拉的），不可信 */
+        volatile String dataDate;
         volatile String lastLoggedStatus = "";
         volatile long lastFailLogAt;
     }
@@ -180,6 +182,8 @@ public class TradeFlowManager {
         public String asOf = "";
         /** 采用的分钟对齐口径及两种口径的偏差，写日志用 */
         public String alignment = "";
+        /** 这份买卖拆分所属的交易日（yyyy-MM-dd），前端必须核对跟当前图表的股票+日期完全一致才能用 */
+        public String date = "";
     }
 
     private static class Agg {
@@ -222,6 +226,30 @@ public class TradeFlowManager {
             int d = c.get(Calendar.DAY_OF_WEEK);
             return d != Calendar.SATURDAY && d != Calendar.SUNDAY;
         }
+    }
+
+    /**
+     * 【买卖拆分的日期口径】最近一个"已开盘"的交易日（yyyy-MM-dd），分笔/分时接口此刻返回的就是这一天的数据：
+     * 交易日9:31之后=今天；开盘前或非交易日=上一个交易日；交易日9:00-9:31集合竞价阶段接口可能还在
+     * 返回上一交易日，日期无法确定，返回null（调用方一律按"不展示买卖拆分"处理）。
+     */
+    public static String latestSessionDate() {
+        try {
+            java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.CHINA);
+            Calendar c = Calendar.getInstance();
+            if (isTradingDay(c)) {
+                int sec = c.get(Calendar.HOUR_OF_DAY) * 3600 + c.get(Calendar.MINUTE) * 60 + c.get(Calendar.SECOND);
+                if (sec >= 9 * 3600 + 31 * 60) return fmt.format(c.getTime());
+                if (sec >= 9 * 3600) return null;
+            }
+            Calendar p = (Calendar) c.clone();
+            for (int i = 0; i < 20; i++) {
+                p.add(Calendar.DAY_OF_MONTH, -1);
+                if (isTradingDay(p)) return fmt.format(p.getTime());
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
     }
 
     /**
@@ -273,8 +301,10 @@ public class TradeFlowManager {
             return r;
         }
         List<List<Tick>> snapshot;
+        final String snapDate;
         synchronized (st) {
             snapshot = new ArrayList<>(st.pages);
+            snapDate = st.dataDate; // 分笔快照和它所属日期在同一把锁里一起读，避免换日刷新的短暂窗口里旧分笔配上新日期
         }
         if (snapshot.isEmpty()) {
             if (st.lastError != null && !st.refreshing.get()) {
@@ -299,6 +329,13 @@ public class TradeFlowManager {
         if (isTradingDay(c) && nowSec >= 9 * 3600 && nowSec < 9 * 3600 + 31 * 60) {
             r.status = STATUS_AUCTION;
             r.message = "开盘集合竞价阶段（9:31前），买卖拆分暂不展示";
+            return r;
+        }
+
+        // 买卖拆分必须对应"当前展示的这个交易日"：分笔缓存所属日期未知、或跟最近交易日不一致时一律不展示
+        final String sessionDate = latestSessionDate();
+        if (sessionDate == null || snapDate == null || !sessionDate.equals(snapDate)) {
+            r.message = "分笔数据日期与当前交易日不一致，等待刷新后再显示买卖拆分";
             return r;
         }
 
@@ -347,6 +384,7 @@ public class TradeFlowManager {
         r.neutralTotal = chosen.neutral;
         r.tickCount = chosen.tickCount;
         r.asOf = secToStr(chosen.lastSec);
+        r.date = sessionDate;
         r.status = STATUS_OK;
         return r;
     }
@@ -404,10 +442,13 @@ public class TradeFlowManager {
             return;
         }
         String sig = first.ticks.get(0).sec + "/" + first.ticks.get(0).volume + "/" + first.ticks.get(0).dir;
+        final String sessionDate = latestSessionDate();
         int resume;
         synchronized (st) {
+            if (!st.pages.isEmpty() && (sessionDate == null || st.dataDate == null || !st.dataDate.equals(sessionDate))) st.pages.clear(); // 日期未知或已换日：旧缓存不可信，整份重拉
             if (!st.pages.isEmpty() && !sig.equals(st.page0Sig)) st.pages.clear(); // 换了交易日，旧缓存作废
             st.page0Sig = sig;
+            st.dataDate = sessionDate;
             if (st.pages.isEmpty()) st.pages.add(first.ticks);
             else st.pages.set(0, first.ticks);
             st.lastDataAt = System.currentTimeMillis();

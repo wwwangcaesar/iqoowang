@@ -872,6 +872,9 @@ public class StockBridge implements RealtimeMonitorService.Listener {
                 o.put("changePct", q.changePct);
             }
             o.put("updatedAt", RealtimeQuoteManager.get().getCachedMinuteLineUpdatedAt(code));
+            // 买卖拆分必须按"股票+交易日"严格对应，前端据此核对；集合竞价阶段日期不确定时不带date，前端会隐藏拆分
+            String chartDate = TradeFlowManager.latestSessionDate();
+            if (chartDate != null) o.put("date", chartDate);
             JSONArray arr = new JSONArray();
             for (RealtimeQuoteManager.MinutePoint p : points) {
                 JSONObject po = new JSONObject();
@@ -946,6 +949,8 @@ public class StockBridge implements RealtimeMonitorService.Listener {
                         o.put("changeAmt", q.changeAmt);
                         o.put("changePct", q.changePct);
                         o.put("updatedAt", RealtimeQuoteManager.get().getCachedMinuteLineUpdatedAt(c));
+                        String chartDate = TradeFlowManager.latestSessionDate();
+                        if (chartDate != null) o.put("date", chartDate);
                         JSONArray arr = new JSONArray();
                         for (RealtimeQuoteManager.MinutePoint p : points) {
                             JSONObject po = new JSONObject();
@@ -995,6 +1000,7 @@ public class StockBridge implements RealtimeMonitorService.Listener {
             List<RealtimeQuoteManager.MinutePoint> points = RealtimeQuoteManager.get().getCachedMinuteLine(code);
             TradeFlowManager.FlowResult r = TradeFlowManager.get().computeFlow(code, points);
             TradeFlowManager.get().requestRefresh(code, () -> pushTradeFlow(code));
+            persistTradeFlow(code, r);
             return tradeFlowToJson(code, r);
         } catch (Exception e) {
             Log.e(TAG, "getTradeFlow失败", e);
@@ -1006,6 +1012,7 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         try {
             List<RealtimeQuoteManager.MinutePoint> points = RealtimeQuoteManager.get().getCachedMinuteLine(code);
             TradeFlowManager.FlowResult r = TradeFlowManager.get().computeFlow(code, points);
+            persistTradeFlow(code, r);
             String json = tradeFlowToJson(code, r);
             String escaped = json.replace("\\", "\\\\").replace("'", "\\'");
             evalJs("window.onTradeFlowReady && window.onTradeFlowReady('" + code + "','" + escaped + "')");
@@ -1023,6 +1030,7 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         o.put("sellTotal", r.sellTotal);
         o.put("neutralTotal", r.neutralTotal);
         o.put("asOf", r.asOf);
+        o.put("date", r.date);
         JSONObject byMinute = new JSONObject();
         for (Map.Entry<String, long[]> e : r.byMinute.entrySet()) {
             JSONArray a = new JSONArray();
@@ -1031,6 +1039,56 @@ public class StockBridge implements RealtimeMonitorService.Listener {
         }
         o.put("byMinute", byMinute);
         return o.toString();
+    }
+
+    /** 已写库的(股票|日期)→asOf：asOf没变化就不重复写库 */
+    private final Map<String, String> mFlowSavedAsOf = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 把校验通过（status=ok）的真实买卖拆分按"股票+交易日"落库，供之后切换到该历史日期时读取。
+     * 没通过校验的（加载中/不一致/集合竞价/日期不明）一律不存。
+     */
+    private void persistTradeFlow(String code, TradeFlowManager.FlowResult r) {
+        try {
+            if (r == null || !TradeFlowManager.STATUS_OK.equals(r.status)
+                    || r.date == null || r.date.isEmpty() || r.asOf == null) return;
+            String key = code + "|" + r.date;
+            if (r.asOf.equals(mFlowSavedAsOf.get(key))) return;
+            if (FenshiHistoryManager.get().saveTradeFlow(code, r.date, tradeFlowToJson(code, r), r.asOf)) {
+                mFlowSavedAsOf.put(key, r.asOf);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "persistTradeFlow失败", e);
+        }
+    }
+
+    /**
+     * 某支股票某个历史日期当时记录下来的真实买卖拆分。只返回"股票+日期都对得上"的已记录数据；
+     * 没记录过（那天没人打开过该股分时图，接口又无法事后补取）就明确返回status=none，
+     * 绝不拿今天或别的日期、别的股票的数据顶替。
+     * JS调用：Android.getFenshiHistoryTradeFlow(code, "2026-09-20")
+     */
+    @JavascriptInterface
+    public String getFenshiHistoryTradeFlow(String code, String date) {
+        try {
+            String stored = FenshiHistoryManager.get().getTradeFlowJson(code, date);
+            if (stored != null) {
+                JSONObject o = new JSONObject(stored);
+                if (code.equals(o.optString("code")) && date.equals(o.optString("date"))
+                        && TradeFlowManager.STATUS_OK.equals(o.optString("status"))) {
+                    return o.toString();
+                }
+            }
+            JSONObject none = new JSONObject();
+            none.put("code", code);
+            none.put("date", date);
+            none.put("status", "none");
+            none.put("message", "该日没有买卖拆分记录（买卖拆分只能在当天查看分时图时记录，接口无法事后补取）");
+            return none.toString();
+        } catch (Exception e) {
+            Log.e(TAG, "getFenshiHistoryTradeFlow失败", e);
+            return "{\"status\":\"failed\",\"message\":\"读取异常\"}";
+        }
     }
 
     /**

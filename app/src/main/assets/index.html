@@ -3301,6 +3301,11 @@ function loadFenshiHistoryForDate(code, date) {
   try {
     const json = Android.getFenshiHistoryByDate(code, date);
     const data = JSON.parse(json || '{}');
+    // 买卖拆分必须与"这支股票+这一天"严格对应：先给图表数据标上股票/日期，再读取该日当时记录的真实拆分；
+    // 没记录过就是"无"，绝不沿用今天或其它股票/日期的拆分数据
+    data.code = data.code || code;
+    data.date = data.date || date;
+    STATE.currentTradeFlow = loadHistoryTradeFlow(code, date);
     const upd = document.getElementById('fenshiUpdatedAt');
     if (!data.points || !data.points.length) {
       STATE.currentFenshiData = null;
@@ -3313,6 +3318,28 @@ function loadFenshiHistoryForDate(code, date) {
     drawFenshiChart(data);
     if (upd) upd.textContent = '历史 ' + date;
   } catch (e) { console.error('loadFenshiHistoryForDate', e); }
+}
+
+/** 读取某支股票某个历史日期当时记录下来的真实买卖拆分（Android端按"股票+日期"落库）。
+ *  没记录过就返回status='none'的占位对象——绝不拿今天/别的日期的数据顶替。 */
+function loadHistoryTradeFlow(code, date) {
+  const none = {code: code, date: date, status: 'none', message: '该日没有买卖拆分记录'};
+  try {
+    const raw = Android.getFenshiHistoryTradeFlow(code, date);
+    const f = JSON.parse(raw || '{}');
+    if (f && f.code === code && f.date === date && f.status) return f;
+  } catch (e) { console.error('loadHistoryTradeFlow', e); }
+  return none;
+}
+
+/** 买卖拆分只有在"股票代码+交易日"都与当前图表完全一致时才允许使用，否则一律当作没有——
+ *  宁可只显示成交量总量，也不显示对不上的买卖数字。 */
+function getMatchedTradeFlow(data) {
+  const f = STATE.currentTradeFlow;
+  if (!f || !data) return null;
+  if (!data.code || !data.date) return null;
+  if (f.code !== data.code || f.date !== data.date) return null;
+  return f;
 }
 
 function drawFenshiChart(data) {
@@ -3427,9 +3454,9 @@ function drawFenshiVolume(data, prevClose, W, toX) {
 
   // 【新增，对应用户"成交量要展示买入和卖出具体的数字"】优先用TradeFlowManager算出的真实
   // 买卖拆分画堆叠柱（买在下、卖在上、中性盘在最上面，配色跟大盘涨跌一致：买=红，卖=绿）；
-  // 这份数据还没准备好/核对不上时（status非ok），退回原来"整根柱子按这一分钟涨跌方向单色"
-  // 的近似画法，保证分时图不会因为买卖拆分还未就绪就整块空白。
-  const flow = STATE.currentTradeFlow;
+  // 这份数据还没准备好/核对不上/不属于当前股票+日期时，只画成交量总量（中性色），不再按涨跌推测
+  // 买卖方向；只有真实买卖拆分才用红/绿，保证分时图不会因为买卖拆分还未就绪就整块空白。
+  const flow = getMatchedTradeFlow(data);
   const useReal = flow && flow.status === 'ok' && flow.byMinute;
   data.points.forEach((p,i)=>{
     const x = toX(p.time);
@@ -3444,13 +3471,25 @@ function drawFenshiVolume(data, prevClose, W, toX) {
       const neuH = (neutral/maxV)*ch;
       if (neuH > 0.5) { ctx.fillStyle = 'rgba(160,160,170,0.45)'; ctx.fillRect(x, pad.t+ch-base-neuH, barW, neuH); }
     } else {
-      const prevP = i>0 ? data.points[i-1].price : prevClose;
-      const isUp = p.price >= prevP;
+      // 没有与当前股票+日期对应的真实买卖拆分时，只画成交量总量，用中性蓝灰色——红/绿只留给真实的买入/卖出，
+      // 不再按"这一分钟涨还是跌"推测着上色，避免被误读成买卖数据
       const barH = ((p.volume||0)/maxV)*ch;
-      ctx.fillStyle = isUp ? 'rgba(255,61,87,0.55)' : 'rgba(0,200,83,0.55)';
+      ctx.fillStyle = 'rgba(122,148,184,0.55)';
       ctx.fillRect(x, pad.t+ch-barH, barW, barH);
     }
   });
+
+  // 图例：让人一眼分清当前每根柱子是"真实买卖拆分"还是"仅成交量总量"
+  ctx.font = '9px monospace';
+  ctx.textAlign = 'left';
+  const lx = W - pad.r + 6;
+  if (useReal) {
+    ctx.fillStyle = 'rgba(255,61,87,0.9)';   ctx.fillText('买', lx, pad.t + 9);
+    ctx.fillStyle = 'rgba(0,200,83,0.9)';    ctx.fillText('卖', lx + 12, pad.t + 9);
+    ctx.fillStyle = 'rgba(160,160,170,0.9)'; ctx.fillText('平', lx + 24, pad.t + 9);
+  } else {
+    ctx.fillStyle = 'rgba(122,148,184,0.9)';  ctx.fillText('总量', lx, pad.t + 9);
+  }
 }
 
 /** 【长按分时图看成交量】分时图长按交互——跟K线长按十字线(bindKlineGestures里那一段)同样用
@@ -3531,14 +3570,15 @@ function showFenshiCrosshair(clientX) {
   // 【新增，对应用户"成交量要展示买入和卖出具体的数字，现在只展示了成交量总量"】优先展示
   // TradeFlowManager算出的真实买卖拆分；这份数据还没就绪/核对不上时，退回展示成交量
   // 总量+具体原因，不假装有拆分数据。
-  const flow = STATE.currentTradeFlow;
+  const flow = getMatchedTradeFlow(data);
   const realFlow = flow && flow.status === 'ok' && flow.byMinute ? flow.byMinute[nearest.time] : null;
   let volLine;
   if (realFlow) {
     const buy = realFlow[0]||0, sell = realFlow[1]||0;
     volLine = `买入 <span class="c-up">${buy.toLocaleString()}手</span>　卖出 <span class="c-down">${sell.toLocaleString()}手</span>`;
   } else {
-    const reason = flow && flow.status && flow.status !== 'ok' ? flow.message : '买卖拆分加载中';
+    const reason = flow && flow.status && flow.status !== 'ok' ? flow.message
+      : (flow && flow.status === 'ok' ? '该分钟没有买卖拆分记录' : '买卖拆分加载中');
     volLine = `成交量 <span style="color:var(--accent-gold)">${Math.round(nearest.volume||0).toLocaleString()}手</span>` +
       (reason ? `<br><span style="font-size:9px;color:var(--text-dim)">${reason}</span>` : '');
   }

@@ -44,7 +44,7 @@ public class FenshiHistoryManager {
 
     private static final String TAG = "FenshiHistoryManager";
     private static final String DB_NAME = "fenshi_history.db";
-    private static final int DB_VERSION = 1;
+    private static final int DB_VERSION = 2;
 
     private static FenshiHistoryManager sInstance;
     private final SQLiteDatabase mDb;
@@ -81,16 +81,70 @@ public class FenshiHistoryManager {
                     "points_json TEXT," +
                     "updated_at INTEGER," +
                     "PRIMARY KEY (code, date))");
+            createFlowTable(db);
+        }
+
+        /** DB版本2新增：按(code,date)存当天真实买卖拆分（来自腾讯分笔明细，TradeFlowManager校验通过后才写入） */
+        private static void createFlowTable(SQLiteDatabase db) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS fenshi_trade_flow (" +
+                    "code TEXT NOT NULL," +
+                    "date TEXT NOT NULL," +
+                    "flow_json TEXT," +
+                    "as_of TEXT," +
+                    "updated_at INTEGER," +
+                    "PRIMARY KEY (code, date))");
         }
 
         @Override
         public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-            // 目前只有版本1，暂无需处理
+            if (oldVersion < 2) createFlowTable(db);
         }
     }
 
     private static String todayStr() {
         return new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(new java.util.Date());
+    }
+
+    /**
+     * 【买卖拆分按日期落库】保存某支股票某个交易日的真实买卖拆分。数据来自腾讯分笔明细，
+     * 由TradeFlowManager按分钟聚合并跟分时累计量核对通过后才会走到这里。接口只提供最近一个交易日的
+     * 分笔，事后无法回补，所以这里每次覆盖保存最新一份；历史日期回看时读的就是当时记录下来的真实数据，
+     * 没记录过的日期就是没有，绝不拿别的日期/别的股票的数据顶替。
+     * 只给"已有分时历史行"的(code,date)落库：没被监控过的股票看不到历史日期选项，存了也无处展示，
+     * 还会变成清仓清理触发不到的孤儿数据。
+     */
+    public boolean saveTradeFlow(String code, String date, String flowJson, String asOf) {
+        if (code == null || date == null || flowJson == null) return false;
+        try {
+            boolean hasDay;
+            try (Cursor c = mDb.rawQuery("SELECT 1 FROM fenshi_history WHERE code=? AND date=? LIMIT 1",
+                    new String[]{code, date})) {
+                hasDay = c.moveToFirst();
+            }
+            if (!hasDay) return false;
+            ContentValues cv = new ContentValues();
+            cv.put("code", code);
+            cv.put("date", date);
+            cv.put("flow_json", flowJson);
+            cv.put("as_of", asOf);
+            cv.put("updated_at", System.currentTimeMillis());
+            return mDb.insertWithOnConflict("fenshi_trade_flow", null, cv, SQLiteDatabase.CONFLICT_REPLACE) != -1;
+        } catch (Exception e) {
+            Log.e(TAG, "saveTradeFlow failed " + code + " " + date, e);
+            return false;
+        }
+    }
+
+    /** 某支股票某一天已记录的买卖拆分JSON；没有记录时返回null（调用方据此展示"该日未记录"，不得拿其它日期顶替） */
+    public String getTradeFlowJson(String code, String date) {
+        try (Cursor c = mDb.rawQuery("SELECT flow_json FROM fenshi_trade_flow WHERE code=? AND date=?",
+                new String[]{code, date})) {
+            if (!c.moveToFirst()) return null;
+            return c.getString(0);
+        } catch (Exception e) {
+            Log.e(TAG, "getTradeFlowJson failed " + code + " " + date, e);
+            return null;
+        }
     }
 
     /**
@@ -173,6 +227,7 @@ public class FenshiHistoryManager {
     public void deleteHistoryForCode(String code) {
         try {
             int n = mDb.delete("fenshi_history", "code=?", new String[]{code});
+            mDb.delete("fenshi_trade_flow", "code=?", new String[]{code});
             Log.i(TAG, "清仓触发分时历史清理：" + code + "，删除" + n + "天记录");
         } catch (Exception e) {
             Log.e(TAG, "deleteHistoryForCode失败 " + code, e);
